@@ -1,0 +1,224 @@
+name: Task Agent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "runtime-contract.json"
+      - "shared/runtime-contract/**"
+      - "agents/tasks/**"
+      - ".github/workflows/task-agent-ci.yml"
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_update_notifier: "false"
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine Task Agent relevance
+        id: scope
+        shell: bash
+        env:
+          BEFORE_SHA: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+            relevant=false
+            if [[ ! "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
+              relevant=true
+            elif git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)'; then
+              relevant=true
+            fi
+          fi
+          printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
+          printf 'task_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
+
+      - name: Read runtime contract
+        if: steps.scope.outputs.relevant == 'true'
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          with open('runtime-contract.json', encoding='utf-8') as handle:
+              contract = json.load(handle)
+          version = str(contract.get('node', {}).get('ci_version', ''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('invalid node.ci_version in runtime-contract.json')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'node_version={version}\n')
+          PY
+
+      - name: Set up Node.js
+        if: steps.scope.outputs.relevant == 'true'
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+
+      - name: Validate repository runtime contract
+        if: steps.scope.outputs.relevant == 'true'
+        run: |
+          set -euo pipefail
+          node --check shared/runtime-contract/runtime-contract.mjs
+          node shared/runtime-contract/runtime-contract.mjs repo-check .
+          node --test shared/runtime-contract/runtime-contract.test.mjs
+
+      - name: Install plugin dependencies
+        if: steps.scope.outputs.relevant == 'true'
+        working-directory: agents/tasks/plugins/taskctl
+        run: timeout 300s npm ci
+
+      - name: Test and validate plugin
+        if: steps.scope.outputs.relevant == 'true'
+        working-directory: agents/tasks/plugins/taskctl
+        run: |
+          set -euo pipefail
+          timeout 180s npm test
+          timeout 180s npm run plugin:build
+          timeout 180s npm run plugin:validate
+
+      - name: Validate release identity and artifact
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          eval "$(node - <<'NODE'
+          const fs = require('node:fs');
+          const release = JSON.parse(fs.readFileSync('agents/tasks/release.json', 'utf8'));
+          const pkg = JSON.parse(fs.readFileSync('agents/tasks/plugins/taskctl/package.json', 'utf8'));
+          const files = ['AGENTS.md','SOUL.md','TOOLS.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
+          const version = /^0\.4\.[0-9]+$/;
+          const sha256 = /^[0-9a-f]{64}$/;
+          const bad = (message) => { throw new Error(message); };
+          const tuple = (value) => { const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(value || ''); return m ? m.slice(1).map(Number) : null; };
+          const satisfiesFloor = (value, range) => { const m = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(range || ''); const v = tuple(value); if (!m || !v) return false; const f = m.slice(1).map(Number); return v[0] > f[0] || (v[0] === f[0] && (v[1] > f[1] || (v[1] === f[1] && v[2] >= f[2]))); };
+          const runtime = JSON.parse(fs.readFileSync('runtime-contract.json', 'utf8'));
+          if (release?.format !== 'task-agent-release-v2') bad('unsupported release format');
+          if (!version.test(release?.generation?.taskctl_version || '')) bad('invalid taskctl release identity');
+          const schema = release?.generation?.sqlite_schema;
+          if (!Number.isSafeInteger(schema) || schema < 1) bad('invalid SQLite schema');
+          if (release?.plugin?.name !== pkg.name || release?.plugin?.version !== pkg.version) bad('plugin release identity mismatch');
+          if (!version.test(release?.plugin?.version || '')) bad('invalid plugin release identity');
+          const buildVersion = release?.generation?.openclaw_build_version;
+          const compatRange = release?.generation?.openclaw_compat;
+          if (!tuple(buildVersion) || !satisfiesFloor(runtime?.openclaw?.version, compatRange)) bad('OpenClaw build/compatibility metadata is invalid');
+          if (buildVersion !== pkg.devDependencies?.openclaw || buildVersion !== pkg.openclaw?.build?.openclawVersion) bad('OpenClaw build identity mismatch');
+          if (compatRange !== pkg.peerDependencies?.openclaw || compatRange !== pkg.openclaw?.compat?.pluginApi) bad('OpenClaw compatibility contract mismatch');
+          if (release?.generation?.typebox_version !== pkg.dependencies?.typebox) bad('TypeBox version mismatch');
+          if (!sha256.test(release?.plugin?.sha256 || '')) bad('invalid artifact sha256');
+          const from = release?.from;
+          if (!from || !Array.isArray(from.plugin_versions)) bad('invalid predecessor metadata');
+          const fromSchemas = from.sqlite_schemas;
+          if (!Array.isArray(fromSchemas) || fromSchemas.length === 0 || !fromSchemas.every((v) => Number.isSafeInteger(v) && v >= 1) || new Set(fromSchemas).size !== fromSchemas.length) bad('invalid predecessor SQLite schemas');
+          const fromTaskctl = from.taskctl_versions ?? [release.generation.taskctl_version];
+          if (!Array.isArray(fromTaskctl) || fromTaskctl.length === 0 || !fromTaskctl.every((v) => version.test(v)) || new Set(fromTaskctl).size !== fromTaskctl.length) bad('invalid predecessor taskctl identities');
+          if (!from.plugin_versions.every((v) => version.test(v)) || new Set(from.plugin_versions).size !== from.plugin_versions.length) bad('invalid predecessor plugin identities');
+          if (from.plugin_versions.includes(release.plugin.version)) bad('target plugin cannot be its own predecessor');
+          if (from.plugin_versions.length === 0) {
+            if (Object.keys(from.workspace_sha256 || {}).length !== 0 || from.tools_sha256 !== null) bad('retired predecessor fingerprints remain');
+          } else {
+            const workspace = from.workspace_sha256;
+            if (!workspace || Object.keys(workspace).sort().join(',') !== files.slice().sort().join(',')) bad('bounded predecessor workspace fingerprint set is incomplete');
+            if (!files.every((file) => sha256.test(workspace[file] || ''))) bad('invalid bounded predecessor workspace fingerprint');
+            if (!sha256.test(from.tools_sha256 || '')) bad('invalid bounded predecessor tool-policy fingerprint');
+          }
+          console.log(`RELEASE_TASKCTL_VERSION=${release.generation.taskctl_version}`);
+          console.log(`RELEASE_SQLITE_SCHEMA=${schema}`);
+          console.log(`RELEASE_ARTIFACT=agents/tasks/${release.plugin.artifact}`);
+          console.log(`RELEASE_ARTIFACT_SHA=${release.plugin.sha256}`);
+          NODE
+          )"
+
+          tmp_db="$(mktemp -d)"
+          trap 'rm -rf "$tmp_db"' EXIT
+          init="$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$tmp_db/tasks.sqlite3" agents/tasks/taskctl init)"
+          node -e 'const x=JSON.parse(process.argv[1]); if(x.implementation_version!==process.argv[2] || x.schema_version!==Number(process.argv[3])) process.exit(1)' "$init" "$RELEASE_TASKCTL_VERSION" "$RELEASE_SQLITE_SCHEMA"
+
+          sidecar="${RELEASE_ARTIFACT%.tgz}.sha256"
+          artifact_name="$(basename "$RELEASE_ARTIFACT")"
+          sidecar_name="$(basename "$sidecar")"
+          test -f "$RELEASE_ARTIFACT"
+          test -f "$sidecar"
+          test "$(sha256sum "$RELEASE_ARTIFACT" | awk '{print $1}')" = "$RELEASE_ARTIFACT_SHA"
+          test "$(awk 'NF{print $1;exit}' "$sidecar")" = "$RELEASE_ARTIFACT_SHA"
+          test "$(awk 'NF{print $2;exit}' "$sidecar")" = "$artifact_name"
+          unexpected="$(find agents/tasks/artifacts -maxdepth 1 -type f \( -name 'openclaw-plugin-taskctl-*.tgz' -o -name 'openclaw-plugin-taskctl-*.sha256' \) ! -name "$artifact_name" ! -name "$sidecar_name" -print -quit)"
+          if [ -n "$unexpected" ]; then
+            echo "Superseded Task Agent release artifact retained in active tree: $unexpected" >&2
+            exit 1
+          fi
+
+          pack_dir="$(mktemp -d)"
+          timeout 120s npm pack ./agents/tasks/plugins/taskctl --pack-destination "$pack_dir" >/dev/null
+          generated="$pack_dir/$artifact_name"
+          test "$(sha256sum "$generated" | awk '{print $1}')" = "$RELEASE_ARTIFACT_SHA"
+          cmp -s "$generated" "$RELEASE_ARTIFACT"
+          rm -rf "$pack_dir"
+
+      - name: Verify exact predecessor source binding
+        if: steps.scope.outputs.relevant == 'true'
+        env:
+          PREDECESSOR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
+        run: |
+          set -euo pipefail
+          node agents/tasks/production-control/verify-release-predecessor.mjs "$PREDECESSOR_BASE_SHA"
+
+      - name: Deterministic Task Agent regressions
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check agents/tasks/taskctl
+          bash -n agents/tasks/validate.sh
+          bash -n agents/tasks/install.sh
+          bash -n agents/tasks/deploy.sh
+          bash -n agents/tasks/recover.sh
+          bash -n agents/tasks/tests/batch6.sh
+          bash -n agents/tasks/tests/batch7.sh
+          bash -n agents/tasks/tests/batch8.sh
+          bash -n agents/tasks/tests/batch9.sh
+          bash -n agents/tasks/tests/recurrence-qualification.sh
+          bash -n agents/tasks/tests/recurrence-gateway-e2e.sh
+          timeout 120s bash agents/tasks/tests/smoke.sh agents/tasks/taskctl
+          timeout 120s bash agents/tasks/tests/batch4.sh
+          timeout 120s bash agents/tasks/tests/batch6.sh agents/tasks/taskctl
+          timeout 180s bash agents/tasks/tests/batch7.sh agents/tasks/taskctl
+          timeout 120s bash agents/tasks/tests/batch8.sh agents/tasks/taskctl
+          timeout 180s bash agents/tasks/tests/batch9.sh agents/tasks/taskctl
+          timeout 180s bash agents/tasks/tests/recurrence-qualification.sh agents/tasks/taskctl
+          timeout 240s bash agents/tasks/tests/recurrence-gateway-e2e.sh
+
+      - name: Verify generated outputs are frozen
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            agents/tasks/plugins/taskctl/package-lock.json \
+            agents/tasks/plugins/taskctl/openclaw.plugin.json \
+            agents/tasks/plugins/taskctl/dist

@@ -1,0 +1,44 @@
+{
+  "tools": {
+    "media": {
+      "audio": {
+        "enabled": true,
+        "scope": {
+          "default": "deny",
+          "rules": [
+            {
+              "action": "allow",
+              "match": {
+                "channel": "telegram",
+                "chatType": "direct"
+              }
+            }
+          ]
+        },
+        "echoTranscript": false
+      },
+      "models": [
+        {
+          "type": "cli",
+          "command": "/home/dubrovin/.local/bin/whisper-cli",
+          "args": [
+            "-m",
+            "/home/dubrovin/.local/share/whisper.cpp/models/ggml-small.bin",
+            "-otxt",
+            "-of",
+            "{{OutputBase}}",
+            "-np",
+            "-nt",
+            "-l",
+            "auto",
+            "{{MediaPath}}"
+          ],
+          "timeoutSeconds": 180,
+          "capabilities": [
+            "audio"
+          ]
+        }
+      ]
+    }
+  }
+}

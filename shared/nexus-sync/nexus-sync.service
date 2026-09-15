@@ -1,0 +1,7 @@
+[Unit]
+Description=Refresh read-only Nexus checkouts
+
+[Service]
+Type=oneshot
+ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only
+ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only

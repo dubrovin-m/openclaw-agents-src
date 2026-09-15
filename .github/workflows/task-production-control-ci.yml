@@ -1,0 +1,165 @@
+name: Task production control CI
+
+on:
+  push:
+    paths:
+      - 'runtime-contract.json'
+      - 'shared/runtime-contract/**'
+      - 'agents/tasks/deploy.sh'
+      - 'agents/tasks/recover.sh'
+      - 'agents/tasks/install.sh'
+      - 'agents/tasks/workspace-layout.mjs'
+      - 'agents/tasks/tests/deploy.sh'
+      - 'agents/tasks/tests/isolated-runtime.sh'
+      - 'agents/tasks/tests/workspace-retirement.sh'
+      - 'agents/tasks/production-control/**'
+      - '.github/workflows/task-production-control-ci.yml'
+  pull_request:
+    paths:
+      - 'runtime-contract.json'
+      - 'shared/runtime-contract/**'
+      - 'agents/tasks/deploy.sh'
+      - 'agents/tasks/recover.sh'
+      - 'agents/tasks/install.sh'
+      - 'agents/tasks/workspace-layout.mjs'
+      - 'agents/tasks/tests/deploy.sh'
+      - 'agents/tasks/tests/isolated-runtime.sh'
+      - 'agents/tasks/tests/workspace-retirement.sh'
+      - 'agents/tasks/production-control/**'
+      - '.github/workflows/task-production-control-ci.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  npm_config_audit: false
+  npm_config_fund: false
+  npm_config_update_notifier: false
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read runtime contract
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          with open('runtime-contract.json', encoding='utf-8') as handle:
+              contract = json.load(handle)
+          version = str(contract.get('node', {}).get('ci_version', ''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('invalid node.ci_version in runtime-contract.json')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'node_version={version}\n')
+          PY
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+          cache: ''
+
+      - name: Validate repository runtime contract
+        run: |
+          set -euo pipefail
+          node --check shared/runtime-contract/runtime-contract.mjs
+          node shared/runtime-contract/runtime-contract.mjs repo-check .
+          node --test shared/runtime-contract/runtime-contract.test.mjs
+
+      - name: Static syntax checks
+        run: |
+          node --check agents/tasks/production-control/controller.mjs
+          node --check agents/tasks/production-control/diagnose.mjs
+          node --check agents/tasks/production-control/lib.mjs
+          node --check agents/tasks/workspace-layout.mjs
+          bash -n agents/tasks/install.sh
+          bash -n agents/tasks/deploy.sh
+          bash -n agents/tasks/recover.sh
+          bash -n agents/tasks/tests/deploy.sh
+          bash -n agents/tasks/tests/isolated-runtime.sh
+          bash -n agents/tasks/tests/workspace-retirement.sh
+          bash -n agents/tasks/tests/recovery-schema5.sh
+          bash -n agents/tasks/production-control/install.sh
+          bash -n agents/tasks/production-control/execute-deploy.sh
+          bash -n agents/tasks/production-control/execute-rollout.sh
+          bash -n agents/tasks/production-control/poll.sh
+          bash -n agents/tasks/production-control/bootstrap.sh
+          bash -n agents/tasks/production-control/reconcile-break-glass.sh
+          bash -n agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          bash -n agents/tasks/production-control/tests/isolated-install.sh
+          bash -n agents/tasks/production-control/tests/deploy-wrapper.sh
+          bash -n agents/tasks/production-control/tests/rollout-wrapper.sh
+          bash -n agents/tasks/production-control/tests/break-glass-reconcile.sh
+          git diff --check HEAD^ HEAD || git diff --check
+
+      - name: Core and diagnostic tests
+        run: node --test agents/tasks/production-control/tests/*.test.mjs
+
+      - name: Same-schema deployment and recovery harness
+        env:
+          TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT: ${{ github.workspace }}
+        run: bash agents/tasks/tests/deploy.sh
+
+      - name: Install isolated-runtime dependencies
+        working-directory: agents/tasks/plugins/taskctl
+        run: timeout 300s npm ci
+
+      - name: OpenClaw 8.2 workspace retirement deployment and rollback
+        run: timeout 240s bash agents/tasks/tests/workspace-retirement.sh
+
+      - name: Isolated runtime and recovery reconstruction
+        run: timeout 180s bash agents/tasks/tests/isolated-runtime.sh
+
+      - name: Break-glass controller reconciliation
+        run: bash agents/tasks/production-control/tests/break-glass-reconcile.sh
+
+      - name: Isolated installation
+        run: bash agents/tasks/production-control/tests/isolated-install.sh
+
+      - name: Deploy wrapper outcomes
+        run: bash agents/tasks/production-control/tests/deploy-wrapper.sh
+
+      - name: OpenClaw rollout wrapper outcomes
+        run: bash agents/tasks/production-control/tests/rollout-wrapper.sh
+
+      - name: Security boundary assertions
+        run: |
+          grep -q "validateOperationalBinding" agents/tasks/production-control/lib.mjs
+          grep -q "control_repository" agents/tasks/production-control/controller.mjs
+          grep -q "implementation_repository" agents/tasks/production-control/controller.mjs
+          grep -q -- "--control-repository" agents/tasks/production-control/bootstrap.sh
+          grep -q -- "--implementation-repository" agents/tasks/production-control/bootstrap.sh
+          grep -q "/rollout openclaw" agents/tasks/production-control/lib.mjs
+          grep -q "'runtime-contract.json'" agents/tasks/production-control/lib.mjs
+          grep -q "'shared/runtime-contract/'" agents/tasks/production-control/lib.mjs
+          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/deploy.sh
+          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/recover.sh
+          grep -q "flock -n 9" agents/tasks/production-control/poll.sh
+          grep -q "flock -n 9" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "flock -n 9" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "installed-revision" agents/tasks/production-control/bootstrap.sh
+          grep -q "CONTROLLER_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "TASK_PRODUCTION_BASELINE_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "Controller revision changed during baseline-only reconciliation" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "Task deploy result does not prove the exact target baseline" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          ! grep -R -E "Authorization:.*(ghp_|github_pat_)|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" agents/tasks/production-control .github/workflows/task-production-control-ci.yml
+          ! grep -q "/statuses/" agents/tasks/production-control/controller.mjs
+          ! grep -q "githubGet.*POST" agents/tasks/production-control/controller.mjs
+          ! grep -q "issues/.*/comments.*POST" agents/tasks/production-control/controller.mjs

@@ -1,0 +1,30 @@
+{
+  "format": "openclaw-agents-runtime-contract-v1",
+  "openclaw": {
+    "version": "2026.8.2"
+  },
+  "node": {
+    "ci_version": "26.7.0",
+    "supported_lines": [
+      {
+        "major": 22,
+        "minimum": "22.22.3"
+      },
+      {
+        "major": 24,
+        "minimum": "24.15.0"
+      },
+      {
+        "major": 25,
+        "minimum": "25.9.0"
+      },
+      {
+        "major": 26,
+        "minimum": "26.0.0"
+      }
+    ],
+    "required_builtin_modules": [
+      "node:sqlite"
+    ]
+  }
+}

@@ -1,0 +1,48 @@
+{
+  "format": "task-agent-release-v2",
+  "workspace_layout": "agents-md-tools-v1",
+  "generation": {
+    "taskctl_version": "0.4.7",
+    "sqlite_schema": 6,
+    "typebox_version": "1.3.15",
+    "openclaw_build_version": "2026.8.2",
+    "openclaw_compat": ">=2026.8.2"
+  },
+  "plugin": {
+    "name": "openclaw-plugin-taskctl",
+    "version": "0.4.17",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.17.tgz",
+    "sha256": "a1ced7337055c00aab687279d41b86c4ef842551b293e8cf5fd83de7350dc43b"
+  },
+  "from": {
+    "source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba",
+    "workspace_source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba",
+    "sqlite_schemas": [
+      6
+    ],
+    "taskctl_versions": [
+      "0.4.7"
+    ],
+    "plugin_versions": [
+      "0.4.16"
+    ],
+    "workspace_sha256": {
+      "AGENTS.md": "4528876036186a13e19075967681629929cd9e4650061a6fd39ca4bacd8fd2ff",
+      "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
+      "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
+      "USER.md": "73da2c1a1c195b017c7e6a8245c045b2e850999eed9283c38f5eaa0b432014b6",
+      "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
+      "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
+    },
+    "tools_sha256": "52479a15d6eff1a0975df3bd170dcecb64faf3aad88481427f9f0bea3fe4da39"
+  },
+  "calendar_materializer": {
+    "kind": "openclaw-command-automation-v1",
+    "declaration_key": "tasks.recurrence-calendar-materialize.v1",
+    "name": "Task Recurrence Calendar Materializer",
+    "cron": "0 * * * *",
+    "timezone": "Europe/Moscow",
+    "exact": true,
+    "timeout_seconds": 30
+  }
+}

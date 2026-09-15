@@ -1,0 +1,11 @@
+[Unit]
+Description=OpenClaw Task Agent production control poll
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ExecStart=%h/.local/lib/openclaw-production-control/poll.sh

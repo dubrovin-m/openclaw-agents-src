@@ -1,0 +1,36 @@
+{
+  "profile": "full",
+  "allow": [
+    "read",
+    "exec",
+    "process"
+  ],
+  "deny": [
+    "write",
+    "edit",
+    "apply_patch",
+    "browser",
+    "gateway",
+    "cron",
+    "web_search",
+    "web_fetch",
+    "sessions",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "sessions_spawn",
+    "subagents",
+    "nodes",
+    "computer",
+    "canvas"
+  ],
+  "exec": {
+    "host": "gateway",
+    "mode": "auto",
+    "strictInlineEval": true,
+    "commandHighlighting": true
+  },
+  "fs": {
+    "workspaceOnly": true
+  }
+}

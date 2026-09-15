@@ -1,0 +1,12 @@
+[Unit]
+Description=Poll Task Agent production control requests
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=30s
+AccuracySec=5s
+Persistent=true
+Unit=openclaw-task-production-control.service
+
+[Install]
+WantedBy=timers.target

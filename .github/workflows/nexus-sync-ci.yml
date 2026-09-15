@@ -1,0 +1,45 @@
+name: Nexus sync CI
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "shared/nexus-sync/**"
+      - ".github/workflows/nexus-sync-ci.yml"
+  pull_request:
+    branches: [main]
+    paths:
+      - "shared/nexus-sync/**"
+      - ".github/workflows/nexus-sync-ci.yml"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nexus-sync-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 1
+          persist-credentials: false
+
+      - name: Validate source package
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse HEAD)" = "${{ github.event.pull_request.head.sha || github.sha }}"
+          bash -n shared/nexus-sync/install.sh
+          bash -n shared/nexus-sync/validate.sh
+          bash -n shared/nexus-sync/test-runtime-validation.sh
+          bash shared/nexus-sync/validate.sh --source
+          bash shared/nexus-sync/test-runtime-validation.sh
+          git diff --exit-code
+          git diff --cached --exit-code
