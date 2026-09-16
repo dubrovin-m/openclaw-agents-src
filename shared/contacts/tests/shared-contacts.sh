@@ -4,14 +4,14 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 TASKCTL="$ROOT/agents/tasks/taskctl"
 CONTACTCTL="$ROOT/shared/contacts/contactctl"
-PREDECESSOR=4942c28a1cb8f661a48db914712fb97daf68bbe3
+PREDECESSOR=42329b0edab9d8d3ab9fa16257fc11723cd6acaf
 TMP=$(mktemp -d /tmp/shared-contacts.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/tasks.sqlite3"
 CDB="$TMP/contacts.sqlite3"
 trun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="$1" "$TASKCTL" "$2" "$3"; }
 crun(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.implementation_version!=="0.4.9")process.exit(1)})'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.implementation_version!=="0.4.10")process.exit(1)})'
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==1||x.implementation_version!=="0.1.0")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.
 crun '{"operation_key":"c1","display_name":"Побединская Н.","organization":"Компания","title":"Директор"}' create >/dev/null

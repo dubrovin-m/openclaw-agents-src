@@ -22,7 +22,7 @@ const MODEL_INPUT_TARGET_BYTES = 48 * 1024;
 const MODEL_MAX_CALLS = 400;
 const MODEL_TIMEOUT_MS = 90_000;
 const GATEWAY_READ_TIMEOUT_MS = 12_000;
-const TASKCTL_SCHEMA_VERSION = 6;
+const TASKCTL_SCHEMA_VERSION = 7;
 
 export const dailyReviewParameters = Type.Object(
   {

@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.9"'; contains "$a" '"schema_version":6'
+a=$(plain init); contains "$a" '"implementation_version":"0.4.10"'; contains "$a" '"schema_version":7'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'
@@ -133,7 +133,7 @@ try{const tables=['inbox_items','capture_receipts','people','person_aliases','la
 NODE
 )
 contains "$before" '"uv":4'
-health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":6'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
+health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":7'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
 after=$(node - "$MIGDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});
 try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id FROM tasks ORDER BY id').all(),projects:Number(d.prepare('SELECT count(*) n FROM projects').get().n),integrity:d.prepare('PRAGMA integrity_check').get().integrity_check,fk:d.prepare('PRAGMA foreign_key_check').all().length};for(const t of tables)out.rows[t]=Number(d.prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();}

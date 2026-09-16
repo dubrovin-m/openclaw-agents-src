@@ -15,7 +15,7 @@ const json = (rel) => JSON.parse(read(rel));
 const fail = (message) => { throw new Error(message); };
 
 const release = json('release.json');
-if (release?.generation?.sqlite_schema !== 6) fail('Batch 8 must validate Daily Review against the Recurrence-capable schema v6 generation');
+if (release?.generation?.sqlite_schema !== 7) fail('Batch 8 must validate Daily Review against the Recurrence-capable schema v7 generation');
 
 const tools = json('config/tasks-tools.json');
 if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_daily_review').length !== 1) {
@@ -46,7 +46,7 @@ for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyRe
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
 const taskctl = read('taskctl');
-for (const required of ["const IMPLEMENTATION_VERSION = '0.4.9';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
+for (const required of ["const IMPLEMENTATION_VERSION = '0.4.10';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
   if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
@@ -69,7 +69,7 @@ for (const required of [
   'sessionPersistence: "detached"',
   'disableTools: true',
   'modelRun: true',
-  'TASKCTL_SCHEMA_VERSION = 6',
+  'TASKCTL_SCHEMA_VERSION = 7',
   'runDailyReviewSnapshot',
   'completionStatus === "succeeded"',
   'deliveryStatus === "delivered"',
@@ -110,19 +110,21 @@ for (const requiredTest of [
 NODE
 
 DB="$TMP/tasks.sqlite3"
-init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" "$TASKCTL" init)
+CDB="$TMP/tasks-contacts.sqlite3"
+init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init)
 node - "$init" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (result.schema_version !== 6 || result.implementation_version !== '0.4.9') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.9 / schema 6`);
+if (result.schema_version !== 7 || result.implementation_version !== '0.4.10') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.10 / schema 7`);
 NODE
 
 
 BOUNDARY="2026-09-05T06:30:00.000Z"
-node - "$DB" <<'NODE'
+node - "$DB" "$CDB" <<'NODE'
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[2]);
+const cdb = new DatabaseSync(process.argv[3], { readOnly: true });
 try {
-  const person = Number(db.prepare("SELECT id FROM people WHERE display_name='Дубровин М.' ORDER BY id LIMIT 1").get().id);
+  const person = Number(cdb.prepare("SELECT id FROM people WHERE is_self=1 AND status='ACTIVE'").get().id);
   db.prepare("INSERT INTO labels(display_name,emoji,created_at) VALUES('Работа','💼','2026-09-05T05:00:00.000Z')").run();
   db.prepare("INSERT INTO projects(title,status,created_at,completed_at) VALUES('Batch 8','ACTIVE','2026-09-05T05:00:00.000Z',NULL)").run();
   db.exec('BEGIN IMMEDIATE;');
@@ -137,12 +139,12 @@ try {
 } catch (error) {
   try { db.exec('ROLLBACK;'); } catch {}
   throw error;
-} finally { db.close(); }
+} finally { db.close(); cdb.close(); }
 NODE
-snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
+snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 node - "$snapshot" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (!result.ok || result.implementation_version !== '0.4.9' || result.schema_version !== 6 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
+if (!result.ok || result.implementation_version !== '0.4.10' || result.schema_version !== 7 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
 if (!Array.isArray(result.tasks) || result.tasks.length !== 250) process.exit(3);
 if (result.tasks.some((task) => task.title === 'Done' || task.title === 'Future')) process.exit(4);
 const first = result.tasks.find((task) => task.id === 'T-1');
@@ -151,25 +153,29 @@ if (result.inbox_count !== 1) process.exit(6);
 NODE
 
 MANAGEMENT_DB="$TMP/management.sqlite3"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MANAGEMENT_DB" "$TASKCTL" init >/dev/null
-node - "$MANAGEMENT_DB" <<'NODE'
+MANAGEMENT_CDB="$TMP/management-contacts.sqlite3"
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MANAGEMENT_DB" TASKCTL_CONTACTS_DB="$MANAGEMENT_CDB" "$TASKCTL" init >/dev/null
+node - "$MANAGEMENT_DB" "$MANAGEMENT_CDB" <<'NODE'
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[2]);
+const cdb = new DatabaseSync(process.argv[3]);
 try {
   const at='2026-09-15T09:00:00.000Z';
-  const addPerson=db.prepare('INSERT INTO people(display_name,created_at) VALUES(?,?)');
-  const ivanov=Number(addPerson.run('Иванов И.',at).lastInsertRowid);
-  const petrov=Number(addPerson.run('Петров П.',at).lastInsertRowid);
-  const savelev=Number(addPerson.run('Савельев Е.',at).lastInsertRowid);
+  const addPerson=cdb.prepare("INSERT INTO people(display_name,organization,title,is_self,status,merged_into,created_at,updated_at) VALUES(?,NULL,NULL,0,'ACTIVE',NULL,?,?)");
+  const ivanov=Number(addPerson.run('Иванов И.',at,at).lastInsertRowid);
+  const petrov=Number(addPerson.run('Петров П.',at,at).lastInsertRowid);
+  const savelev=Number(addPerson.run('Савельев Е.',at,at).lastInsertRowid);
+  const savelevOld=Number(addPerson.run('Савельев старый',at,at).lastInsertRowid);
+  cdb.prepare("UPDATE people SET status='MERGED',merged_into=?,updated_at=? WHERE id=?").run(savelev,at,savelevOld);
   const add=db.prepare('INSERT INTO tasks(title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id) VALUES(?,?,?,?,?,?,?,NULL)');
   add.run('Старое поручение',ivanov,'OPEN','2026-09-10',null,at,null);
   add.run('Срок сегодня',ivanov,'OPEN','2026-09-16',null,at,null);
-  add.run('Исключенное поручение',savelev,'OPEN','2026-09-10',null,at,null);
+  add.run('Исключенное поручение',savelevOld,'OPEN','2026-09-10',null,at,null);
   add.run('Закрыто сегодня',petrov,'DONE','2026-09-15',null,at,'2026-09-16T10:00:00.000Z');
   add.run('Закрыто вчера',petrov,'DONE','2026-09-14',null,at,'2026-09-15T10:00:00.000Z');
-} finally { db.close(); }
+} finally { db.close(); cdb.close(); }
 NODE
-management=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MANAGEMENT_DB" TASKCTL_PAYLOAD='{"boundary":"2026-09-16T16:00:00.000Z"}' "$TASKCTL" review management-snapshot)
+management=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MANAGEMENT_DB" TASKCTL_CONTACTS_DB="$MANAGEMENT_CDB" TASKCTL_PAYLOAD='{"boundary":"2026-09-16T16:00:00.000Z"}' "$TASKCTL" review management-snapshot)
 node - "$management" <<'NODE'
 const result=JSON.parse(process.argv[2]);
 if(!result.ok||result.local_date!=='2026-09-16'||result.overdue_count!==1||result.completed_today_count!==1)process.exit(2);
@@ -179,18 +185,20 @@ if(!result.excluded_people.some((person)=>person.reference==='Савельев'&
 NODE
 
 LEGACY_DB="$TMP/schema4.sqlite3"
+LEGACY_CDB="$TMP/schema4-contacts.sqlite3"
 node - "$LEGACY_DB" <<'NODE'
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[2]);
 try { db.exec('PRAGMA user_version=4;'); } finally { db.close(); }
 NODE
 set +e
-legacy=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$LEGACY_DB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
+legacy=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$LEGACY_DB" TASKCTL_CONTACTS_DB="$LEGACY_CDB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 legacy_rc=$?
 set -e
 [ "$legacy_rc" -ne 0 ]
 contains_legacy=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(x.error?.code||"")' "$legacy")
 [ "$contains_legacy" = "UNSUPPORTED_SCHEMA" ]
+[ ! -e "$LEGACY_CDB" ]
 node - "$LEGACY_DB" <<'NODE'
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[2], { readOnly: true });
