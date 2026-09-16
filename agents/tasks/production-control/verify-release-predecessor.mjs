@@ -69,6 +69,7 @@ export function validatePublicBootstrapBridge({ release, marker }) {
   const target = marker?.target;
   const legacy = marker?.legacy_predecessor;
   const snapshot = marker?.public_snapshot;
+  const historicalTests = marker?.historical_test_revisions;
   if (target?.plugin_version !== release?.plugin?.version) fail('public bootstrap bridge target plugin mismatch');
   if (target?.taskctl_version !== release?.generation?.taskctl_version) fail('public bootstrap bridge target taskctl mismatch');
   if (target?.sqlite_schema !== release?.generation?.sqlite_schema) fail('public bootstrap bridge target SQLite schema mismatch');
@@ -77,6 +78,7 @@ export function validatePublicBootstrapBridge({ release, marker }) {
   const workspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
   if (legacy?.source_revision !== sourceRevision || legacy?.workspace_source_revision !== workspaceSourceRevision) fail('public bootstrap bridge predecessor revision mismatch');
   if (!SHA_RE.test(snapshot?.commit ?? '') || !SHA_RE.test(snapshot?.tree ?? '') || !SHA_RE.test(snapshot?.parent ?? '')) fail('public bootstrap bridge snapshot identity is invalid');
+  if (!SHA_RE.test(historicalTests?.batch7_schema4_source_revision ?? '')) fail('public bootstrap bridge historical test revision is invalid');
   return true;
 }
 

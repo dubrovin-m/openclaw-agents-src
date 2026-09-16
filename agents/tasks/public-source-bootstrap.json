@@ -14,5 +14,8 @@
     "commit": "dd4567d7d01ca9d0036e21d4f035a0de0bbe4c33",
     "tree": "23f747f627f28208379067ef02f584f9651ff2c7",
     "parent": "b94bb86644d88687e11dcb7da86649143ecaac09"
+  },
+  "historical_test_revisions": {
+    "batch7_schema4_source_revision": "c8fc1df5d77cb15a8dfd567ca76fb29bcb6fec8a"
   }
 }

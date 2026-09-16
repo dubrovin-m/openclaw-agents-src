@@ -155,6 +155,9 @@ test('public bootstrap bridge is pinned to one exact clean-history release and p
       tree: 'e'.repeat(40),
       parent: 'f'.repeat(40),
     },
+    historical_test_revisions: {
+      batch7_schema4_source_revision: 'c'.repeat(40),
+    },
   };
   assert.equal(validatePublicBootstrapBridge({ release: bootstrapRelease, marker }), true);
   assert.throws(() => validatePublicBootstrapBridge({
@@ -169,4 +172,8 @@ test('public bootstrap bridge is pinned to one exact clean-history release and p
     release: bootstrapRelease,
     marker: { ...marker, public_snapshot: { ...marker.public_snapshot, tree: 'not-a-sha' } },
   }), /snapshot identity is invalid/u);
+  assert.throws(() => validatePublicBootstrapBridge({
+    release: bootstrapRelease,
+    marker: { ...marker, historical_test_revisions: { batch7_schema4_source_revision: 'not-a-sha' } },
+  }), /historical test revision is invalid/u);
 });
