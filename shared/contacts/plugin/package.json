@@ -1,6 +1,6 @@
 {
-  "name": "openclaw-plugin-taskctl",
-  "version": "0.4.21",
+  "name": "openclaw-plugin-contacts",
+  "version": "0.1.0",
   "type": "module",
   "private": true,
   "scripts": {

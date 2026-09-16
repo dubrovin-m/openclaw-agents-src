@@ -1,0 +1,81 @@
+#!/usr/bin/env node
+'use strict';
+
+const fs = require('node:fs');
+const os = require('node:os');
+const path = require('node:path');
+const { DatabaseSync } = require('node:sqlite');
+const SOURCE_LIB = __dirname;
+const INSTALLED_LIB = path.join(os.homedir(), '.local', 'lib', 'openclaw-contacts');
+const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_LIB, 'core.cjs')) ? SOURCE_LIB : INSTALLED_LIB;
+const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
+
+const IMPLEMENTATION_VERSION = '0.1.0';
+const PROD_DB = path.join(os.homedir(), '.openclaw', 'data', 'contacts', 'contacts.sqlite3');
+const DB_PATH = process.env.CONTACTCTL_ALLOW_DB_OVERRIDE === '1' && process.env.CONTACTCTL_DB
+  ? path.resolve(process.env.CONTACTCTL_DB) : PROD_DB;
+const PAYLOAD_LIMIT = 128 * 1024;
+
+class AppError extends Error {
+  constructor(code,message,details,exitCode=2){super(message);this.code=code;this.details=details;this.exitCode=exitCode;}
+}
+const fail=(error)=>{const e=error instanceof AppError?error:new AppError('INTERNAL_ERROR',error?.message||String(error),undefined,1);process.stdout.write(JSON.stringify({ok:false,error:{code:e.code,message:e.message,...(e.details===undefined?{}:{details:e.details})}})+'\n');process.exitCode=e.exitCode;};
+const ok=(value)=>process.stdout.write(JSON.stringify(value)+'\n');
+const payload=()=>{const raw=process.env.CONTACTCTL_PAYLOAD;if(!raw)throw new AppError('PAYLOAD_REQUIRED','CONTACTCTL_PAYLOAD is required');if(Buffer.byteLength(raw)>PAYLOAD_LIMIT)throw new AppError('PAYLOAD_TOO_LARGE','CONTACTCTL_PAYLOAD is too large');let value;try{value=JSON.parse(raw);}catch{throw new AppError('INVALID_JSON','CONTACTCTL_PAYLOAD must be valid JSON');}if(!value||Array.isArray(value)||typeof value!=='object')throw new AppError('INVALID_PAYLOAD','payload must be an object');return value;};
+
+function openDb({create=false}={}){
+  if(!create&&!fs.existsSync(DB_PATH))throw new AppError('CONTACTS_DB_MISSING','Contacts database is missing',undefined,3);
+  const dir=path.dirname(DB_PATH);if(create)fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
+  const db=new DatabaseSync(DB_PATH,{timeout:5000});
+  db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
+  if(create){contacts.ensureSchema(db);contacts.ensureSingleSelf(db);}
+  else{const version=Number(db.prepare('PRAGMA user_version').get().user_version);if(version!==contacts.CONTACT_SCHEMA_VERSION){db.close();throw new AppError('UNSUPPORTED_SCHEMA',`Unsupported Contacts schema version ${version}`);}}
+  try{fs.chmodSync(DB_PATH,0o600);}catch{}
+  return db;
+}
+
+const RULES={
+  health:{allowed:[]},list:{allowed:[]},
+  search:{required:['query'],allowed:['query','organization','title','limit']},
+  resolve:{required:['reference'],allowed:['reference','organization','title']},get:{required:['id'],allowed:['id']},
+  create:{required:['operation_key','display_name'],allowed:['operation_key','display_name','organization','title']},
+  update:{required:['operation_key','id'],allowed:['operation_key','id','display_name','organization','title']},
+  rename:{required:['operation_key','id','display_name'],allowed:['operation_key','id','display_name']},
+  alias_add:{required:['operation_key','id','alias'],allowed:['operation_key','id','alias']},alias_remove:{required:['operation_key','id','alias'],allowed:['operation_key','id','alias']},
+  merge:{required:['operation_key','from_id','into_id'],allowed:['operation_key','from_id','into_id']},
+};
+const nonEmpty=(v)=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=500;
+const personId=(v)=>typeof v==='string'&&/^P-[1-9]\d*$/i.test(v.trim());
+function validate(action,p){const rule=RULES[action];if(!rule)throw new AppError('USAGE',`Unknown action: ${action}`);const keys=Object.keys(p),extra=keys.filter(k=>!rule.allowed.includes(k));if(extra.length)throw new AppError('INVALID_FIELD','payload contains unsupported fields',{fields:extra});for(const key of rule.required??[])if(!Object.hasOwn(p,key))throw new AppError('INVALID_FIELD',`${key} is required`);for(const key of ['operation_key','display_name','query','reference','alias'])if(Object.hasOwn(p,key)&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded non-empty string`);for(const key of ['organization','title'])if(Object.hasOwn(p,key)&&p[key]!==null&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded string or null`);for(const key of ['id','from_id','into_id'])if(Object.hasOwn(p,key)&&!personId(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a canonical P-* id`);if(Object.hasOwn(p,'limit')&&(!Number.isSafeInteger(p.limit)||p.limit<1||p.limit>200))throw new AppError('INVALID_FIELD','limit must be an integer from 1 to 200');if(action==='update'&&!['display_name','organization','title'].some(k=>Object.hasOwn(p,k)))throw new AppError('INVALID_FIELD','contact update requires at least one mutable field');return p;}
+
+const formatted=(db,row)=>({...contacts.formatPerson(row),aliases:contacts.aliasesFor(db,row.id).map(x=>x.alias)});
+const mutation=(db,type,p,fn)=>{try{return contacts.mutate(db,type,p,fn);}catch(error){if(/operation_key/.test(error.message))throw new AppError('IDEMPOTENCY_ERROR',error.message);throw error;}};
+function requireMatch(result,reference){if(result.outcome==='MATCH')return result.matches[0];if(result.outcome==='AMBIGUOUS')throw new AppError('AMBIGUOUS_PERSON','Person reference is ambiguous',{reference,candidates:result.matches.map(contacts.formatPerson)});throw new AppError('PERSON_NOT_FOUND','No canonical Person matches the reference',{reference},3);}
+
+function readAction(db,action,p){
+  if(action==='health'){const integrity=contacts.integrity(db);return{ok:integrity.ok,implementation_version:IMPLEMENTATION_VERSION,schema_version:contacts.CONTACT_SCHEMA_VERSION,database:DB_PATH,integrity};}
+  if(action==='list'){const rows=db.prepare("SELECT * FROM people WHERE status='ACTIVE' ORDER BY display_name,id").all();return{ok:true,people:rows.map(r=>formatted(db,r)),count:rows.length};}
+  if(action==='search'){const query=String(p.query??'').trim();if(!query)throw new AppError('INVALID_FIELD','query is required');const rows=contacts.search(db,query,{organization:p.organization,title:p.title,limit:p.limit});return{ok:true,query,people:rows.map(r=>formatted(db,r)),count:rows.length};}
+  if(action==='resolve'){const reference=String(p.reference??'').trim();if(!reference)throw new AppError('INVALID_FIELD','reference is required');const result=contacts.resolve(db,reference,{organization:p.organization,title:p.title});return{ok:true,reference,outcome:result.outcome,matches:result.matches.map(r=>formatted(db,r)),redirected_from:result.redirected_from??null};}
+  if(action==='get'){const raw=contacts.rawPerson(db,p.id);if(!raw)throw new AppError('NOT_FOUND',`Person ${p.id} not found`,undefined,3);const canonical=contacts.canonicalPerson(db,raw);return{ok:true,person:formatted(db,raw),canonical:formatted(db,canonical),redirected:raw.id!==canonical.id};}
+  throw new AppError('USAGE',`Unknown read action: ${action}`);
+}
+
+function writeAction(db,action,p){
+  if(action==='create')return mutation(db,'contact.create',p,()=>{const result=contacts.createOrReuse(db,p);if(result.outcome==='AMBIGUOUS')throw new AppError('AMBIGUOUS_PERSON','Contact creation matches multiple Persons',{candidates:result.matches.map(contacts.formatPerson)});return{ok:true,person:formatted(db,result.person),created:result.created};});
+  if(action==='update')return mutation(db,'contact.update',p,()=>{const row=contacts.updateFacts(db,p.id,p);return{ok:true,person:formatted(db,row)};});
+  if(action==='rename')return mutation(db,'contact.rename',p,()=>{const row=contacts.updateFacts(db,p.id,{display_name:p.display_name});return{ok:true,person:formatted(db,row)};});
+  if(action==='alias_add')return mutation(db,'contact.alias_add',p,()=>{const aliases=contacts.addAlias(db,p.id,p.alias);const canonical=contacts.canonicalPerson(db,p.id);return{ok:true,person:formatted(db,canonical),aliases:aliases.map(x=>x.alias)};});
+  if(action==='alias_remove')return mutation(db,'contact.alias_remove',p,()=>{const aliases=contacts.removeAlias(db,p.id,p.alias);const canonical=contacts.canonicalPerson(db,p.id);return{ok:true,person:formatted(db,canonical),aliases:aliases.map(x=>x.alias)};});
+  if(action==='merge')return mutation(db,'contact.merge',p,()=>{const result=contacts.merge(db,p.from_id,p.into_id);return{ok:true,changed:result.changed,merged_from:contacts.formatPerson(result.from),person:formatted(db,result.person)};});
+  throw new AppError('USAGE',`Unknown write action: ${action}`);
+}
+
+let db;
+try{
+  const [action]=process.argv.slice(2);db=openDb({create:action==='init'});
+  if(action==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:contacts.CONTACT_SCHEMA_VERSION,database:DB_PATH});
+  else{const integrity=contacts.integrity(db);if(action!=='health'&&!integrity.ok)throw new AppError('CONTACTS_INTEGRITY_ERROR','Contacts integrity check failed',{errors:integrity.errors},1);if(['health','list','search','resolve','get'].includes(action)){const p=validate(action,payload());ok(readAction(db,action,p));}
+  else if(['create','update','rename','alias_add','alias_remove','merge'].includes(action)){const p=validate(action,payload());ok(writeAction(db,action,p));}
+  else throw new AppError('USAGE','Usage: contactctl <init|health|list|search|resolve|get|create|update|rename|alias_add|alias_remove|merge>');}
+}catch(error){fail(error);}finally{try{db?.close();}catch{}}

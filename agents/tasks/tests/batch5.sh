@@ -161,7 +161,7 @@ NODE
 
 # Batch 5 behavior remains valid on the current schema generation.
 node - "$DB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(Number(d.prepare('PRAGMA user_version').get().user_version)!==6)process.exit(1);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')process.exit(1);if(d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(1);d.close();
+const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(Number(d.prepare('PRAGMA user_version').get().user_version)!==7)process.exit(1);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')process.exit(1);if(d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(1);d.close();
 NODE
 
 printf 'BATCH5_DETERMINISTIC_PASS\n'

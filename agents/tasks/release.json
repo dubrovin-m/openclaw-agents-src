@@ -2,29 +2,29 @@
   "format": "task-agent-release-v2",
   "workspace_layout": "agents-md-tools-v1",
   "generation": {
-    "taskctl_version": "0.4.9",
-    "sqlite_schema": 6,
+    "taskctl_version": "0.4.10",
+    "sqlite_schema": 7,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.8.2",
     "openclaw_compat": ">=2026.8.2"
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.20",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.20.tgz",
-    "sha256": "4ba14e81c3c8d1220825ddb59a70dde8a32eaa3c1aa362def4991e493a3411ea"
+    "version": "0.4.21",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.21.tgz",
+    "sha256": "861f44fce8c135f42e05c6dc892f825cc89dbc788a5e90cd5f19f1ceb76f6b4f"
   },
   "from": {
-    "source_revision": "4942c28a1cb8f661a48db914712fb97daf68bbe3",
-    "workspace_source_revision": "4942c28a1cb8f661a48db914712fb97daf68bbe3",
+    "source_revision": "42329b0edab9d8d3ab9fa16257fc11723cd6acaf",
+    "workspace_source_revision": "42329b0edab9d8d3ab9fa16257fc11723cd6acaf",
     "sqlite_schemas": [
       6
     ],
     "taskctl_versions": [
-      "0.4.8"
+      "0.4.9"
     ],
     "plugin_versions": [
-      "0.4.19"
+      "0.4.20"
     ],
     "workspace_sha256": {
       "AGENTS.md": "c1ad1e0ab6f4b6ae5277e8083ea8a7d4c84ae0636c7cb5a4ce65eb59b848ad1e",
@@ -34,7 +34,7 @@
       "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
       "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
     },
-    "tools_sha256": "52479a15d6eff1a0975df3bd170dcecb64faf3aad88481427f9f0bea3fe4da39"
+    "tools_sha256": "ebdb0b24bb81c83de9abe43504f9b96be0513aee30117b29e3a81aa958151eec"
   },
   "calendar_materializer": {
     "kind": "openclaw-command-automation-v1",
@@ -44,5 +44,11 @@
     "timezone": "Europe/Moscow",
     "exact": true,
     "timeout_seconds": 30
+  },
+  "shared_contacts": {
+    "release_path": "../../shared/contacts/release.json",
+    "release_sha256": "b1a346dd846b1c866b79abe7b58a312d55a463a32ff63581507bf961220005a4",
+    "implementation_version": "0.1.0",
+    "sqlite_schema": 1
   }
 }

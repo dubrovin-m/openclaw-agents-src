@@ -7,7 +7,7 @@ trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/tasks.sqlite3"
 run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$1" TASKCTL_PAYLOAD="$2" "$TASKCTL" "$3" "$4"; }
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW=2026-09-08T07:00:00Z "$TASKCTL" init)
-node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==6||x.implementation_version!=="0.4.9")process.exit(1)' "$init"
+node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==7||x.implementation_version!=="0.4.10")process.exit(1)' "$init"
 
 # Existing entities.
 SELF=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD='{}' "$TASKCTL" person list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);process.stdout.write(x.people.find(p=>p.display_name==="Дубровин М.").id)})')
@@ -117,6 +117,6 @@ git -C "$REPO" cat-file -e "$BASE^{commit}"
 git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TMP/old-taskctl" init >/dev/null
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" TASKCTL_PAYLOAD='{"operation_key":"old-row","title":"Existing v5 Task","assignee":"Дубровин М."}' "$TMP/old-taskctl" task create >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==6||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
 
 printf 'TASK_AGENT_BATCH9_RECURRING_PASS\n'

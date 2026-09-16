@@ -11,6 +11,9 @@ TARGET_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdou
 TARGET_PLUGIN_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.plugin.version))' "$ROOT/release.json")
 TARGET_SQLITE_SCHEMA=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.generation.sqlite_schema))' "$ROOT/release.json")
 TARGET_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$ROOT/plugins/taskctl/openclaw.plugin.json")
+CONTACTS_ROOT="$ROOT/../../shared/contacts"
+TARGET_CONTACTS_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.implementation_version))' "$CONTACTS_ROOT/release.json")
+TARGET_CONTACT_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$CONTACTS_ROOT/plugin/openclaw.plugin.json")
 ISOLATED_PATH="$NODE_BIN_DIR:/usr/bin:/bin"
 TEST_BASE=$(mktemp -d /tmp/task-agent-isolated-runtime.XXXXXX)
 RUNTIME="$TEST_BASE/runtime"
@@ -60,6 +63,8 @@ snapshot_production() {
     /home/dubrovin/.openclaw/openclaw.json \
     /home/dubrovin/.openclaw/data/tasks/tasks.sqlite3 \
     /home/dubrovin/.local/bin/taskctl \
+    /home/dubrovin/.local/bin/contactctl \
+    /home/dubrovin/.openclaw/data/contacts/contacts.sqlite3 \
     /home/dubrovin/.config/systemd/user/nexus-sync.service \
     /home/dubrovin/.config/systemd/user/openclaw-gateway.service \
     /home/dubrovin/.openclaw/workspace-tasks/AGENTS.md \
@@ -75,6 +80,8 @@ snapshot_production() {
     fi
   done
   path=/home/dubrovin/.openclaw/extensions/taskctl
+  printf 'DIR\t%s\t%s\n' "$path" "$(tree_digest "$path")" >> "$output"
+  path=/home/dubrovin/.openclaw/extensions/contacts
   printf 'DIR\t%s\t%s\n' "$path" "$(tree_digest "$path")" >> "$output"
 }
 
@@ -98,6 +105,7 @@ taskctl_test() {
     TZ="Europe/Moscow" \
     TASKCTL_ALLOW_DB_OVERRIDE=1 \
     TASKCTL_DB="$RUNTIME/state/data/tasks/tasks.sqlite3" \
+    TASKCTL_CONTACTS_DB="$RUNTIME/state/data/contacts/contacts.sqlite3" \
     "$RUNTIME/bin/taskctl" "$@"
 }
 
@@ -119,6 +127,9 @@ assert_no_production_trace() {
     /home/dubrovin/.openclaw/openclaw.json \
     /home/dubrovin/.openclaw/data/tasks/tasks.sqlite3 \
     /home/dubrovin/.openclaw/extensions/taskctl \
+    /home/dubrovin/.openclaw/extensions/contacts \
+    /home/dubrovin/.openclaw/data/contacts/contacts.sqlite3 \
+    /home/dubrovin/.local/bin/contactctl \
     /home/dubrovin/.openclaw/workspace-tasks \
     /home/dubrovin/.local/bin/taskctl \
     /home/dubrovin/.config/systemd/user/openclaw-gateway.service \
@@ -137,6 +148,9 @@ run_with_trace install bash "$ROOT/install.sh" --test-root "$RUNTIME"
 test -f "$RUNTIME/state/openclaw.json"
 test -x "$RUNTIME/bin/taskctl"
 test -d "$RUNTIME/state/extensions/taskctl"
+test -d "$RUNTIME/state/extensions/contacts"
+test -x "$RUNTIME/bin/contactctl"
+test -f "$RUNTIME/state/data/contacts/contacts.sqlite3"
 test -d "$RUNTIME/workspace-tasks"
 test "$(oc config get 'agents.entries.tasks.workspace' --json | jq -r .)" = "$RUNTIME/workspace-tasks"
 test "$(oc config get 'agents.entries.tasks.agentDir' --json | jq -r .)" = "$RUNTIME/state/agents/tasks/agent"
@@ -145,6 +159,9 @@ oc config validate
 taskctl_test health | jq -e --arg v "$TARGET_TASKCTL_VERSION" --argjson schema "$TARGET_SQLITE_SCHEMA" '.ok == true and .implementation_version == $v and .schema_version == $schema' >/dev/null
 node -e 'const p=require(process.argv[1]),v=process.argv[2];if(p.version!==v)process.exit(2)' "$RUNTIME/state/extensions/taskctl/package.json" "$TARGET_PLUGIN_VERSION"
 test "$(node -e "const p=require(process.argv[1]);process.stdout.write(p.version)" "$RUNTIME/state/extensions/taskctl/openclaw.plugin.json")" = "$TARGET_PLUGIN_VERSION"
+node -e 'const p=require(process.argv[1]),v=process.argv[2];if(p.version!==v)process.exit(2)' "$RUNTIME/state/extensions/contacts/package.json" "$TARGET_CONTACTS_VERSION"
+CONTACTS_HEALTH=$(HOME="$RUNTIME/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$RUNTIME/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{}' "$RUNTIME/bin/contactctl" health)
+node -e 'const x=JSON.parse(process.argv[1]),v=process.argv[2];if(x.ok!==true||x.implementation_version!==v||x.integrity?.ok!==true)process.exit(1)' "$CONTACTS_HEALTH" "$TARGET_CONTACTS_VERSION"
 cmp -s "$ROOT/workspace/AGENTS.md" "$RUNTIME/workspace-tasks/AGENTS.md" || fail "Deployed AGENTS.md differs from source"
 
 oc plugins inspect taskctl --runtime --json | jq -e --arg v "$TARGET_PLUGIN_VERSION" --arg count "$TARGET_TOOL_COUNT" '
@@ -159,6 +176,13 @@ oc plugins inspect taskctl --runtime --json | jq -e --arg v "$TARGET_PLUGIN_VERS
     (($names | index("taskctl")) == null) and
     (($names | index("task_production_control")) != null) and
     (["task_update", "task_complete", "task_cancel", "task_get", "inbox_add", "ref_resolve", "label_delete"] | all(.[]; . as $name | ($names | index($name)) != null)))
+' >/dev/null
+
+oc plugins inspect contacts --runtime --json | jq -e --arg v "$TARGET_CONTACTS_VERSION" --arg count "$TARGET_CONTACT_TOOL_COUNT" '
+  .plugin as $p | $p.toolNames as $names |
+  $p.version == $v and $p.status == "loaded" and $p.enabled == true and
+  ($names | length) == ($count|tonumber) and
+  (["contact_search","contact_resolve","contact_get","contact_create","contact_update","contact_rename","contact_alias_add","contact_alias_remove","contact_merge"] | all(.[]; . as $name | ($names | index($name)) != null))
 ' >/dev/null
 
 HOST_OPENCLAW_ROOT=$(resolve_host_openclaw_root)
@@ -209,6 +233,8 @@ if(!valid.ok||!validEmoji.ok||!validDelete.ok||invalidId.ok||invalidDate.ok||inv
 JS2
 test "$(stat -c '%a' "$RUNTIME/state/openclaw.json")" = "600"
 test "$(stat -c '%a' "$RUNTIME/bin/taskctl")" = "700"
+test "$(stat -c '%a' "$RUNTIME/bin/contactctl")" = "700"
+test "$(stat -c '%a' "$RUNTIME/state/data/contacts/contacts.sqlite3")" = "600"
 test "$(stat -c '%a' "$RUNTIME/state/data/tasks/tasks.sqlite3")" = "600"
 for f in AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md; do
   test "$(stat -c '%a' "$RUNTIME/workspace-tasks/$f")" = "644"
