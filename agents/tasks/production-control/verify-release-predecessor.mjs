@@ -10,6 +10,7 @@ import { pathToFileURL } from 'node:url';
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const SHA256_RE = /^[0-9a-f]{64}$/u;
 export const PREDECESSOR_WORKSPACE_FILES = ['AGENTS.md', 'SOUL.md', 'TOOLS.md', 'USER.md', 'IDENTITY.md', 'HEARTBEAT.md'];
+const PUBLIC_BOOTSTRAP_PATH = 'agents/tasks/public-source-bootstrap.json';
 
 const fail = (message) => { throw new Error(message); };
 
@@ -61,6 +62,24 @@ export function validatePredecessorBinding({ release, predecessorRelease, source
   return true;
 }
 
+export function validatePublicBootstrapBridge({ release, marker }) {
+  const from = release?.from;
+  if (marker?.format !== 'task-agent-public-source-bootstrap-v1') fail('public bootstrap bridge format is invalid');
+  if (!from || !Array.isArray(from.plugin_versions) || from.plugin_versions.length !== 1) fail('public bootstrap bridge requires one declared predecessor');
+  const target = marker?.target;
+  const legacy = marker?.legacy_predecessor;
+  const snapshot = marker?.public_snapshot;
+  if (target?.plugin_version !== release?.plugin?.version) fail('public bootstrap bridge target plugin mismatch');
+  if (target?.taskctl_version !== release?.generation?.taskctl_version) fail('public bootstrap bridge target taskctl mismatch');
+  if (target?.sqlite_schema !== release?.generation?.sqlite_schema) fail('public bootstrap bridge target SQLite schema mismatch');
+  if (!SHA256_RE.test(target?.release_sha256 ?? '') || target.release_sha256 !== sha256(stableJson(release))) fail('public bootstrap bridge release fingerprint mismatch');
+  const sourceRevision = from.source_revision;
+  const workspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
+  if (legacy?.source_revision !== sourceRevision || legacy?.workspace_source_revision !== workspaceSourceRevision) fail('public bootstrap bridge predecessor revision mismatch');
+  if (!SHA_RE.test(snapshot?.commit ?? '') || !SHA_RE.test(snapshot?.tree ?? '') || !SHA_RE.test(snapshot?.parent ?? '')) fail('public bootstrap bridge snapshot identity is invalid');
+  return true;
+}
+
 function git(repoRoot, args) {
   return execFileSync('git', args, { cwd: repoRoot, encoding: 'utf8', stdio: ['ignore', 'pipe', 'pipe'] }).trimEnd();
 }
@@ -73,6 +92,43 @@ function gitShow(repoRoot, revision, relativePath) {
   });
 }
 
+function gitObjectExists(repoRoot, revisionSpec) {
+  try {
+    execFileSync('git', ['cat-file', '-e', revisionSpec], { cwd: repoRoot, stdio: ['ignore', 'ignore', 'ignore'] });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision }) {
+  const markerPath = path.join(repoRoot, PUBLIC_BOOTSTRAP_PATH);
+  if (!fs.existsSync(markerPath)) fail('predecessor history is unavailable and public bootstrap bridge is missing');
+  const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
+  validatePublicBootstrapBridge({ release, marker });
+  const snapshot = marker.public_snapshot;
+  if (!gitObjectExists(repoRoot, `${snapshot.commit}^{commit}`)) fail('public bootstrap snapshot commit is unavailable');
+  if (!gitObjectExists(repoRoot, `${snapshot.parent}^{commit}`)) fail('public bootstrap parent commit is unavailable');
+  const snapshotTree = git(repoRoot, ['rev-parse', `${snapshot.commit}^{tree}`]);
+  if (snapshotTree !== snapshot.tree) fail('public bootstrap snapshot tree mismatch');
+  const snapshotParents = git(repoRoot, ['show', '-s', '--format=%P', snapshot.commit]).split(/\s+/u).filter(Boolean);
+  if (snapshotParents.length !== 1 || snapshotParents[0] !== snapshot.parent) fail('public bootstrap snapshot ancestry mismatch');
+  try {
+    git(repoRoot, ['merge-base', '--is-ancestor', snapshot.commit, 'HEAD']);
+  } catch {
+    fail('public bootstrap snapshot is not an ancestor of HEAD');
+  }
+  const snapshotRelease = JSON.parse(gitShow(repoRoot, snapshot.commit, 'agents/tasks/release.json'));
+  if (sha256(stableJson(snapshotRelease)) !== marker.target.release_sha256) fail('public bootstrap snapshot release fingerprint mismatch');
+  return {
+    provenance_mode: 'public-bootstrap-bridge',
+    source_revision: sourceRevision,
+    workspace_source_revision: workspaceSourceRevision,
+    predecessor_plugin: release.from.plugin_versions[0],
+    public_snapshot: snapshot.commit,
+  };
+}
+
 export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevision = 'HEAD' } = {}) {
   const releasePath = path.join(repoRoot, 'agents/tasks/release.json');
   const release = JSON.parse(fs.readFileSync(releasePath, 'utf8'));
@@ -80,7 +136,7 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
   if (!from || !Array.isArray(from.plugin_versions)) fail('release predecessor metadata is invalid');
   if (from.plugin_versions.length === 0) {
     validatePredecessorBinding({ release, predecessorRelease: null, sourceRevision: null, workspaceSourceRevision: null, workspaceSha256: {}, toolsSha256: null });
-    return { source_revision: null, workspace_source_revision: null, predecessor_plugin: null };
+    return { provenance_mode: 'none', source_revision: null, workspace_source_revision: null, predecessor_plugin: null };
   }
 
   const sourceRevision = from.source_revision;
@@ -88,8 +144,18 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
   const workspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
   if (!SHA_RE.test(workspaceSourceRevision ?? '')) fail('predecessor workspace source revision must be an exact lowercase commit SHA');
   const effectiveBase = SHA_RE.test(baseRevision ?? '') && !/^0{40}$/u.test(baseRevision) ? baseRevision : 'HEAD';
-  git(repoRoot, ['cat-file', '-e', `${sourceRevision}^{commit}`]);
-  git(repoRoot, ['cat-file', '-e', `${workspaceSourceRevision}^{commit}`]);
+  if (!gitObjectExists(repoRoot, `${effectiveBase}^{commit}`)) fail('predecessor verification base revision is unavailable');
+  try {
+    git(repoRoot, ['merge-base', '--is-ancestor', effectiveBase, 'HEAD']);
+  } catch {
+    fail('predecessor verification base revision is not an ancestor of HEAD');
+  }
+  const sourcePresent = gitObjectExists(repoRoot, `${sourceRevision}^{commit}`);
+  const workspaceSourcePresent = gitObjectExists(repoRoot, `${workspaceSourceRevision}^{commit}`);
+  if (!sourcePresent || !workspaceSourcePresent) {
+    if (sourcePresent !== workspaceSourcePresent) fail('predecessor history is only partially available');
+    return verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision });
+  }
   git(repoRoot, ['cat-file', '-e', `${effectiveBase}^{commit}`]);
   const firstParent = new Set(git(repoRoot, ['rev-list', '--first-parent', effectiveBase]).split(/\n/u).filter(Boolean));
   if (!firstParent.has(sourceRevision)) fail('predecessor source revision is not on the pre-candidate first-parent history');
@@ -108,7 +174,7 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
   const predecessorTools = JSON.parse(gitShow(repoRoot, sourceRevision, 'agents/tasks/config/tasks-tools.json'));
   const toolsSha256 = sha256(stableJson(predecessorTools));
   validatePredecessorBinding({ release, predecessorRelease, sourceRevision, workspaceSourceRevision, workspaceSha256, toolsSha256 });
-  return { source_revision: sourceRevision, workspace_source_revision: workspaceSourceRevision, predecessor_plugin: predecessorRelease.plugin.version };
+  return { provenance_mode: 'history', source_revision: sourceRevision, workspace_source_revision: workspaceSourceRevision, predecessor_plugin: predecessorRelease.plugin.version };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;

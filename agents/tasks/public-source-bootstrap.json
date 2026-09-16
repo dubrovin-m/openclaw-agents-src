@@ -1,0 +1,18 @@
+{
+  "format": "task-agent-public-source-bootstrap-v1",
+  "target": {
+    "plugin_version": "0.4.17",
+    "taskctl_version": "0.4.7",
+    "sqlite_schema": 6,
+    "release_sha256": "1a08145f6682e665604e5478385b423222c6c9ff025b05375db63b5f635bd7c7"
+  },
+  "legacy_predecessor": {
+    "source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba",
+    "workspace_source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba"
+  },
+  "public_snapshot": {
+    "commit": "dd4567d7d01ca9d0036e21d4f035a0de0bbe4c33",
+    "tree": "23f747f627f28208379067ef02f584f9651ff2c7",
+    "parent": "b94bb86644d88687e11dcb7da86649143ecaac09"
+  }
+}
