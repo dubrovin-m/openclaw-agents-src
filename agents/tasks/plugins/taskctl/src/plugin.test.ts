@@ -114,11 +114,22 @@ describe("Task Agent model-visible per-action tool contracts", () => {
     expect(Value.Check(projectList, { status: "OPEN" })).toBe(false);
   });
 
-  it("TA-LBL-019/021 preserves the required task_create alternative while keeping Task Label associations canonical-id-only", () => {
+  it("keeps task_create on one required model-visible assignee field while keeping Task Label associations canonical-id-only", () => {
     const taskCreate = actionToolParameters("task_create");
+    expect(Object.keys(schemaProperties(taskCreate)).sort()).toEqual(["assignee", "create_assignee", "due_date", "due_time", "labels", "operation_key", "project_id", "status", "title"]);
+    expect([...schemaRequired(taskCreate)].sort()).toEqual(["assignee", "operation_key", "title"]);
+    expect((taskCreate as { allOf?: unknown[] }).allOf).toBeUndefined();
     expect(Value.Check(taskCreate, { operation_key: "create", title: "Test" })).toBe(false);
     expect(Value.Check(taskCreate, { operation_key: "create", title: "Test", assignee: "Дубровин М." })).toBe(true);
-    expect(Value.Check(taskCreate, { operation_key: "create", title: "Test", assignee: "Дубровин М.", assignee_id: "P-1" })).toBe(false);
+    expect(Value.Check(taskCreate, { operation_key: "create", title: "Взять входной на 7.10", assignee: "P-1", due_date: "2026-09-16" })).toBe(true);
+    expect(Value.Check(taskCreate, { operation_key: "create", title: "Test", assignee_id: "P-1" })).toBe(false);
+
+    const inboxCommit = actionToolParameters("inbox_commit");
+    const inboxTask = (schemaProperties(inboxCommit).tasks as { items?: unknown }).items;
+    expect(Object.keys(schemaProperties(inboxTask)).sort()).toEqual(["assignee", "create_assignee", "due_date", "due_time", "labels", "project_id", "status", "title"]);
+    expect([...schemaRequired(inboxTask)].sort()).toEqual(["assignee", "title"]);
+    expect(Value.Check(inboxCommit, { operation_key: "commit", id: "I-1", tasks: [{ title: "Взять входной на 7.10", assignee: "P-1" }] })).toBe(true);
+    expect(Value.Check(inboxCommit, { operation_key: "commit", id: "I-1", tasks: [{ title: "Взять входной на 7.10", assignee_id: "P-1" }] })).toBe(false);
 
     for (const action of ["task_label_add", "task_label_remove"] as const) {
       const parameters = actionToolParameters(action);
@@ -151,6 +162,18 @@ describe("Task Agent model-visible per-action tool contracts", () => {
       expect(Object.keys(schemaProperties(normalizedSchema)).sort(), action).toEqual([...getActionDefinition(action).allowed].sort());
       expect([...schemaRequired(normalizedSchema)].sort(), action).toEqual([...(getActionDefinition(action).required ?? [])].sort());
     }
+    const normalizedTaskCreate = byName.get("task_create");
+    expect((normalizedTaskCreate as { allOf?: unknown[] }).allOf).toBeUndefined();
+    expect(Object.keys(schemaProperties(normalizedTaskCreate)).sort()).toEqual(["assignee", "create_assignee", "due_date", "due_time", "labels", "operation_key", "project_id", "status", "title"]);
+    expect([...schemaRequired(normalizedTaskCreate)].sort()).toEqual(["assignee", "operation_key", "title"]);
+    expect(Value.Check(normalizedTaskCreate as never, { operation_key: "create", title: "Взять входной на 7.10", assignee: "P-1", due_date: "2026-09-16" })).toBe(true);
+    expect(Value.Check(normalizedTaskCreate as never, { operation_key: "create", title: "Взять входной на 7.10", assignee_id: "P-1", due_date: "2026-09-16" })).toBe(false);
+    const normalizedInboxCommit = byName.get("inbox_commit");
+    const normalizedInboxTask = (schemaProperties(normalizedInboxCommit).tasks as { items?: unknown }).items;
+    expect(Object.keys(schemaProperties(normalizedInboxTask)).sort()).toEqual(["assignee", "create_assignee", "due_date", "due_time", "labels", "project_id", "status", "title"]);
+    expect([...schemaRequired(normalizedInboxTask)].sort()).toEqual(["assignee", "title"]);
+    expect(Value.Check(normalizedInboxCommit as never, { operation_key: "commit", id: "I-1", tasks: [{ title: "Взять входной на 7.10", assignee: "P-1" }] })).toBe(true);
+    expect(Value.Check(normalizedInboxCommit as never, { operation_key: "commit", id: "I-1", tasks: [{ title: "Взять входной на 7.10", assignee_id: "P-1" }] })).toBe(false);
     for (const action of ["task_label_add", "task_label_remove"] as const) {
       const normalizedSchema = byName.get(action);
       expect(Object.keys(schemaProperties(normalizedSchema)).sort()).toEqual(labelAssociationFields);

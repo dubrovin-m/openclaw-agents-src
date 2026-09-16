@@ -41,8 +41,7 @@ const labelSpec = Type.Union([
 ]);
 const newTask = Type.Object({
     title: Type.String({ minLength: 1, maxLength: 2000 }),
-    assignee: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
-    assignee_id: Type.Optional(personId),
+    assignee: Type.String({ minLength: 1, maxLength: 500 }),
     create_assignee: Type.Optional(Type.Boolean()),
     status: Type.Optional(taskStatus),
     due_date: Type.Optional(dueDate),
@@ -121,8 +120,8 @@ export const ACTION_REGISTRY = Object.freeze({
         label: "Inbox commit", description: "Atomically create the confirmed Task set, including optional resolved Project associations, and remove that Inbox item.",
     },
     task_create: {
-        argv: ["task", "create"], required: ["operation_key", "title"], allowed: ["operation_key", "title", "assignee", "assignee_id", "create_assignee", "status", "due_date", "due_time", "labels", "project_id"], exactlyOneOf: [["assignee", "assignee_id"]],
-        label: "Task create", description: "Create one Task with an explicit assignee and optional deadline, initial status, Labels, and an already resolved ACTIVE Project association.",
+        argv: ["task", "create"], required: ["operation_key", "title", "assignee"], allowed: ["operation_key", "title", "assignee", "create_assignee", "status", "due_date", "due_time", "labels", "project_id"],
+        label: "Task create", description: "Create one Task with an explicit assignee and optional deadline, initial status, Labels, and an already resolved ACTIVE Project association. The assignee field accepts either a canonical P-* identifier returned by Person resolution or an unambiguous display-name reference.",
     },
     task_list: {
         argv: ["task", "list"], allowed: ["status", "assignee", "assignee_id", "label", "view", "due_on", "due_until", "search", "limit"],

@@ -66,11 +66,10 @@ export declare const ACTION_REGISTRY: Readonly<{
     };
     readonly task_create: {
         readonly argv: readonly ["task", "create"];
-        readonly required: readonly ["operation_key", "title"];
-        readonly allowed: readonly ["operation_key", "title", "assignee", "assignee_id", "create_assignee", "status", "due_date", "due_time", "labels", "project_id"];
-        readonly exactlyOneOf: readonly [readonly ["assignee", "assignee_id"]];
+        readonly required: readonly ["operation_key", "title", "assignee"];
+        readonly allowed: readonly ["operation_key", "title", "assignee", "create_assignee", "status", "due_date", "due_time", "labels", "project_id"];
         readonly label: "Task create";
-        readonly description: "Create one Task with an explicit assignee and optional deadline, initial status, Labels, and an already resolved ACTIVE Project association.";
+        readonly description: "Create one Task with an explicit assignee and optional deadline, initial status, Labels, and an already resolved ACTIVE Project association. The assignee field accepts either a canonical P-* identifier returned by Person resolution or an unambiguous display-name reference.";
     };
     readonly task_list: {
         readonly argv: readonly ["task", "list"];
