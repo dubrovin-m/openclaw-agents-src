@@ -41,3 +41,5 @@ export declare function executeTaskctl(action: unknown, payload: unknown, option
 export declare function runTaskctl(action: TaskctlAction, payload: JsonObject, options?: RunOptions): Promise<unknown>;
 export declare function buildDailyReviewSnapshotInvocation(boundaryIso: string): TaskctlInvocation;
 export declare function runDailyReviewSnapshot(boundaryIso: string, options?: RunOptions): Promise<unknown>;
+export declare function buildManagementReviewSnapshotInvocation(boundaryIso: string): TaskctlInvocation;
+export declare function runManagementReviewSnapshot(boundaryIso: string, options?: RunOptions): Promise<unknown>;

@@ -105,3 +105,10 @@ export function buildDailyReviewSnapshotInvocation(boundaryIso:string):TaskctlIn
   return{executable:TASKCTL_EXECUTABLE,argv:["review","snapshot"],options:{shell:false,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",TASKCTL_PAYLOAD:JSON.stringify({boundary})},stdio:["ignore","pipe","pipe"]}};
 }
 export async function runDailyReviewSnapshot(boundaryIso:string,options:RunOptions={}){return runInvocation(buildDailyReviewSnapshotInvocation(boundaryIso),{...options,outputLimitBytes:options.outputLimitBytes??2*1024*1024});}
+export function buildManagementReviewSnapshotInvocation(boundaryIso:string):TaskctlInvocation{
+  if(typeof boundaryIso!=="string"||!boundaryIso.trim())throw new Error("Management Review snapshot boundary is required");
+  const instant=new Date(boundaryIso);if(Number.isNaN(instant.getTime()))throw new Error("Management Review snapshot boundary must be a valid ISO timestamp");
+  const boundary=instant.toISOString();
+  return{executable:TASKCTL_EXECUTABLE,argv:["review","management-snapshot"],options:{shell:false,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",TASKCTL_PAYLOAD:JSON.stringify({boundary})},stdio:["ignore","pipe","pipe"]}};
+}
+export async function runManagementReviewSnapshot(boundaryIso:string,options:RunOptions={}){return runInvocation(buildManagementReviewSnapshotInvocation(boundaryIso),{...options,outputLimitBytes:options.outputLimitBytes??2*1024*1024});}

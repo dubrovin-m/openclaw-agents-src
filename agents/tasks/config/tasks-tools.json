@@ -57,7 +57,8 @@
     "recurrence_resume",
     "recurrence_cancel",
     "read",
-    "task_daily_review"
+    "task_daily_review",
+    "task_management_review"
   ],
   "deny": [
     "write",

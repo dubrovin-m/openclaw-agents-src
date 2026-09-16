@@ -6,6 +6,7 @@ import { getToolPluginMetadata } from "openclaw/plugin-sdk/tool-plugin";
 import { ACTION_REGISTRY, TASKCTL_ACTIONS, actionPayloadSchema, actionToolParameters, getActionDefinition } from "./contract.js";
 import { TASK_DAILY_REVIEW_TOOL } from "./daily-review.js";
 import { executeTaskctl } from "./index.js";
+import { TASK_MANAGEMENT_REVIEW_TOOL } from "./management-review.js";
 import { TASK_PRODUCTION_CONTROL_TOOL } from "./production-control.js";
 import entry from "./plugin.js";
 
@@ -13,7 +14,8 @@ const schemaProperties = (schema: unknown) => (schema as { properties?: Record<s
 const schemaRequired = (schema: unknown) => (schema as { required?: string[] }).required ?? [];
 const metadataTools = () => getToolPluginMetadata(entry)?.tools ?? [];
 const ordinaryToolNames = () => [...TASKCTL_ACTIONS, TASK_PRODUCTION_CONTROL_TOOL];
-const allToolNames = () => [...ordinaryToolNames(), TASK_DAILY_REVIEW_TOOL];
+const schedulerToolNames = () => [TASK_DAILY_REVIEW_TOOL, TASK_MANAGEMENT_REVIEW_TOOL];
+const allToolNames = () => [...ordinaryToolNames(), ...schedulerToolNames()];
 const labelAssociationFields = ["label_id", "operation_key", "task_id"];
 const projectAssociationFields = ["operation_key", "project_id", "task_id"];
 
@@ -23,7 +25,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
     expect(TASKCTL_ACTIONS).toHaveLength(55);
     expect(names).toEqual(allToolNames());
     expect(names).not.toContain("taskctl");
-    expect(new Set(names).size).toBe(57);
+    expect(new Set(names).size).toBe(58);
     expect(ordinaryToolNames()).toHaveLength(56);
   });
 
@@ -35,7 +37,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
   });
 
   it("keeps scheduler-only tools out of the ordinary model-visible normalization surface", () => {
-    const tools = metadataTools().filter((tool) => tool.name !== TASK_DAILY_REVIEW_TOOL);
+    const tools = metadataTools().filter((tool) => !schedulerToolNames().includes(tool.name));
     const normalized = normalizeOpenAIToolSchemas({
       tools,
       provider: "openai",
@@ -142,7 +144,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
   });
 
   it("TA-REC-035 keeps all 56 ordinary contracts through pinned OpenAI Responses normalization", () => {
-    const tools = metadataTools().filter((tool) => tool.name !== TASK_DAILY_REVIEW_TOOL);
+    const tools = metadataTools().filter((tool) => !schedulerToolNames().includes(tool.name));
     const normalized = normalizeOpenAIToolSchemas({
       tools,
       provider: "openai",
@@ -193,6 +195,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
     expect(Object.keys(schemaProperties(productionControl)).sort()).toEqual(["action", "sha"]);
     expect(schemaRequired(productionControl)).toEqual(["action"]);
     expect(byName.has(TASK_DAILY_REVIEW_TOOL)).toBe(false);
+    expect(byName.has(TASK_MANAGEMENT_REVIEW_TOOL)).toBe(false);
   });
 
   it("keeps task_update free of status and Project association", () => {
