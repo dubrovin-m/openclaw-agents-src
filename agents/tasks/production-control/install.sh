@@ -40,7 +40,7 @@ fi
 
 LIB_DIR="$HOME_DIR/.local/lib/openclaw-production-control"
 STATE_DIR="$HOME_DIR/.local/state/openclaw-production-control"
-SOURCE_DIR="$HOME_DIR/.local/share/openclaw-production-control/openclaw-agents-src"
+SOURCE_DIR="$HOME_DIR/.local/share/openclaw-production-control/openclaw-agents"
 CONFIG_DIR="$HOME_DIR/.config/openclaw-production-control"
 SYSTEMD_DIR="$HOME_DIR/.config/systemd/user"
 
