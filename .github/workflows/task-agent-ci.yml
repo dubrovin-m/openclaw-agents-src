@@ -138,7 +138,6 @@ jobs:
           const fromTaskctl = from.taskctl_versions ?? [release.generation.taskctl_version];
           if (!Array.isArray(fromTaskctl) || fromTaskctl.length === 0 || !fromTaskctl.every((v) => version.test(v)) || new Set(fromTaskctl).size !== fromTaskctl.length) bad('invalid predecessor taskctl identities');
           if (!from.plugin_versions.every((v) => version.test(v)) || new Set(from.plugin_versions).size !== from.plugin_versions.length) bad('invalid predecessor plugin identities');
-          if (from.plugin_versions.includes(release.plugin.version)) bad('target plugin cannot be its own predecessor');
           if (from.plugin_versions.length === 0) {
             if (Object.keys(from.workspace_sha256 || {}).length !== 0 || from.tools_sha256 !== null) bad('retired predecessor fingerprints remain');
           } else {

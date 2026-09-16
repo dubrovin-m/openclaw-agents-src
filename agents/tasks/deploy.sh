@@ -61,7 +61,6 @@ if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 if(!r?.from||!Array.isArray(r.from.plugin_versions)||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(r.from.plugin_versions).size!==r.from.plugin_versions.length)bad();
-if(r.from.plugin_versions.includes(r.plugin.version))bad();
 const fromSchemas=r.from.sqlite_schemas;
 if(!Array.isArray(fromSchemas)||fromSchemas.length===0||!fromSchemas.every(v=>Number.isSafeInteger(v)&&v>=1)||new Set(fromSchemas).size!==fromSchemas.length)bad();
 const fromTaskctl=r.from.taskctl_versions??[targetTaskctl];
@@ -410,7 +409,7 @@ maybe_fault(){ [ -n "$TEST_ROOT" ] && [ "${TASK_AGENT_DEPLOY_FAULT:-}" = "$1" ] 
 main(){
   echo "EXECUTION_ID=$EXECUTION_ID"
   validate_source; validate_live_boundary
-  if [ "$MODE" = "preflight" ]; then echo "TASK_AGENT_DEPLOY_PREFLIGHT_PASS target_taskctl=$TARGET_TASKCTL_VERSION current_taskctl=$START_TASKCTL_VERSION target_plugin=$TARGET_PLUGIN_VERSION current_plugin=$START_PLUGIN_VERSION"; exit 0; fi
+  if [ "$MODE" = "preflight" ]; then echo "TASK_AGENT_DEPLOY_PREFLIGHT_PASS start_is_target=$START_IS_TARGET target_taskctl=$TARGET_TASKCTL_VERSION current_taskctl=$START_TASKCTL_VERSION target_plugin=$TARGET_PLUGIN_VERSION current_plugin=$START_PLUGIN_VERSION"; exit 0; fi
   if [ "$START_IS_TARGET" -eq 1 ]; then json_result "PASS" "NOOP" "target runtime already exact; no mutation required"; echo "TASK_AGENT_DEPLOY_NOOP"; echo "RESULT_FILE=$RESULT_FILE"; exit 0; fi
 
   create_recovery_set || abort_deploy "BACKUP" "failed to create or validate recovery set"; maybe_fault "after-backup"

@@ -7,7 +7,7 @@ It covers both rare protected-path cases:
 - the exact target was already effective and `deploy.sh --apply` returned `PASS / NOOP / mutation_started=false`;
 - the approved break-glass operation changed the Task runtime and returned `PASS / COMPLETE / mutation_started=true`.
 
-Routine plugin-only Task releases continue to use the normal production controller. This path exists only because changes to controller, deployment, installation, recovery, or other protected harness files cannot self-deploy through that controller.
+Routine Task releases that do not change protected production-control paths continue to use the normal production controller. This path exists only because changes to controller, deployment, installation, recovery, or other protected harness files cannot self-deploy through that controller.
 
 ## Preconditions
 
@@ -20,7 +20,7 @@ The caller supplies the owner-private durable result JSON produced by the exact 
 - `result=PASS`, `stage=NOOP`, `mutation_started=false`, `source_revision=<exact --to SHA>`; or
 - `result=PASS`, `stage=COMPLETE`, `mutation_started=true`, `source_revision=<exact --to SHA>`.
 
-The target `deploy.sh --preflight` must also pass with the current plugin equal to the target plugin. Because a target plugin cannot also be an eligible predecessor, that condition establishes that the live Task runtime remains the exact target generation at reconciliation time.
+The target `deploy.sh --preflight` must also return `start_is_target=1`. That flag is emitted only after the deploy runner has validated the complete target runtime fingerprint, so reconciliation does not infer exact-target state from any single component version.
 
 ## Apply
 

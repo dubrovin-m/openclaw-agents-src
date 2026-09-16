@@ -129,9 +129,8 @@ NODE
 preflight=$("$TASKS_ROOT/deploy.sh" --preflight) || { echo "Task Agent target preflight failed" >&2; exit 2; }
 PREFLIGHT_PASS=$(awk '/^TASK_AGENT_DEPLOY_PREFLIGHT_PASS /{print; exit}' <<<"$preflight")
 [ -n "$PREFLIGHT_PASS" ] || { echo "Unexpected Task Agent preflight output" >&2; exit 2; }
-TARGET_PLUGIN=$(awk '{for(i=1;i<=NF;i++)if($i~/^target_plugin=/){sub(/^target_plugin=/,"",$i);print $i;exit}}' <<<"$PREFLIGHT_PASS")
-CURRENT_PLUGIN=$(awk '{for(i=1;i<=NF;i++)if($i~/^current_plugin=/){sub(/^current_plugin=/,"",$i);print $i;exit}}' <<<"$PREFLIGHT_PASS")
-[ -n "$TARGET_PLUGIN" ] && [ "$CURRENT_PLUGIN" = "$TARGET_PLUGIN" ] || { echo "Task runtime is not the exact target generation" >&2; exit 2; }
+START_IS_TARGET=$(awk '{for(i=1;i<=NF;i++)if($i~/^start_is_target=/){sub(/^start_is_target=/,"",$i);print $i;exit}}' <<<"$PREFLIGHT_PASS")
+[ "$START_IS_TARGET" = "1" ] || { echo "Task runtime is not the exact target generation" >&2; exit 2; }
 
 MUTATED=0
 BACKUP_READY=0

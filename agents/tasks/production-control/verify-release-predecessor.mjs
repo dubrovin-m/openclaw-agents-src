@@ -50,7 +50,11 @@ export function validatePredecessorBinding({ release, predecessorRelease, source
   if (!exactSingleton(from.sqlite_schemas, predecessorSchema)) fail('predecessor SQLite identity is not bound to source revision');
   if (!exactSingleton(from.taskctl_versions, predecessorTaskctl)) fail('predecessor taskctl identity is not bound to source revision');
   if (!exactSingleton(from.plugin_versions, predecessorPlugin)) fail('predecessor plugin identity is not bound to source revision');
-  if (predecessorPlugin === release?.plugin?.version) fail('target plugin cannot be its own predecessor');
+  if (predecessorPlugin === release?.plugin?.version) {
+    const keys = ['name', 'version', 'artifact', 'sha256'];
+    const exactReuse = keys.every((key) => predecessorRelease?.plugin?.[key] === release?.plugin?.[key]);
+    if (!exactReuse || !SHA256_RE.test(release?.plugin?.sha256 ?? '')) fail('same-version target plugin must reuse exact predecessor plugin artifact identity');
+  }
 
   const declaredWorkspace = from.workspace_sha256;
   if (!declaredWorkspace || Object.keys(declaredWorkspace).sort().join(',') !== PREDECESSOR_WORKSPACE_FILES.slice().sort().join(',')) fail('predecessor workspace fingerprint set is incomplete');

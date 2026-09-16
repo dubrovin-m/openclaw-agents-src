@@ -21,9 +21,9 @@ set -euo pipefail
 [ "${1:-}" = "--preflight" ] || exit 2
 echo 'EXECUTION_ID=task-agent-deploy-test'
 if [ "${PREFLIGHT_TARGET:-1}" = "1" ]; then
-  echo 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS target_taskctl=0.4.1 current_taskctl=0.4.1 target_plugin=0.4.6 current_plugin=0.4.6'
+  echo 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS start_is_target=1 target_taskctl=0.4.1 current_taskctl=0.4.1 target_plugin=0.4.6 current_plugin=0.4.6'
 else
-  echo 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS target_taskctl=0.4.1 current_taskctl=0.4.1 target_plugin=0.4.6 current_plugin=0.4.5'
+  echo 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS start_is_target=0 target_taskctl=0.4.1 current_taskctl=0.4.1 target_plugin=0.4.6 current_plugin=0.4.6'
 fi
 SH
 chmod 755 "$TASKS/deploy.sh"
