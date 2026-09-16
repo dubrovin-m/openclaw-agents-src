@@ -128,7 +128,7 @@ done
 test "$(json_stable_sha "$FIXTURE/config/tasks-tools.json")" = "$EXPECTED_TOOLS_SHA" || fail "materialized predecessor tools mismatch"
 test "$(sha256sum "$ROOT/workspace/TOOLS.md"|awk '{print $1}')" = "$EXPECTED_TOOLS_MD_SHA" || fail "current retired TOOLS.md source no longer matches declared migration provenance"
 test "$(node "$ROOT/workspace-layout.mjs" layout "$ROOT/release.json")" = agents-md-tools-v1 || fail "unexpected workspace layout"
-test "$(node "$ROOT/workspace-layout.mjs" recovery-format "$ROOT/release.json")" = task-agent-recovery-v2 || fail "unexpected recovery format"
+test "$(node "$ROOT/workspace-layout.mjs" recovery-format "$ROOT/release.json")" = task-agent-recovery-v3 || fail "unexpected recovery format"
 
 OPENCLAW_BIN=$(command -v openclaw || true)
 [ -n "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
@@ -272,15 +272,40 @@ NODE
   test "$(cat "$r/gateway.state")" = active || fail "Gateway state changed"
 }
 
+assert_no_contacts_runtime(){
+  local r=$1
+  test ! -e "$r/state/data/contacts/contacts.sqlite3" || fail "predecessor unexpectedly contains Contacts DB"
+  test ! -e "$r/home/.local/lib/openclaw-contacts" || fail "predecessor unexpectedly contains Contacts library"
+  test ! -e "$r/bin/contactctl" || fail "predecessor unexpectedly contains contactctl"
+  test ! -e "$r/state/extensions/contacts" || fail "predecessor unexpectedly contains Contacts plugin"
+  node - "$r/state/openclaw.json" <<'NODE' || fail "predecessor config retains Contacts activation"
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(c?.plugins?.entries?.contacts||c?.plugins?.installs?.contacts||(c?.plugins?.allow||[]).includes('contacts'))process.exit(1);
+NODE
+}
+
 assert_predecessor_restored(){
   local r=$1
   assert_predecessor_runtime "$r"
+  assert_no_contacts_runtime "$r"
   test ! -e "$r/workspace-tasks/TOOLS.md" || fail "recovery restored retired TOOLS.md"
 }
 
 init_predecessor_runtime(){
   local r=$1 f tools_json
   TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-root "$r" >/dev/null
+
+  # install.sh creates the current target shape. Strip Shared Contacts so this
+  # fixture remains the exact deployed 0.4.9/schema-6 predecessor.
+  rm -rf "$r/state/data/contacts" "$r/home/.local/lib/openclaw-contacts" "$r/state/extensions/contacts"
+  rm -f "$r/bin/contactctl"
+  node - "$r/state/openclaw.json" <<'NODE'
+const fs=require('fs'),p=process.argv[2],c=JSON.parse(fs.readFileSync(p,'utf8'));
+if(c.plugins?.entries)delete c.plugins.entries.contacts;
+if(c.plugins?.installs)delete c.plugins.installs.contacts;
+if(Array.isArray(c.plugins?.allow))c.plugins.allow=c.plugins.allow.filter(x=>x!=='contacts');
+fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
+NODE
 
   install -m 700 "$FIXTURE/taskctl" "$r/bin/taskctl"
   rm -f "$r/state/data/tasks/tasks.sqlite3" "$r/state/data/tasks/tasks.sqlite3-wal" "$r/state/data/tasks/tasks.sqlite3-shm"
@@ -368,17 +393,24 @@ NODE
 test "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$R/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN_VERSION" || fail "target plugin not installed"
 test ! -e "$R/workspace-tasks/TOOLS.md" || fail "target deployment recreated retired TOOLS.md"
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
-[ -n "$RECOVERY" ] || fail "v2 recovery set missing"
-test "$(cat "$RECOVERY/RECOVERY_FORMAT")" = task-agent-recovery-v2 || fail "wrong recovery format"
+[ -n "$RECOVERY" ] || fail "v3 recovery set missing"
+test "$(cat "$RECOVERY/RECOVERY_FORMAT")" = task-agent-recovery-v3 || fail "wrong recovery format"
+node - "$RECOVERY/contacts-state.json" <<'NODE' || fail "v3 predecessor Contacts state is invalid"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(x.format!=='shared-contacts-recovery-v1'||x.db_present||x.lib_present||x.contactctl_present||x.plugin_present)process.exit(1);
+NODE
+for f in contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz; do
+  test ! -e "$RECOVERY/$f" || fail "v3 recovery retained nonexistent predecessor Contacts artifact: $f"
+done
 set +e
 bash "$ROOT/recover.sh" --test-root "$R" --inspect --from "$RECOVERY" >/dev/null 2>&1
 CODE=$?
 set -e
-test "$CODE" -eq 3 || fail "v2 recovery inspection failed"
+test "$CODE" -eq 3 || fail "v3 recovery inspection failed"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null
 assert_predecessor_restored "$R"
 
-# Starting from the verified v2-restored predecessor, a synthetic
+# Starting from the verified v3-restored predecessor, a synthetic
 # post-mutation fault must automatically roll back to the same declared
 # predecessor and must not resurrect retired TOOLS.md.
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
