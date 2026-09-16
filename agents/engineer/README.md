@@ -13,7 +13,7 @@ Engineer v0 is intentionally small. This package contains:
 - `config/engineer-tools.json` — the bounded model-visible tool and host-exec policy;
 - `validate.sh` — deterministic source validation.
 
-Engineer v0 has no custom plugin, backend, database, production controller, scheduled automation, or shared infrastructure of its own.
+Engineer v0 has no custom plugin, backend, database, production controller, custom scheduler, or shared infrastructure of its own. Registered native OpenClaw Automation instances are runtime-owned provider state and are not defined by this package.
 
 The package does not contain or provision model credentials, GitHub credentials, Telegram bot tokens, Nexus write access, host approval allowlists, or other secrets/provider-managed state.
 
