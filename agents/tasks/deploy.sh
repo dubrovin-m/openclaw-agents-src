@@ -36,6 +36,7 @@ if [ -n "$TEST_ROOT" ] && [ -n "${TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT:-}" ]; t
   RUNTIME_CONTRACT_ROOT=$(realpath -e "$TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT") || fail_plain "Unable to resolve test runtime contract root"
 fi
 RUNTIME_CONTRACT="$RUNTIME_CONTRACT_ROOT/runtime-contract.json"
+CONTACTS_ROOT="$REPO_ROOT/shared/contacts"
 RUNTIME_HELPER="$RUNTIME_CONTRACT_ROOT/shared/runtime-contract/runtime-contract.mjs"
 if [ ! -f "$WORKSPACE_LAYOUT_HELPER" ] && [ -n "$TEST_ROOT" ]; then
   TEST_WORKSPACE_LAYOUT_HELPER="$RUNTIME_CONTRACT_ROOT/agents/tasks/workspace-layout.mjs"
@@ -58,6 +59,7 @@ const satisfies=(v,range)=>{const m=/^>=(\d+)\.(\d+)\.(\d+)$/.exec(range||''),x=
 if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||!satisfies(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
 if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
 if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
+const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0\.1\.[0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1))bad();
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 if(!r?.from||!Array.isArray(r.from.plugin_versions)||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(r.from.plugin_versions).size!==r.from.plugin_versions.length)bad();
@@ -78,6 +80,11 @@ console.log(`TARGET_SQLITE_SCHEMA=${q(targetSchema)}`);
 console.log(`FROM_SQLITE_SCHEMAS=${q(fromSchemas.join(' '))}`);
 console.log(`FROM_TASKCTL_VERSIONS=${q(fromTaskctl.join(' '))}`);
 console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);
+console.log(`CONTACTS_ENABLED=${q(sc?'1':'0')}`);
+console.log(`TARGET_CONTACTS_VERSION=${q(sc?.implementation_version||'')}`);
+console.log(`TARGET_CONTACTS_SCHEMA=${q(sc?.sqlite_schema||'')}`);
+console.log(`CONTACTS_RELEASE_REL=${q(sc?.release_path||'')}`);
+console.log(`EXPECTED_CONTACTS_RELEASE_SHA=${q(sc?.release_sha256||'')}`);
 console.log(`ARTIFACT_REL=${q(r.plugin.artifact)}`);
 console.log(`EXPECTED_ARTIFACT_SHA=${q(r.plugin.sha256)}`);
 console.log(`MATERIALIZER_ENABLED=${q(mat?'1':'0')}`);
@@ -98,6 +105,11 @@ RECOVERY_FORMAT=$(node "$WORKSPACE_LAYOUT_HELPER" recovery-format "$RELEASE_FILE
 [ "${#TARGET_WORKSPACE_FILES[@]}" -gt 0 ] || fail_plain "Target workspace file set is empty"
 
 ARTIFACT="$ROOT/$ARTIFACT_REL"
+CONTACTS_RELEASE=""; CONTACTS_PLUGIN_ARTIFACT=""
+if [ "$CONTACTS_ENABLED" = "1" ]; then
+  CONTACTS_RELEASE="$ROOT/$CONTACTS_RELEASE_REL"
+  CONTACTS_PLUGIN_ARTIFACT="$CONTACTS_ROOT/$(node -e 'const r=require(process.argv[1]);const a=r?.plugin?.artifact;if(typeof a!=="string")process.exit(2);process.stdout.write(a)' "$CONTACTS_RELEASE")" || fail_plain "Invalid Shared Contacts plugin artifact"
+fi
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
 TARGET_TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json" 2>/dev/null || true)
 [ -n "$TARGET_TOOLS_JSON" ] || fail_plain "Unable to load target Task Agent tool policy"
@@ -116,6 +128,10 @@ if [ -n "$TEST_ROOT" ]; then
   BIN_DIR="$TEST_ROOT/bin"
   CONFIG="$STATE_DIR/openclaw.json"
   DB="$STATE_DIR/data/tasks/tasks.sqlite3"
+  CONTACTS_DB="$STATE_DIR/data/contacts/contacts.sqlite3"
+  CONTACTS_LIB="$HOME_DIR/.local/lib/openclaw-contacts"
+  CONTACTCTL_TARGET="$BIN_DIR/contactctl"
+  CONTACTS_PLUGIN_DIR="$STATE_DIR/extensions/contacts"
   PLUGIN_DIR="$STATE_DIR/extensions/taskctl"
   BACKUPS_ROOT="$TEST_ROOT/backups"
   DELIVERABLES="$TEST_ROOT/deliverables"
@@ -127,6 +143,10 @@ else
   BIN_DIR="$HOME_DIR/.local/bin"
   CONFIG="$STATE_DIR/openclaw.json"
   DB="$STATE_DIR/data/tasks/tasks.sqlite3"
+  CONTACTS_DB="$STATE_DIR/data/contacts/contacts.sqlite3"
+  CONTACTS_LIB="$HOME_DIR/.local/lib/openclaw-contacts"
+  CONTACTCTL_TARGET="$BIN_DIR/contactctl"
+  CONTACTS_PLUGIN_DIR="$STATE_DIR/extensions/contacts"
   PLUGIN_DIR="$STATE_DIR/extensions/taskctl"
   BACKUPS_ROOT="$STATE_DIR/backups"
   DELIVERABLES="$STATE_DIR/workspace/deliverables"
@@ -222,7 +242,8 @@ const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?
 NODE
   calendar_materializer_exact
 }
-taskctl_health(){ if [ -n "$TEST_ROOT" ]; then TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
+taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
+contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" "$CONTACTCTL_TARGET" health; else "$CONTACTCTL_TARGET" health; fi; }
 start_gateway_best_effort(){ systemctl_user start openclaw-gateway.service >/dev/null 2>&1 || true; GATEWAY_STOPPED=0; }
 
 abort_deploy(){
@@ -250,9 +271,11 @@ try{
   const labels=cols('labels'),tasks=cols('tasks'),projects=cols('projects'),ev=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_events'").get()?.sql||'',base=labels.includes('emoji')&&tasks.includes('assignee_id')&&ev.includes('DUE_TIME_CHANGED');
   const physical_v4=base&&!tasks.includes('project_id')&&projects.length===0;
   const physical_v5=base&&tasks.includes('project_id')&&['id','title','status','created_at','completed_at'].every(x=>projects.includes(x));
-  const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');
-  const physical_v6=physical_v5&&['id','status','mode','title','assignee_id','due_time','target_project_id','rule_json','calendar_cursor_date','created_at','updated_at','cancelled_at'].every(x=>rec.includes(x))&&['recurrence_id','label_id'].every(x=>rl.includes(x))&&['id','recurrence_id','occurrence_key','occurrence_date','predecessor_task_id','task_id','template_json','generated_at'].every(x=>ro.includes(x))&&['id','recurrence_id','event_type','old_value','new_value','reason','occurred_at'].every(x=>re.includes(x));
-  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_v4,physical_v5,physical_v6}));
+  const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events'),people=cols('people'),aliases=cols('person_aliases');
+  const recurrenceShape=['id','status','mode','title','assignee_id','due_time','target_project_id','rule_json','calendar_cursor_date','created_at','updated_at','cancelled_at'].every(x=>rec.includes(x))&&['recurrence_id','label_id'].every(x=>rl.includes(x))&&['id','recurrence_id','occurrence_key','occurrence_date','predecessor_task_id','task_id','template_json','generated_at'].every(x=>ro.includes(x))&&['id','recurrence_id','event_type','old_value','new_value','reason','occurred_at'].every(x=>re.includes(x));
+  const physical_v6=physical_v5&&recurrenceShape&&people.includes('id')&&aliases.includes('person_id');
+  const physical_v7=physical_v5&&recurrenceShape&&people.length===0&&aliases.length===0;
+  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_v4,physical_v5,physical_v6,physical_v7}));
 }finally{db.close();}
 NODE
 }
@@ -291,13 +314,36 @@ plugin_version(){ node -e "const p=require(process.argv[1]);process.stdout.write
 plugin_identity_matches_target(){ local pv tv; pv=$(plugin_version) || return 1; [ "$pv" = "$TARGET_PLUGIN_VERSION" ] || return 1; tv=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/node_modules/typebox/package.json" 2>/dev/null) || return 1; [ "$tv" = "1.3.15" ]; }
 taskctl_runtime_identity(){ local health; health=$(taskctl_health 2>/dev/null) || return 1; node -e 'const h=JSON.parse(process.argv[1]);if(!/^0\.4\.[0-9]+$/.test(h.implementation_version||"")||!Number.isSafeInteger(h.schema_version))process.exit(1);process.stdout.write(`${h.implementation_version} ${h.schema_version}`)' "$health"; }
 taskctl_version(){ local identity; identity=$(taskctl_runtime_identity) || return 1; printf '%s\n' "${identity%% *}"; }
+contacts_source_exact(){
+  [ "$CONTACTS_ENABLED" = "1" ] || return 0
+  [ -f "$CONTACTS_RELEASE" ] && [ "$(sha256sum "$CONTACTS_RELEASE"|awk '{print $1}')" = "$EXPECTED_CONTACTS_RELEASE_SHA" ] || return 1
+  [ -f "$CONTACTS_ROOT/core.cjs" ] && [ -f "$CONTACTS_ROOT/task-store.cjs" ] && [ -x "$CONTACTS_ROOT/contactctl" ] || return 1
+  node - "$CONTACTS_RELEASE" "$CONTACTS_ROOT" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || return 1
+const fs=require('fs'),crypto=require('crypto'),path=require('path'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=process.argv[3],v=process.argv[4],schema=Number(process.argv[5]),sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');if(r?.format!=='shared-contacts-release-v1'||r.implementation_version!==v||r.sqlite_schema!==schema)process.exit(2);for(const f of ['core.cjs','task-store.cjs','contactctl'])if(r.runtime_files?.[f]!==sha(path.join(root,f)))process.exit(2);const a=path.join(root,r.plugin.artifact);if(r.plugin?.name!=='openclaw-plugin-contacts'||r.plugin?.version!==v||r.plugin?.sha256!==sha(a))process.exit(2);
+NODE
+  node --check "$CONTACTS_ROOT/core.cjs" >/dev/null && node --check "$CONTACTS_ROOT/task-store.cjs" >/dev/null && node --check "$CONTACTS_ROOT/contactctl" >/dev/null || return 1
+  local tmp out; tmp=$(mktemp -d) || return 1; out=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$tmp/contacts.sqlite3" "$CONTACTS_ROOT/contactctl" init 2>/dev/null) || { rm -rf "$tmp"; return 1; }; rm -rf "$tmp"
+  node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3]))process.exit(1)' "$out" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA"
+}
+contacts_runtime_exact(){
+  [ "$CONTACTS_ENABLED" = "1" ] || return 0
+  [ -x "$CONTACTCTL_TARGET" ] && [ -f "$CONTACTS_LIB/core.cjs" ] && [ -f "$CONTACTS_LIB/task-store.cjs" ] && [ -f "$CONTACTS_DB" ] && [ -f "$CONTACTS_PLUGIN_DIR/package.json" ] || return 1
+  cmp -s "$CONTACTS_ROOT/contactctl" "$CONTACTCTL_TARGET" && cmp -s "$CONTACTS_ROOT/core.cjs" "$CONTACTS_LIB/core.cjs" && cmp -s "$CONTACTS_ROOT/task-store.cjs" "$CONTACTS_LIB/task-store.cjs" || return 1
+  local h inspect; h=$(contactctl_health 2>/dev/null) || return 1
+  node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3])||x.integrity?.ok!==true)process.exit(1)' "$h" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA" || return 1
+  inspect=$(oc plugins inspect contacts --runtime --json 2>/dev/null) || return 1
+  node -e 'const x=JSON.parse(process.argv[1]),p=x?.plugin,expected=["contact_search","contact_resolve","contact_get","contact_create","contact_update","contact_rename","contact_alias_add","contact_alias_remove","contact_merge"];if(p?.id!=="contacts"||p?.packageVersion!==process.argv[2]||p?.enabled!==true||p?.status!=="loaded"||!expected.every(t=>p.toolNames?.includes(t)))process.exit(1)' "$inspect" "$TARGET_CONTACTS_VERSION"
+}
+contacts_predecessor_absent(){ [ "$CONTACTS_ENABLED" != "1" ] || { [ ! -e "$CONTACTS_DB" ] && [ ! -e "$CONTACTS_LIB" ] && [ ! -e "$CONTACTCTL_TARGET" ] && [ ! -e "$CONTACTS_PLUGIN_DIR" ]; }; }
+contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_predecessor_absent || contacts_runtime_exact; }
+
 taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
 taskctl_starting_eligible(){ local identity current schema found_v=0 found_s=0 v; identity=$(taskctl_runtime_identity) || return 1; current=${identity%% *}; schema=${identity##* }; for v in $FROM_TASKCTL_VERSIONS; do [ "$current" = "$v" ] && found_v=1; done; for v in $FROM_SQLITE_SCHEMAS; do [ "$schema" = "$v" ] && found_s=1; done; [ "$found_v" -eq 1 ] && [ "$found_s" -eq 1 ]; }
-db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
+db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6)||(want===7&&!s.physical_v7))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
 db_starting_eligible(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),allowed=process.argv[2].split(/ +/).filter(Boolean).map(Number);if(!allowed.includes(s.user_version)||s.integrity!=="ok"||s.fk!==0||(s.user_version===4&&!s.physical_v4)||(s.user_version===5&&!s.physical_v5)||(s.user_version===6&&!s.physical_v6))process.exit(1)' "$state" "$FROM_SQLITE_SCHEMAS"; }
-target_runtime_exact(){ db_generation_exact && taskctl_target_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && oc config validate >/dev/null 2>&1; }
+target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && oc config validate >/dev/null 2>&1; }
 starting_runtime_eligible(){
-  db_starting_eligible || return 1; taskctl_starting_eligible || return 1
+  db_starting_eligible || return 1; taskctl_starting_eligible || return 1; contacts_starting_eligible || return 1
   local pv found=0 v; pv=$(plugin_version) || return 1; for v in $FROM_PLUGIN_VERSIONS; do [ "$pv" = "$v" ] && found=1; done; [ "$found" -eq 1 ] || return 1
   workspace_matches_from || return 1; [ "$(current_tools_sha)" = "$FROM_TOOLS_SHA" ] || return 1; oc config validate >/dev/null 2>&1 || return 1
 }
@@ -313,10 +359,11 @@ source_taskctl_identity_exact(){
 validate_source(){
   [ -n "$REPO_ROOT" ] || abort_deploy "SOURCE" "repository root unavailable"
   SOURCE_REVISION=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || abort_deploy "SOURCE" "cannot resolve source revision"
-  [ -z "$(git -C "$REPO_ROOT" status --porcelain -- agents/tasks runtime-contract.json shared/runtime-contract)" ] || abort_deploy "SOURCE" "runtime-affecting checkout is not clean"
+  [ -z "$(git -C "$REPO_ROOT" status --porcelain -- agents/tasks shared/contacts runtime-contract.json shared/runtime-contract)" ] || abort_deploy "SOURCE" "runtime-affecting checkout is not clean"
   node "$RUNTIME_HELPER" repo-check "$RUNTIME_CONTRACT_ROOT" >/dev/null || abort_deploy "SOURCE" "repository runtime contract mismatch"
   node --check "$WORKSPACE_LAYOUT_HELPER" >/dev/null || abort_deploy "SOURCE" "workspace layout helper syntax invalid"
   source_taskctl_identity_exact || abort_deploy "SOURCE" "taskctl source identity does not match release generation"
+  contacts_source_exact || abort_deploy "SOURCE" "Shared Contacts source identity does not match release generation"
   [ -f "$ARTIFACT" ] && [ -f "$ARTIFACT_SHA_FILE" ] || abort_deploy "SOURCE" "release artifact or SHA file missing"
   local actual listed pkgver f
   actual=$(sha256sum "$ARTIFACT"|awk '{print $1}'); listed=$(awk 'NF{print $1;exit}' "$ARTIFACT_SHA_FILE"); [ "$actual" = "$EXPECTED_ARTIFACT_SHA" ] && [ "$listed" = "$EXPECTED_ARTIFACT_SHA" ] || abort_deploy "SOURCE" "release artifact SHA mismatch"
@@ -381,10 +428,26 @@ fi
   node - "$DB" "$RECOVERY_SET/tasks.sqlite3" <<'NODE' || return 1
 const {DatabaseSync,backup}=require('node:sqlite');const fs=require('fs');(async()=>{const db=new DatabaseSync(process.argv[2],{readOnly:true});try{await backup(db,process.argv[3]);}finally{db.close();}fs.chmodSync(process.argv[3],0o600);})().catch(e=>{console.error(e);process.exit(2)});
 NODE
+  local contacts_db_present=0 contacts_lib_present=0 contactctl_present=0 contacts_plugin_present=0
+  [ ! -e "$CONTACTS_DB" ] || contacts_db_present=1
+  [ ! -e "$CONTACTS_LIB" ] || contacts_lib_present=1
+  [ ! -e "$CONTACTCTL_TARGET" ] || contactctl_present=1
+  [ ! -e "$CONTACTS_PLUGIN_DIR" ] || contacts_plugin_present=1
+  node - "$RECOVERY_SET/contacts-state.json" "$contacts_db_present" "$contacts_lib_present" "$contactctl_present" "$contacts_plugin_present" <<'NODE' || return 1
+const fs=require('fs');const out={format:'shared-contacts-recovery-v1',db_present:process.argv[3]==='1',lib_present:process.argv[4]==='1',contactctl_present:process.argv[5]==='1',plugin_present:process.argv[6]==='1'};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
+NODE
+  if [ "$contacts_db_present" -eq 1 ]; then
+    node - "$CONTACTS_DB" "$RECOVERY_SET/contacts.sqlite3" <<'NODE' || return 1
+const {DatabaseSync,backup}=require('node:sqlite');const fs=require('fs');(async()=>{const db=new DatabaseSync(process.argv[2],{readOnly:true});try{await backup(db,process.argv[3]);}finally{db.close();}fs.chmodSync(process.argv[3],0o600);})().catch(e=>{console.error(e);process.exit(2)});
+NODE
+  fi
+  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_lib_present" -eq 1 ]; then tar -czf "$RECOVERY_SET/contacts-lib.before.tar.gz" -C "$(dirname "$CONTACTS_LIB")" "$(basename "$CONTACTS_LIB")" || return 1; fi
+  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contactctl_present" -eq 1 ]; then install -m 700 "$CONTACTCTL_TARGET" "$RECOVERY_SET/contactctl.before" || return 1; fi
+  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_plugin_present" -eq 1 ]; then tar --exclude='contacts/node_modules/openclaw' -czf "$RECOVERY_SET/contacts-plugin.before.tar.gz" -C "$(dirname "$CONTACTS_PLUGIN_DIR")" contacts || return 1; fi
   tar --exclude='taskctl/node_modules/openclaw' -czf "$RECOVERY_SET/taskctl-managed.before.tar.gz" -C "$(dirname "$PLUGIN_DIR")" taskctl || return 1
   local args=() f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do args+=("workspace-tasks/$f"); done; tar -czf "$RECOVERY_SET/workspace-tasks.before.tar.gz" -C "$(dirname "$WORKSPACE")" "${args[@]}" || return 1
   printf '%s\n' "$RECOVERY_FORMAT" > "$RECOVERY_SET/RECOVERY_FORMAT"
-  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz)
+  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz); [ ! -f "$RECOVERY_SET/contacts-state.json" ] || checksum_files+=(contacts-state.json); [ ! -f "$RECOVERY_SET/contacts.sqlite3" ] || checksum_files+=(contacts.sqlite3); [ ! -f "$RECOVERY_SET/contacts-lib.before.tar.gz" ] || checksum_files+=(contacts-lib.before.tar.gz); [ ! -f "$RECOVERY_SET/contactctl.before" ] || checksum_files+=(contactctl.before); [ ! -f "$RECOVERY_SET/contacts-plugin.before.tar.gz" ] || checksum_files+=(contacts-plugin.before.tar.gz)
   [ ! -f "$RECOVERY_SET/calendar-materializer.before.json" ] || checksum_files+=(calendar-materializer.before.json)
   (cd "$RECOVERY_SET" && sha256sum "${checksum_files[@]}" > SHA256SUMS) || return 1; chmod 600 "$RECOVERY_SET"/* || return 1
   local a=(--inspect --from "$RECOVERY_SET") code=0; if [ -n "$TEST_ROOT" ]; then a=(--test-root "$TEST_ROOT" "${a[@]}"); fi; "$ROOT/recover.sh" "${a[@]}" >/dev/null 2>&1 || code=$?; [ "$code" -eq 3 ]
@@ -400,7 +463,7 @@ NODE
 }
 validate_target(){
   target_runtime_exact || return 1; validate_plugin_surface || return 1
-  [ "$(stat -c %a "$TASKCTL_TARGET")" = 700 ] || return 1; [ "$(stat -c %a "$CONFIG")" = 600 ] || return 1; [ "$(stat -c %a "$DB")" = 600 ] || return 1
+  [ "$(stat -c %a "$TASKCTL_TARGET")" = 700 ] || return 1; [ "$(stat -c %a "$CONFIG")" = 600 ] || return 1; [ "$(stat -c %a "$DB")" = 600 ] || return 1; [ "$CONTACTS_ENABLED" != "1" ] || { [ "$(stat -c %a "$CONTACTS_DB")" = 600 ] && [ "$(stat -c %a "$CONTACTCTL_TARGET")" = 700 ] && [ "$(stat -c %a "$CONTACTS_LIB/core.cjs")" = 600 ]; } || return 1
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do [ "$(stat -c %a "$WORKSPACE/$f")" = 644 ] || return 1; done
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1; fi
 }
@@ -420,6 +483,13 @@ main(){
   starting_runtime_eligible || abort_deploy "PREFLIGHT_OFFLINE" "starting runtime changed after preflight"
 
   MUTATED=1
+  if [ "$CONTACTS_ENABLED" = "1" ]; then
+    install -d -m 700 "$CONTACTS_LIB" || abort_deploy "CONTACTS_INSTALL" "Contacts library directory install failed"
+    install -m 600 "$CONTACTS_ROOT/core.cjs" "$CONTACTS_LIB/core.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts core install failed"
+    install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$CONTACTS_LIB/task-store.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts Task adapter install failed"
+    install -m 700 "$CONTACTS_ROOT/contactctl" "$CONTACTCTL_TARGET" || abort_deploy "CONTACTS_INSTALL" "contactctl install failed"
+    oc plugins install "$CONTACTS_PLUGIN_ARTIFACT" --force --accept-capabilities || abort_deploy "CONTACTS_PLUGIN_INSTALL" "Contacts plugin install failed"
+  fi
   install -m 700 "$ROOT/taskctl" "$TASKCTL_TARGET" || abort_deploy "TASKCTL_INSTALL" "taskctl install failed"
   local migrated_health
   migrated_health=$(taskctl_health) || abort_deploy "SCHEMA_MIGRATION" "target taskctl failed to migrate/validate database"

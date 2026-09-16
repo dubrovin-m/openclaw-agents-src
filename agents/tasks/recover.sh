@@ -8,6 +8,7 @@ RUNTIME_CONTRACT=""
 RUNTIME_HELPER=""
 LEGACY_RECOVERY_FORMAT="task-agent-recovery-v1"
 MIGRATED_RECOVERY_FORMAT="task-agent-recovery-v2"
+CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v3"
 LEGACY_WORKSPACE_FILES=(AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md)
 MIGRATED_WORKSPACE_FILES=(AGENTS.md SOUL.md USER.md IDENTITY.md HEARTBEAT.md)
 EXPECTED_OPENCLAW_VERSION=""
@@ -60,7 +61,7 @@ verify_archive_prefix() {
 recovery_workspace_files() {
   case "$1" in
     "$LEGACY_RECOVERY_FORMAT") printf '%s\n' "${LEGACY_WORKSPACE_FILES[*]}" ;;
-    "$MIGRATED_RECOVERY_FORMAT") printf '%s\n' "${MIGRATED_WORKSPACE_FILES[*]}" ;;
+    "$MIGRATED_RECOVERY_FORMAT"|"$CONTACTS_RECOVERY_FORMAT") printf '%s\n' "${MIGRATED_WORKSPACE_FILES[*]}" ;;
     *) fail "Unsupported recovery format" ;;
   esac
 }
@@ -73,8 +74,9 @@ try{
   const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
   const fk=db.prepare('PRAGMA foreign_key_check').all().length;
   const uv=Number(db.prepare('PRAGMA user_version').get().user_version);
-  if(integrity!=='ok'||fk!==0||![4,5,6].includes(uv))process.exit(2);
-  if(uv===6){const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');if(!['id','status','mode','title','assignee_id','rule_json','calendar_cursor_date'].every(x=>rec.includes(x))||!['recurrence_id','label_id'].every(x=>rl.includes(x))||!['recurrence_id','occurrence_key','task_id','template_json'].every(x=>ro.includes(x))||!['recurrence_id','event_type','occurred_at'].every(x=>re.includes(x)))process.exit(2);}
+  if(integrity!=='ok'||fk!==0||![4,5,6,7].includes(uv))process.exit(2);
+  if(uv===6||uv===7){const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');if(!['id','status','mode','title','assignee_id','rule_json','calendar_cursor_date'].every(x=>rec.includes(x))||!['recurrence_id','label_id'].every(x=>rl.includes(x))||!['recurrence_id','occurrence_key','task_id','template_json'].every(x=>ro.includes(x))||!['recurrence_id','event_type','occurred_at'].every(x=>re.includes(x)))process.exit(2);}
+  if(uv===7){const names=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").all();if(names.length!==0)process.exit(2);}
   process.stdout.write(String(uv));
 } finally {db.close();}
 NODE
@@ -88,10 +90,24 @@ validate_recovery_set() {
   done
   format=$(cat "$backup/RECOVERY_FORMAT")
   workspace_files=$(recovery_workspace_files "$format")
+  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
+    test -f "$backup/contacts-state.json" || fail "Missing contacts-state.json"
+    node - "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery state is invalid"
+const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));if(x?.format!=="shared-contacts-recovery-v1"||typeof x.db_present!=="boolean"||typeof x.lib_present!=="boolean"||typeof x.contactctl_present!=="boolean"||typeof x.plugin_present!=="boolean")process.exit(2);
+NODE
+  fi
   (cd "$backup" && sha256sum -c SHA256SUMS >/dev/null) || fail "Recovery checksum verification failed"
   for f in RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz; do
     grep -Eq "^[0-9a-f]{64}  ${f//./\\.}$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: $f"
   done
+  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
+    grep -Eq "^[0-9a-f]{64}  contacts-state\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: contacts-state.json"
+    local cstate; cstate=$(cat "$backup/contacts-state.json")
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then test -f "$backup/contacts.sqlite3" || fail "Missing Contacts database backup"; grep -Eq "^[0-9a-f]{64}  contacts\.sqlite3$" "$backup/SHA256SUMS" || fail "Missing Contacts database checksum"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then test -f "$backup/contacts-lib.before.tar.gz" || fail "Missing Contacts library backup"; grep -Eq "^[0-9a-f]{64}  contacts-lib\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts library checksum"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then test -f "$backup/contactctl.before" || fail "Missing contactctl backup"; grep -Eq "^[0-9a-f]{64}  contactctl\.before$" "$backup/SHA256SUMS" || fail "Missing contactctl checksum"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then test -f "$backup/contacts-plugin.before.tar.gz" || fail "Missing Contacts plugin backup"; grep -Eq "^[0-9a-f]{64}  contacts-plugin\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts plugin checksum"; fi
+  fi
   if [ -f "$backup/calendar-materializer.before.json" ]; then
     grep -Eq "^[0-9a-f]{64}  calendar-materializer\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: calendar-materializer.before.json"
     node - "$backup/calendar-materializer.before.json" <<'NODE' || fail "Recovery calendar materializer snapshot is invalid"
@@ -99,6 +115,16 @@ const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(
 NODE
   fi
 
+  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
+    local cstate; cstate=$(cat "$backup/contacts-state.json")
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-lib.before.tar.gz" "openclaw-contacts"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-plugin.before.tar.gz" "contacts"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then
+      node - "$backup/contacts.sqlite3" <<'NODE' || fail "Contacts recovery database validation failed"
+const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('PRAGMA user_version').get().user_version)!==1||db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||db.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(2);}finally{db.close();}
+NODE
+    fi
+  fi
   verify_archive_prefix "$backup/taskctl-managed.before.tar.gz" "taskctl"
   verify_archive_prefix "$backup/workspace-tasks.before.tar.gz" "workspace-tasks"
   expected=$(for f in $workspace_files; do printf 'workspace-tasks/%s\n' "$f"; done | LC_ALL=C sort)
@@ -157,7 +183,7 @@ NODE
 
 restore_state() {
   local test_root=$1 backup=$2 manage_gateway=$3
-  local home_dir state_dir config_path workspace bin_dir taskctl_target db_path plugin_dir openclaw_bin systemctl_bin host_openclaw_root peer_dir peer_link f format workspace_files expected_db_schema
+  local home_dir state_dir config_path workspace bin_dir taskctl_target contactctl_target db_path contacts_db contacts_lib contacts_plugin_dir plugin_dir openclaw_bin systemctl_bin host_openclaw_root peer_dir peer_link f format workspace_files expected_db_schema
   if [ -n "$test_root" ]; then
     home_dir="$test_root/home"
     state_dir="$test_root/state"
@@ -165,6 +191,9 @@ restore_state() {
     workspace="$test_root/workspace-tasks"
     bin_dir="$test_root/bin"
     db_path="$state_dir/data/tasks/tasks.sqlite3"
+    contacts_db="$state_dir/data/contacts/contacts.sqlite3"
+    contacts_lib="$home_dir/.local/lib/openclaw-contacts"
+    contacts_plugin_dir="$state_dir/extensions/contacts"
     plugin_dir="$state_dir/extensions/taskctl"
     openclaw_bin=$(command -v openclaw || true)
     [ -n "$openclaw_bin" ] || openclaw_bin="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
@@ -175,17 +204,22 @@ restore_state() {
     workspace="$state_dir/workspace-tasks"
     bin_dir="$home_dir/.local/bin"
     db_path="$state_dir/data/tasks/tasks.sqlite3"
+    contacts_db="$state_dir/data/contacts/contacts.sqlite3"
+    contacts_lib="$home_dir/.local/lib/openclaw-contacts"
+    contacts_plugin_dir="$state_dir/extensions/contacts"
     plugin_dir="$state_dir/extensions/taskctl"
     openclaw_bin=$(command -v openclaw || true)
   fi
   [ -x "$openclaw_bin" ] || fail "openclaw unavailable"
   taskctl_target="$bin_dir/taskctl"
+  contactctl_target="$bin_dir/contactctl"
   host_openclaw_root=$(resolve_host_openclaw_root "$openclaw_bin")
   peer_dir="$plugin_dir/node_modules"
   peer_link="$peer_dir/openclaw"
   format=$(cat "$backup/RECOVERY_FORMAT")
   workspace_files=$(recovery_workspace_files "$format")
   expected_db_schema=$(recovery_db_schema "$backup/tasks.sqlite3") || fail "Recovery database validation failed"
+  if [ "$format" != "$CONTACTS_RECOVERY_FORMAT" ] && { [ -e "$contacts_db" ] || [ -e "$contacts_lib" ] || [ -e "$contactctl_target" ] || [ -e "$contacts_plugin_dir" ]; }; then fail "Legacy recovery set cannot be applied while Shared Contacts runtime state exists"; fi
 
   systemctl_bin=""
   if [ "$manage_gateway" -eq 1 ]; then
@@ -210,6 +244,20 @@ restore_state() {
   install -m 600 "$backup/openclaw.json.before" "$config_path" || fail "Config restore failed"
   install -m 700 "$backup/taskctl.before" "$taskctl_target" || fail "taskctl restore failed"
   rm -f "$db_path-wal" "$db_path-shm"
+  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
+    local cstate; cstate=$(cat "$backup/contacts-state.json")
+    rm -f "$contacts_db" "$contacts_db-wal" "$contacts_db-shm" "$contactctl_target"; rm -rf "$contacts_lib" "$contacts_plugin_dir"
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_db")"; install -m 600 "$backup/contacts.sqlite3" "$contacts_db" || fail "Contacts database restore failed"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_lib")"; tar -xzf "$backup/contacts-lib.before.tar.gz" -C "$(dirname "$contacts_lib")" || fail "Contacts library restore failed"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then install -m 700 "$backup/contactctl.before" "$contactctl_target" || fail "contactctl restore failed"; fi
+    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then
+      tar -xzf "$backup/contacts-plugin.before.tar.gz" -C "$(dirname "$contacts_plugin_dir")" || fail "Contacts plugin restore failed"
+      test -d "$contacts_plugin_dir" || fail "Contacts plugin directory missing after restore"
+      if find "$contacts_plugin_dir" -type l -print -quit | grep -q .; then fail "Unexpected symlink in restored Contacts plugin archive"; fi
+      install -d -m 700 "$contacts_plugin_dir/node_modules"
+      ln -s "$host_openclaw_root" "$contacts_plugin_dir/node_modules/openclaw" || fail "Contacts OpenClaw peer link recreation failed"
+    fi
+  fi
   install -m 600 "$backup/tasks.sqlite3" "$db_path" || fail "Database restore failed"
 
   rm -rf "$plugin_dir"
@@ -227,7 +275,7 @@ restore_state() {
     test -f "$workspace/$f" || fail "Missing restored workspace file: $f"
     chmod 644 "$workspace/$f"
   done
-  if [ "$format" = "$MIGRATED_RECOVERY_FORMAT" ]; then
+  if [ "$format" = "$MIGRATED_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
     [ ! -e "$workspace/TOOLS.md" ] || fail "Retired TOOLS.md unexpectedly restored"
   fi
   chmod 600 "$config_path" "$db_path"
@@ -235,7 +283,7 @@ restore_state() {
 
   if [ -n "$test_root" ]; then
     HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" config validate || fail "Restored config invalid"
-    TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
+    TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$contacts_db" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
   else
     "$openclaw_bin" config validate || fail "Restored config invalid"
     "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"

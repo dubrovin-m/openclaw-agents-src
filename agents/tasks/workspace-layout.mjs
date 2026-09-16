@@ -23,7 +23,8 @@ export function targetWorkspaceFiles(layout) {
   throw new Error(`unsupported workspace layout: ${layout}`);
 }
 
-export function recoveryFormat(layout) {
+export function recoveryFormat(layout, release = {}) {
+  if (release.shared_contacts) return 'task-agent-recovery-v3';
   if (layout === AGENTS_TOOLS_LAYOUT) return 'task-agent-recovery-v2';
   if (layout === LEGACY_LAYOUT) return 'task-agent-recovery-v1';
   throw new Error(`unsupported workspace layout: ${layout}`);
@@ -31,9 +32,9 @@ export function recoveryFormat(layout) {
 
 if (import.meta.url === `file://${process.argv[1]}`) {
   const [command, releasePath] = process.argv.slice(2);
-  const { layout } = loadWorkspaceLayout(releasePath);
+  const { layout, release } = loadWorkspaceLayout(releasePath);
   if (command === 'layout') process.stdout.write(layout);
   else if (command === 'target-files') process.stdout.write(targetWorkspaceFiles(layout).join(' '));
-  else if (command === 'recovery-format') process.stdout.write(recoveryFormat(layout));
+  else if (command === 'recovery-format') process.stdout.write(recoveryFormat(layout, release));
   else process.exit(2);
 }

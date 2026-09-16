@@ -114,7 +114,7 @@ set -e
 [ "$legacy_rc" -ne 0 ] || { echo "legacy schema unexpectedly migrated" >&2; exit 1; }
 contains "$legacy_out" 'UNSUPPORTED_SCHEMA'
 
-a=$(plain health); contains "$a" '"schema_version":6'
+a=$(plain health); contains "$a" '"schema_version":7'
 node - "$DB" <<'JS'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});if(db.prepare('pragma integrity_check').get().integrity_check!=='ok'||db.prepare('pragma foreign_key_check').all().length)process.exit(1);db.close();
 JS
