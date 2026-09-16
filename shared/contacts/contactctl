@@ -23,11 +23,13 @@ const fail=(error)=>{const e=error instanceof AppError?error:new AppError('INTER
 const ok=(value)=>process.stdout.write(JSON.stringify(value)+'\n');
 const payload=()=>{const raw=process.env.CONTACTCTL_PAYLOAD;if(!raw)throw new AppError('PAYLOAD_REQUIRED','CONTACTCTL_PAYLOAD is required');if(Buffer.byteLength(raw)>PAYLOAD_LIMIT)throw new AppError('PAYLOAD_TOO_LARGE','CONTACTCTL_PAYLOAD is too large');let value;try{value=JSON.parse(raw);}catch{throw new AppError('INVALID_JSON','CONTACTCTL_PAYLOAD must be valid JSON');}if(!value||Array.isArray(value)||typeof value!=='object')throw new AppError('INVALID_PAYLOAD','payload must be an object');return value;};
 
-function openDb(){
-  const dir=path.dirname(DB_PATH);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
+function openDb({create=false}={}){
+  if(!create&&!fs.existsSync(DB_PATH))throw new AppError('CONTACTS_DB_MISSING','Contacts database is missing',undefined,3);
+  const dir=path.dirname(DB_PATH);if(create)fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
   const db=new DatabaseSync(DB_PATH,{timeout:5000});
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
-  contacts.ensureSchema(db);contacts.ensureSingleSelf(db);
+  if(create){contacts.ensureSchema(db);contacts.ensureSingleSelf(db);}
+  else{const version=Number(db.prepare('PRAGMA user_version').get().user_version);if(version!==contacts.CONTACT_SCHEMA_VERSION){db.close();throw new AppError('UNSUPPORTED_SCHEMA',`Unsupported Contacts schema version ${version}`);}}
   try{fs.chmodSync(DB_PATH,0o600);}catch{}
   return db;
 }
@@ -71,9 +73,9 @@ function writeAction(db,action,p){
 
 let db;
 try{
-  const [action]=process.argv.slice(2);db=openDb();
+  const [action]=process.argv.slice(2);db=openDb({create:action==='init'});
   if(action==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:contacts.CONTACT_SCHEMA_VERSION,database:DB_PATH});
-  else if(['health','list','search','resolve','get'].includes(action)){const p=validate(action,payload());ok(readAction(db,action,p));}
+  else{const integrity=contacts.integrity(db);if(action!=='health'&&!integrity.ok)throw new AppError('CONTACTS_INTEGRITY_ERROR','Contacts integrity check failed',{errors:integrity.errors},1);if(['health','list','search','resolve','get'].includes(action)){const p=validate(action,payload());ok(readAction(db,action,p));}
   else if(['create','update','rename','alias_add','alias_remove','merge'].includes(action)){const p=validate(action,payload());ok(writeAction(db,action,p));}
-  else throw new AppError('USAGE','Usage: contactctl <init|health|list|search|resolve|get|create|update|rename|alias_add|alias_remove|merge>');
+  else throw new AppError('USAGE','Usage: contactctl <init|health|list|search|resolve|get|create|update|rename|alias_add|alias_remove|merge>');}
 }catch(error){fail(error);}finally{try{db?.close();}catch{}}

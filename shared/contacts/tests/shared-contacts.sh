@@ -11,6 +11,30 @@ DB="$TMP/tasks.sqlite3"
 CDB="$TMP/contacts.sqlite3"
 trun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="$1" "$TASKCTL" "$2" "$3"; }
 crun(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
+
+# Runtime reads fail closed when the shared registry is missing; only explicit init may create it.
+MISSING_CDB="$TMP/missing/contacts.sqlite3"
+set +e
+missing_health=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MISSING_CDB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL" health); missing_health_rc=$?
+missing_search=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MISSING_CDB" CONTACTCTL_PAYLOAD='{"query":"Дубровин"}' "$CONTACTCTL" search); missing_search_rc=$?
+set -e
+[ "$missing_health_rc" -eq 3 ] && [ "$missing_search_rc" -eq 3 ]
+[ ! -e "$MISSING_CDB" ]
+node -e 'for(const raw of process.argv.slice(1)){const x=JSON.parse(raw);if(x?.error?.code!=="CONTACTS_DB_MISSING")process.exit(1)}' "$missing_health" "$missing_search"
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MISSING_CDB" "$CONTACTCTL" init >/dev/null
+[ -f "$MISSING_CDB" ]
+rm -rf "$TMP/missing"
+
+# An established schema-7 Task store must not silently recreate a lost Contacts registry.
+LOST_TDB="$TMP/lost/tasks.sqlite3"; LOST_CDB="$TMP/lost/contacts.sqlite3"; mkdir -p "$TMP/lost"
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$LOST_TDB" TASKCTL_CONTACTS_DB="$LOST_CDB" "$TASKCTL" init >/dev/null
+rm -f "$LOST_CDB" "$LOST_CDB-journal"
+set +e
+lost_health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$LOST_TDB" TASKCTL_CONTACTS_DB="$LOST_CDB" "$TASKCTL" health); lost_health_rc=$?
+set -e
+[ "$lost_health_rc" -ne 0 ]
+[ ! -e "$LOST_CDB" ]
+rm -rf "$TMP/lost"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.implementation_version!=="0.4.10")process.exit(1)})'
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==1||x.implementation_version!=="0.1.0")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.

@@ -4,8 +4,8 @@
   "sqlite_schema": 1,
   "runtime_files": {
     "core.cjs": "a11814747a6cbff8bc3aa861b55e48e0fe103d94619e05cb30c1c320d7c78b15",
-    "task-store.cjs": "cd4df7a8b84f391e6d3890cea936c3918a8bca99e8970f0b804885e07fc16ce2",
-    "contactctl": "1e8f268226a55fc0f24002410d52964da9c67dca1fd2852687d3bc346326531c"
+    "task-store.cjs": "f0d034b3b9c216a6412a822f96f57d0d43a8e0987dcd9cc4f6cf7c5a37d16711",
+    "contactctl": "a37ff2ef4b1081414f2608d6b61e8ec6ca7c31ebef7054f7385ada6440cac3cd"
   },
   "plugin": {
     "name": "openclaw-plugin-contacts",

@@ -149,7 +149,7 @@ function createOrReuseLabel(db, name, at=now()) {
 function migrate(db){
   let version=Number(db.prepare('PRAGMA main.user_version').get().user_version);
   if(version===0){
-    contactStore.attachContacts(db);contactStore.configureJournals(db);db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
+    contactStore.attachContacts(db,contactStore.contactsDbPath(),{create:true});contactStore.configureJournals(db);db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
     try{contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts',SELF_NAME);db.exec(CREATE_V7);db.exec('PRAGMA main.user_version=7; COMMIT;');}
     catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}
     return;

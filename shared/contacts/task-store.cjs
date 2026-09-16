@@ -15,10 +15,12 @@ function contactsDbPath(){
   }
   return PROD_CONTACTS_DB;
 }
-function attachContacts(db, dbPath=contactsDbPath()){
+function attachContacts(db, dbPath=contactsDbPath(), options={}){
   const existing=db.prepare('PRAGMA database_list').all().find(x=>x.name==='contacts');
   if(existing)return dbPath;
-  const dir=path.dirname(dbPath);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
+  const create=options.create===true;
+  if(!create&&!fs.existsSync(dbPath))throw new Error('Contacts database is missing');
+  const dir=path.dirname(dbPath);if(create)fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
   db.prepare('ATTACH DATABASE ? AS contacts').run(dbPath);
   try{fs.chmodSync(dbPath,0o600);}catch{}
   return dbPath;
@@ -51,7 +53,7 @@ function migrateV6ToV7(db, dbPath=contactsDbPath()){
   if(Number(db.prepare('PRAGMA main.user_version').get().user_version)!==6)throw new Error('Task schema 6 is required for Shared Contacts migration');
   const contactsExisted=fs.existsSync(dbPath);
   db.exec('PRAGMA foreign_keys=OFF; PRAGMA main.journal_mode=DELETE;');
-  attachContacts(db,dbPath);configureJournals(db);
+  attachContacts(db,dbPath,{create:true});configureJournals(db);
   db.exec('BEGIN IMMEDIATE');
   try{
     contacts.ensureSchema(db,'contacts');
