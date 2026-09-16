@@ -84,17 +84,13 @@ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD="{\"id\":\"$RID\"}"
 
 # Historical schema-v5 migration fault is all-or-nothing; a later successful migration preserves the row.
 PRE="$TMP/predecessor.sqlite3"; BASE=d6dbae6848989f8611ca8931dd200bbc63868b35
-if [ -f "$ROOT/public-source-bootstrap.json" ]; then
-  bridge_json=$(node "$ROOT/production-control/verify-release-predecessor.mjs" HEAD^ 2>&1) || { echo "public bootstrap predecessor verification failed: $bridge_json" >&2; exit 2; }
-  bridge_mode=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.provenance_mode||""))' "$bridge_json")
-  if [ "$bridge_mode" = "public-bootstrap-bridge" ]; then
-    declared_schema5=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m?.historical_test_revisions?.schema5_source_revision||""))' "$ROOT/public-source-bootstrap.json")
-    [ "$declared_schema5" = "$BASE" ] || { echo "public bootstrap schema-v5 predecessor revision mismatch" >&2; exit 2; }
-    printf 'TASK_AGENT_RECURRENCE_QUALIFICATION_PASS public-bootstrap-schema5-fixture-omitted predecessor=%s\n' "$BASE"
-    exit 0
-  fi
-fi
 REPO=$(cd "$ROOT/../.." && pwd)
+if ! git -C "$REPO" cat-file -e "${BASE}^{commit}" 2>/dev/null; then
+  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" schema5_source_revision "${BASE}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
+  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "TASK_AGENT_RECURRENCE_QUALIFICATION_PASS" "${BASE}"
+  exit 0
+fi
+
 git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TMP/old-taskctl" init >/dev/null
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" TASKCTL_PAYLOAD='{"operation_key":"old","title":"Preserve","assignee":"Дубровин М."}' "$TMP/old-taskctl" task create >/dev/null

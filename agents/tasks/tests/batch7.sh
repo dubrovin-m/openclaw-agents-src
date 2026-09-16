@@ -108,15 +108,11 @@ json_assert 'const a=JSON.parse(process.argv[1]);if(a.labels.length!==0||a.task.
 # schema-v4 source when that private predecessor history is present. The initial
 # clean public bootstrap may omit only this historical fixture after the exact
 # bootstrap bridge and the pinned fixture revision are both verified.
-if [ -f "$ROOT/public-source-bootstrap.json" ]; then
-  bridge_json=$(node "$ROOT/production-control/verify-release-predecessor.mjs" HEAD^ 2>&1) || { echo "public bootstrap predecessor verification failed: $bridge_json" >&2; exit 2; }
-  bridge_mode=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.provenance_mode||""))' "$bridge_json")
-  if [ "$bridge_mode" = "public-bootstrap-bridge" ]; then
-    declared_batch7=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m?.historical_test_revisions?.batch7_schema4_source_revision||""))' "$ROOT/public-source-bootstrap.json")
-    [ "$declared_batch7" = "$PREDECESSOR_SHA" ] || { echo "public bootstrap Batch 7 predecessor revision mismatch" >&2; exit 2; }
-    printf 'BATCH7_OK public-bootstrap-historical-fixture-omitted predecessor=%s\n' "$PREDECESSOR_SHA"
-    exit 0
-  fi
+REPO=$(cd "$ROOT/../.." && pwd)
+if ! git -C "$REPO" cat-file -e "${PREDECESSOR_SHA}^{commit}" 2>/dev/null; then
+  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" batch7_schema4_source_revision "${PREDECESSOR_SHA}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
+  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "BATCH7_OK" "${PREDECESSOR_SHA}"
+  exit 0
 fi
 PREDECESSOR="$TMP/taskctl-predecessor"
 git show "$PREDECESSOR_SHA:agents/tasks/taskctl" > "$PREDECESSOR"

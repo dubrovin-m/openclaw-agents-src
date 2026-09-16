@@ -10,13 +10,13 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.17",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.17.tgz",
-    "sha256": "a1ced7337055c00aab687279d41b86c4ef842551b293e8cf5fd83de7350dc43b"
+    "version": "0.4.18",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.18.tgz",
+    "sha256": "83e7a1f5c9f3c6256ab047571efa193ea10ffa5a1b87a23149bf89c0b3209f5a"
   },
   "from": {
-    "source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba",
-    "workspace_source_revision": "f4989f9f33e94810b8b06b10088a5472673e74ba",
+    "source_revision": "9777c9b8c3d6758b5017d83cc7428b81690a3ae8",
+    "workspace_source_revision": "9777c9b8c3d6758b5017d83cc7428b81690a3ae8",
     "sqlite_schemas": [
       6
     ],
@@ -24,13 +24,13 @@
       "0.4.7"
     ],
     "plugin_versions": [
-      "0.4.16"
+      "0.4.17"
     ],
     "workspace_sha256": {
-      "AGENTS.md": "4528876036186a13e19075967681629929cd9e4650061a6fd39ca4bacd8fd2ff",
+      "AGENTS.md": "e6d49ff90f3603da90ab7fd08ef8ee0455852f5334db72ad3864eb25f69ac505",
       "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
       "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
-      "USER.md": "73da2c1a1c195b017c7e6a8245c045b2e850999eed9283c38f5eaa0b432014b6",
+      "USER.md": "f88ac7bd8acfb48becff9598d1912a9a1cfb45becc44db5bac6e8a252e680306",
       "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
       "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
     },
