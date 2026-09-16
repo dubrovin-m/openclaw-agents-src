@@ -384,7 +384,17 @@ test "$(sha256sum "$R/workspace-tasks/TOOLS.md"|awk '{print $1}')" = "$EXPECTED_
 R="$TMP/success"
 clone_predecessor_runtime "$BASE" "$R"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "declared predecessor preflight failed"
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null
+SUCCESS_LOG="$TMP/success-deploy.log"
+set +e
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >"$SUCCESS_LOG" 2>&1
+CODE=$?
+set -e
+if [ "$CODE" -ne 0 ]; then
+  cat "$SUCCESS_LOG" >&2
+  RESULT=$(find "$R/deliverables" -name '*-result.json' -type f -print -quit)
+  [ -z "$RESULT" ] || cat "$RESULT" >&2
+  fail "declared predecessor deploy returned $CODE"
+fi
 RESULT=$(find "$R/deliverables" -name '*-result.json' -type f -print -quit)
 [ -n "$RESULT" ] || fail "deploy result missing"
 node - "$RESULT" <<'NODE' || fail "deploy did not complete"
