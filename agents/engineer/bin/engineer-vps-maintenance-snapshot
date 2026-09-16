@@ -11,13 +11,14 @@ import socket
 import subprocess
 import sys
 import time
+import urllib.parse
 import urllib.request
 from collections import Counter
 from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-COLLECTOR_VERSION = "1.0.0"
+COLLECTOR_VERSION = "1.0.1"
 HOME = Path.home()
 NEXUS = HOME / ".openclaw" / "workspace" / "nexus"
 STATE_DB = HOME / ".openclaw" / "state" / "openclaw.sqlite"
@@ -266,6 +267,45 @@ def official_release_evidence() -> dict:
     return result
 
 
+
+def global_npm_inventory() -> dict:
+    """Read installed global package metadata directly and query registry without npm CLI/cache writes."""
+    root = HOME / ".npm-global" / "lib" / "node_modules"
+    packages: list[dict] = []
+    if not root.exists():
+        return {"root": str(root), "packages": packages, "error": "global-node-modules-not-found"}
+    candidates: list[Path] = []
+    for child in sorted(root.iterdir(), key=lambda item: item.name):
+        if child.name.startswith("@") and child.is_dir():
+            candidates.extend(sorted((item for item in child.iterdir() if item.is_dir()), key=lambda item: item.name))
+        elif child.is_dir():
+            candidates.append(child)
+    for package_dir in candidates:
+        raw = read_text(package_dir / "package.json", 500_000)
+        if raw is None:
+            continue
+        try:
+            metadata = json.loads(raw)
+        except json.JSONDecodeError:
+            continue
+        name = metadata.get("name")
+        version = metadata.get("version")
+        if not isinstance(name, str) or not name or not isinstance(version, str):
+            continue
+        encoded = urllib.parse.quote(name, safe="@")
+        latest = http_json(f"https://registry.npmjs.org/{encoded}/latest")
+        latest_version = None
+        if latest.get("ok") and isinstance(latest.get("value"), dict):
+            latest_version = latest["value"].get("version")
+        packages.append({
+            "name": name,
+            "installed": version,
+            "latest": latest_version,
+            "registry_ok": bool(latest.get("ok")),
+            "registry_error": None if latest.get("ok") else latest.get("error"),
+        })
+    return {"root": str(root), "packages": packages}
+
 def custom_user_units() -> dict:
     unit_dir = HOME / ".config" / "systemd" / "user"
     names = sorted(p.name for p in unit_dir.glob("*.service")) + sorted(p.name for p in unit_dir.glob("*.timer"))
@@ -400,7 +440,6 @@ def collect(mode: str) -> dict:
     version_commands = {
         "openclaw": ["openclaw", "--version"],
         "node": ["node", "--version"],
-        "npm": ["npm", "--version"],
         "python": ["python3", "--version"],
         "git": ["git", "--version"],
         "docker": ["docker", "--version"],
@@ -468,8 +507,7 @@ def collect(mode: str) -> dict:
         ]
         snapshot["inventory"] = {
             "apt_manual": run(["apt-mark", "showmanual"], timeout=15),
-            "npm_global": run(["npm", "ls", "-g", "--depth=0", "--json"], timeout=25, ok_codes=(0, 1)),
-            "npm_outdated": run(["npm", "outdated", "-g", "--json"], timeout=30, ok_codes=(0, 1)),
+            "npm_global": global_npm_inventory(),
             "custom_user_units": custom_user_units(),
             "listening_sockets": run(["ss", "-lntup"], timeout=10, ok_codes=(0,)),
         }

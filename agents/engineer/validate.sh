@@ -57,6 +57,10 @@ for node in ast.walk(tree):
             raise SystemExit(f"Engineer validation failed: mutating filesystem call is forbidden: {node.func.value.id}.{node.func.attr}")
 PYVALIDATE
 
+if grep -Fq 'run(["npm"' "$ROOT/bin/engineer-vps-maintenance-snapshot"; then
+  fail "maintenance collector must not invoke npm CLI because npm writes cache/log state"
+fi
+
 node - "$ROOT/config/engineer-agent.fragment.json" "$ROOT/config/engineer-tools.json" <<'NODE' || exit 2
 const fs = require('node:fs');
 
