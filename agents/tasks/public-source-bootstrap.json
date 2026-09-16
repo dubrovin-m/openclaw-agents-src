@@ -16,6 +16,7 @@
     "parent": "b94bb86644d88687e11dcb7da86649143ecaac09"
   },
   "historical_test_revisions": {
-    "batch7_schema4_source_revision": "c8fc1df5d77cb15a8dfd567ca76fb29bcb6fec8a"
+    "batch7_schema4_source_revision": "c8fc1df5d77cb15a8dfd567ca76fb29bcb6fec8a",
+    "schema5_source_revision": "d6dbae6848989f8611ca8931dd200bbc63868b35"
   }
 }

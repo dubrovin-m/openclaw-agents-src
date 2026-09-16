@@ -157,6 +157,7 @@ test('public bootstrap bridge is pinned to one exact clean-history release and p
     },
     historical_test_revisions: {
       batch7_schema4_source_revision: 'c'.repeat(40),
+      schema5_source_revision: 'b'.repeat(40),
     },
   };
   assert.equal(validatePublicBootstrapBridge({ release: bootstrapRelease, marker }), true);

@@ -78,7 +78,7 @@ export function validatePublicBootstrapBridge({ release, marker }) {
   const workspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
   if (legacy?.source_revision !== sourceRevision || legacy?.workspace_source_revision !== workspaceSourceRevision) fail('public bootstrap bridge predecessor revision mismatch');
   if (!SHA_RE.test(snapshot?.commit ?? '') || !SHA_RE.test(snapshot?.tree ?? '') || !SHA_RE.test(snapshot?.parent ?? '')) fail('public bootstrap bridge snapshot identity is invalid');
-  if (!SHA_RE.test(historicalTests?.batch7_schema4_source_revision ?? '')) fail('public bootstrap bridge historical test revision is invalid');
+  if (!SHA_RE.test(historicalTests?.batch7_schema4_source_revision ?? '') || !SHA_RE.test(historicalTests?.schema5_source_revision ?? '')) fail('public bootstrap bridge historical test revision is invalid');
   return true;
 }
 
