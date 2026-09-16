@@ -8,10 +8,11 @@ TMP=$(mktemp -d /tmp/task-agent-release-deploy.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 
 FIX="$TMP/repo/agents/tasks"
-mkdir -p "$FIX"/{config,workspace,artifacts,plugins/taskctl}
+mkdir -p "$FIX"/{config,workspace,artifacts,plugins/taskctl,production-control}
 cp "$ROOT/deploy.sh" "$FIX/deploy.sh"
 cp "$ROOT/recover.sh" "$FIX/recover.sh"
-chmod 755 "$FIX"/{deploy.sh,recover.sh}
+cp "$ROOT/production-control/plugin-registry-state.cjs" "$FIX/production-control/plugin-registry-state.cjs"
+chmod 755 "$FIX"/{deploy.sh,recover.sh} "$FIX/production-control/plugin-registry-state.cjs"
 for f in SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md; do cp "$ROOT/workspace/$f" "$FIX/workspace/$f"; done
 printf 'new-agent\n' > "$FIX/workspace/AGENTS.md"
 

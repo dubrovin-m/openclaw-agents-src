@@ -3,6 +3,7 @@ set -euo pipefail
 umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+PLUGIN_REGISTRY_HELPER="$ROOT/plugin-registry-state.cjs"
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel) || { echo "repository root unavailable" >&2; exit 2; }
 TMP=$(mktemp -d /tmp/task-agent-workspace-retirement.XXXXXX)
 cleanup(){ rm -rf "$TMP"; }
@@ -253,6 +254,12 @@ if(!v)process.exit(2);const stable=x=>x===null||typeof x!=='object'?JSON.stringi
 NODE
 }
 
+plugin_registry_row_fingerprint(){
+  node - "$1/state/state/openclaw.sqlite" <<'NODE'
+const {DatabaseSync}=require('node:sqlite'),crypto=require('node:crypto');const db=new DatabaseSync(process.argv[2],{readOnly:true});try{const r=db.prepare("SELECT value_json,updated_at_ms FROM config_machine_state WHERE state_key='plugins.installedIndex'").get();process.stdout.write(crypto.createHash('sha256').update(JSON.stringify(r??null)).digest('hex'));}finally{db.close();}
+NODE
+}
+
 assert_predecessor_runtime(){
   local r=$1 health f var
   health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" "$r/bin/taskctl" health) || fail "predecessor taskctl health changed"
@@ -323,6 +330,10 @@ NODE
   install -m 600 "$FIXTURE/workspace/TOOLS.md" "$r/state/backups/tools-md-migration/tasks-$EXPECTED_TOOLS_MD_SHA.md"
   printf '{"jobs":[]}\n' > "$r/state/automations-test.json"
   echo active > "$r/gateway.state"
+  # npm cache is installation scratch state, not part of the runtime fixture.
+  # Keeping it in predecessor-base makes every negative-test clone copy
+  # hundreds of MB and can exhaust /tmp before the deployment logic runs.
+  rm -rf "$r/home/.npm"
   assert_predecessor_restored "$r"
 }
 
@@ -349,6 +360,7 @@ expect_preflight_rejection(){
 }
 
 verify_doctor_migration_provenance
+bash "$ROOT/tests/plugin-registry-state.sh"
 
 BASE="$TMP/predecessor-base"
 init_predecessor_runtime "$BASE"
@@ -399,6 +411,7 @@ test "$(sha256sum "$R/workspace-tasks/TOOLS.md"|awk '{print $1}')" = "$EXPECTED_
 R="$TMP/success"
 clone_predecessor_runtime "$BASE" "$R"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "declared predecessor preflight failed"
+PRE_REGISTRY_FINGERPRINT=$(plugin_registry_row_fingerprint "$R")
 SUCCESS_LOG="$TMP/success-deploy.log"
 set +e
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >"$SUCCESS_LOG" 2>&1
@@ -416,10 +429,13 @@ node - "$RESULT" <<'NODE' || fail "deploy did not complete"
 const r=require(process.argv[2]);if(r.result!=='PASS'||r.stage!=='COMPLETE'||r.mutation_started!==true)process.exit(2);
 NODE
 test "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$R/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN_VERSION" || fail "target plugin not installed"
+node "$PLUGIN_REGISTRY_HELPER" verify-target "$R/state/state/openclaw.sqlite" 2026.8.2 "$TARGET_PLUGIN_VERSION" 0.1.1 || fail "target plugin registry ownership is not exact"
 test ! -e "$R/workspace-tasks/TOOLS.md" || fail "target deployment recreated retired TOOLS.md"
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
 [ -n "$RECOVERY" ] || fail "v3 recovery set missing"
 test "$(cat "$RECOVERY/RECOVERY_FORMAT")" = task-agent-recovery-v3 || fail "wrong recovery format"
+test -f "$RECOVERY/plugin-registry.before.json" || fail "v3 recovery set missing plugin registry snapshot"
+node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$RECOVERY/plugin-registry.before.json" || fail "v3 plugin registry snapshot invalid"
 node - "$RECOVERY/contacts-state.json" <<'NODE' || fail "v3 predecessor Contacts state is invalid"
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if(x.format!=='shared-contacts-recovery-v1'||x.db_present||x.lib_present||x.contactctl_present||x.plugin_present)process.exit(1);
@@ -434,6 +450,7 @@ set -e
 test "$CODE" -eq 3 || fail "v3 recovery inspection failed"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null
 assert_predecessor_restored "$R"
+test "$(plugin_registry_row_fingerprint "$R")" = "$PRE_REGISTRY_FINGERPRINT" || fail "manual recovery did not restore plugin registry exactly"
 
 # Starting from the verified v3-restored predecessor, a synthetic
 # post-mutation fault must automatically roll back to the same declared
@@ -455,6 +472,7 @@ node - "$RESULT" <<'NODE' || fail "rollback result evidence invalid"
 const r=require(process.argv[2]);if(r.result!=='ROLLED_BACK'||r.mutation_started!==true||r.rollback_count!==1)process.exit(2);
 NODE
 assert_predecessor_restored "$R"
+test "$(plugin_registry_row_fingerprint "$R")" = "$PRE_REGISTRY_FINGERPRINT" || fail "automatic rollback did not restore plugin registry exactly"
 
 cleanup
 trap - EXIT INT TERM

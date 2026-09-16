@@ -6,6 +6,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 RUNTIME_CONTRACT=""
 RUNTIME_HELPER=""
+PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
 LEGACY_RECOVERY_FORMAT="task-agent-recovery-v1"
 MIGRATED_RECOVERY_FORMAT="task-agent-recovery-v2"
 CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v3"
@@ -29,6 +30,8 @@ validate_runtime_contract() {
   RUNTIME_HELPER="$contract_root/shared/runtime-contract/runtime-contract.mjs"
   test -f "$RUNTIME_CONTRACT" || fail "Runtime contract missing: $RUNTIME_CONTRACT"
   test -f "$RUNTIME_HELPER" || fail "Runtime contract helper missing: $RUNTIME_HELPER"
+  test -f "$PLUGIN_REGISTRY_HELPER" || fail "Plugin registry state helper missing: $PLUGIN_REGISTRY_HELPER"
+  node --check "$PLUGIN_REGISTRY_HELPER" >/dev/null || fail "Plugin registry state helper syntax invalid"
   EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || fail "Runtime contract is invalid"
   node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/null || fail "Node runtime is incompatible with the recovery contract"
 }
@@ -92,6 +95,8 @@ validate_recovery_set() {
   workspace_files=$(recovery_workspace_files "$format")
   if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
     test -f "$backup/contacts-state.json" || fail "Missing contacts-state.json"
+    test -f "$backup/plugin-registry.before.json" || fail "Missing plugin-registry.before.json"
+    node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$backup/plugin-registry.before.json" || fail "Plugin registry recovery snapshot is invalid"
     node - "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery state is invalid"
 const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));if(x?.format!=="shared-contacts-recovery-v1"||typeof x.db_present!=="boolean"||typeof x.lib_present!=="boolean"||typeof x.contactctl_present!=="boolean"||typeof x.plugin_present!=="boolean")process.exit(2);
 NODE
@@ -102,6 +107,7 @@ NODE
   done
   if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
     grep -Eq "^[0-9a-f]{64}  contacts-state\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: contacts-state.json"
+    grep -Eq "^[0-9a-f]{64}  plugin-registry\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: plugin-registry.before.json"
     local cstate; cstate=$(cat "$backup/contacts-state.json")
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then test -f "$backup/contacts.sqlite3" || fail "Missing Contacts database backup"; grep -Eq "^[0-9a-f]{64}  contacts\.sqlite3$" "$backup/SHA256SUMS" || fail "Missing Contacts database checksum"; fi
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then test -f "$backup/contacts-lib.before.tar.gz" || fail "Missing Contacts library backup"; grep -Eq "^[0-9a-f]{64}  contacts-lib\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts library checksum"; fi
@@ -183,7 +189,7 @@ NODE
 
 restore_state() {
   local test_root=$1 backup=$2 manage_gateway=$3
-  local home_dir state_dir config_path workspace bin_dir taskctl_target contactctl_target db_path contacts_db contacts_lib contacts_plugin_dir plugin_dir openclaw_bin systemctl_bin host_openclaw_root peer_dir peer_link f format workspace_files expected_db_schema
+  local home_dir state_dir state_db config_path workspace bin_dir taskctl_target contactctl_target db_path contacts_db contacts_lib contacts_plugin_dir plugin_dir openclaw_bin systemctl_bin host_openclaw_root peer_dir peer_link f format workspace_files expected_db_schema
   if [ -n "$test_root" ]; then
     home_dir="$test_root/home"
     state_dir="$test_root/state"
@@ -211,6 +217,7 @@ restore_state() {
     openclaw_bin=$(command -v openclaw || true)
   fi
   [ -x "$openclaw_bin" ] || fail "openclaw unavailable"
+  state_db="$state_dir/state/openclaw.sqlite"
   taskctl_target="$bin_dir/taskctl"
   contactctl_target="$bin_dir/contactctl"
   host_openclaw_root=$(resolve_host_openclaw_root "$openclaw_bin")
@@ -280,6 +287,9 @@ restore_state() {
   fi
   chmod 600 "$config_path" "$db_path"
   chmod 700 "$taskctl_target" "$plugin_dir"
+  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
+    node "$PLUGIN_REGISTRY_HELPER" restore "$state_db" "$backup/plugin-registry.before.json" || fail "Plugin registry restore failed"
+  fi
 
   if [ -n "$test_root" ]; then
     HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" config validate || fail "Restored config invalid"

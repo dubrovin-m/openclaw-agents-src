@@ -9,6 +9,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)
 RELEASE_FILE="$ROOT/release.json"
 WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
+PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
 LEGACY_WORKSPACE_FILES=(AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md)
 TARGET_WORKSPACE_FILES=()
 
@@ -153,6 +154,7 @@ else
   LOCK_FILE="$STATE_DIR/task-agent-deploy.lock"
 fi
 TASKCTL_TARGET="$BIN_DIR/taskctl"
+STATE_DB="$STATE_DIR/state/openclaw.sqlite"
 MATERIALIZER_COMMAND_JSON=$(node -e 'process.stdout.write(JSON.stringify([process.argv[1],"recurrence","materialize"]))' "$TASKCTL_TARGET")
 
 OPENCLAW_BIN=$(command -v openclaw || true)
@@ -362,6 +364,7 @@ validate_source(){
   [ -z "$(git -C "$REPO_ROOT" status --porcelain -- agents/tasks shared/contacts runtime-contract.json shared/runtime-contract)" ] || abort_deploy "SOURCE" "runtime-affecting checkout is not clean"
   node "$RUNTIME_HELPER" repo-check "$RUNTIME_CONTRACT_ROOT" >/dev/null || abort_deploy "SOURCE" "repository runtime contract mismatch"
   node --check "$WORKSPACE_LAYOUT_HELPER" >/dev/null || abort_deploy "SOURCE" "workspace layout helper syntax invalid"
+  node --check "$PLUGIN_REGISTRY_HELPER" >/dev/null || abort_deploy "SOURCE" "plugin registry state helper syntax invalid"
   source_taskctl_identity_exact || abort_deploy "SOURCE" "taskctl source identity does not match release generation"
   contacts_source_exact || abort_deploy "SOURCE" "Shared Contacts source identity does not match release generation"
   [ -f "$ARTIFACT" ] && [ -f "$ARTIFACT_SHA_FILE" ] || abort_deploy "SOURCE" "release artifact or SHA file missing"
@@ -444,10 +447,11 @@ NODE
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_lib_present" -eq 1 ]; then tar -czf "$RECOVERY_SET/contacts-lib.before.tar.gz" -C "$(dirname "$CONTACTS_LIB")" "$(basename "$CONTACTS_LIB")" || return 1; fi
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contactctl_present" -eq 1 ]; then install -m 700 "$CONTACTCTL_TARGET" "$RECOVERY_SET/contactctl.before" || return 1; fi
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_plugin_present" -eq 1 ]; then tar --exclude='contacts/node_modules/openclaw' -czf "$RECOVERY_SET/contacts-plugin.before.tar.gz" -C "$(dirname "$CONTACTS_PLUGIN_DIR")" contacts || return 1; fi
+  if [ "$RECOVERY_FORMAT" = "task-agent-recovery-v3" ]; then node "$PLUGIN_REGISTRY_HELPER" snapshot "$STATE_DB" "$RECOVERY_SET/plugin-registry.before.json" || return 1; fi
   tar --exclude='taskctl/node_modules/openclaw' -czf "$RECOVERY_SET/taskctl-managed.before.tar.gz" -C "$(dirname "$PLUGIN_DIR")" taskctl || return 1
   local args=() f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do args+=("workspace-tasks/$f"); done; tar -czf "$RECOVERY_SET/workspace-tasks.before.tar.gz" -C "$(dirname "$WORKSPACE")" "${args[@]}" || return 1
   printf '%s\n' "$RECOVERY_FORMAT" > "$RECOVERY_SET/RECOVERY_FORMAT"
-  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz); [ ! -f "$RECOVERY_SET/contacts-state.json" ] || checksum_files+=(contacts-state.json); [ ! -f "$RECOVERY_SET/contacts.sqlite3" ] || checksum_files+=(contacts.sqlite3); [ ! -f "$RECOVERY_SET/contacts-lib.before.tar.gz" ] || checksum_files+=(contacts-lib.before.tar.gz); [ ! -f "$RECOVERY_SET/contactctl.before" ] || checksum_files+=(contactctl.before); [ ! -f "$RECOVERY_SET/contacts-plugin.before.tar.gz" ] || checksum_files+=(contacts-plugin.before.tar.gz)
+  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz); [ ! -f "$RECOVERY_SET/contacts-state.json" ] || checksum_files+=(contacts-state.json); [ ! -f "$RECOVERY_SET/contacts.sqlite3" ] || checksum_files+=(contacts.sqlite3); [ ! -f "$RECOVERY_SET/contacts-lib.before.tar.gz" ] || checksum_files+=(contacts-lib.before.tar.gz); [ ! -f "$RECOVERY_SET/contactctl.before" ] || checksum_files+=(contactctl.before); [ ! -f "$RECOVERY_SET/contacts-plugin.before.tar.gz" ] || checksum_files+=(contacts-plugin.before.tar.gz); [ ! -f "$RECOVERY_SET/plugin-registry.before.json" ] || checksum_files+=(plugin-registry.before.json)
   [ ! -f "$RECOVERY_SET/calendar-materializer.before.json" ] || checksum_files+=(calendar-materializer.before.json)
   (cd "$RECOVERY_SET" && sha256sum "${checksum_files[@]}" > SHA256SUMS) || return 1; chmod 600 "$RECOVERY_SET"/* || return 1
   local a=(--inspect --from "$RECOVERY_SET") code=0; if [ -n "$TEST_ROOT" ]; then a=(--test-root "$TEST_ROOT" "${a[@]}"); fi; "$ROOT/recover.sh" "${a[@]}" >/dev/null 2>&1 || code=$?; [ "$code" -eq 3 ]
@@ -463,6 +467,7 @@ NODE
 }
 validate_target(){
   target_runtime_exact || return 1; validate_plugin_surface || return 1
+  if [ "$CONTACTS_ENABLED" = "1" ]; then node "$PLUGIN_REGISTRY_HELPER" verify-target "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$TARGET_PLUGIN_VERSION" "$TARGET_CONTACTS_VERSION" || return 1; fi
   [ "$(stat -c %a "$TASKCTL_TARGET")" = 700 ] || return 1; [ "$(stat -c %a "$CONFIG")" = 600 ] || return 1; [ "$(stat -c %a "$DB")" = 600 ] || return 1; [ "$CONTACTS_ENABLED" != "1" ] || { [ "$(stat -c %a "$CONTACTS_DB")" = 600 ] && [ "$(stat -c %a "$CONTACTCTL_TARGET")" = 700 ] && [ "$(stat -c %a "$CONTACTS_LIB/core.cjs")" = 600 ]; } || return 1
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do [ "$(stat -c %a "$WORKSPACE/$f")" = 644 ] || return 1; done
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1; fi
@@ -484,6 +489,10 @@ main(){
 
   MUTATED=1
   if [ "$CONTACTS_ENABLED" = "1" ]; then
+    oc plugins registry --refresh --json >/dev/null || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to refresh predecessor plugin registry"
+    node "$PLUGIN_REGISTRY_HELPER" normalize-initial "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$START_PLUGIN_VERSION" || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to normalize initial Shared Contacts plugin ownership"
+    oc plugins registry --refresh --json >/dev/null || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to refresh normalized predecessor plugin registry"
+    node "$PLUGIN_REGISTRY_HELPER" verify-normalized "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$START_PLUGIN_VERSION" || abort_deploy "PLUGIN_REGISTRY_PREP" "normalized predecessor plugin registry validation failed"
     install -d -m 700 "$CONTACTS_LIB" || abort_deploy "CONTACTS_INSTALL" "Contacts library directory install failed"
     install -m 600 "$CONTACTS_ROOT/core.cjs" "$CONTACTS_LIB/core.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts core install failed"
     install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$CONTACTS_LIB/task-store.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts Task adapter install failed"
