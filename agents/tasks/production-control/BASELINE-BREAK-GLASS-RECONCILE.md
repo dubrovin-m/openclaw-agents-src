@@ -41,7 +41,7 @@ bash agents/tasks/production-control/reconcile-baseline-break-glass.sh \
 
 The runner validates all immutable identities before mutation. It then:
 
-1. requires the target Task `deploy.sh --preflight` to prove that the live plugin already equals the target generation;
+1. requires the target Task `deploy.sh --preflight` to return `start_is_target=1`, proving the complete live Task runtime already equals the target generation;
 2. prepares a local recovery snapshot of controller state and the durable production source checkout;
 3. prepares a credential-free copy of the target source at the exact target baseline;
 4. constructs a candidate controller state that changes only `production_baseline_sha` and runs the already-installed controller's local diagnostics against that candidate state and target source;

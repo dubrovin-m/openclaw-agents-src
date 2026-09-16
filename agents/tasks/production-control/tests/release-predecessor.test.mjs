@@ -13,13 +13,24 @@ const WORKSPACE_SOURCE = 'e'.repeat(40);
 const WORKSPACE_HASH = 'b'.repeat(64);
 const TOOLS_HASH = 'c'.repeat(64);
 const workspace = Object.fromEntries(PREDECESSOR_WORKSPACE_FILES.map((file) => [file, WORKSPACE_HASH]));
+const predecessorPlugin = {
+  name: 'openclaw-plugin-taskctl',
+  version: '0.4.13',
+  artifact: 'artifacts/openclaw-plugin-taskctl-0.4.13.tgz',
+  sha256: 'd'.repeat(64),
+};
 const predecessorRelease = {
   format: 'task-agent-release-v2',
   generation: { sqlite_schema: 5, taskctl_version: '0.4.5' },
-  plugin: { version: '0.4.13' },
+  plugin: predecessorPlugin,
 };
 const release = {
-  plugin: { version: '0.4.14' },
+  plugin: {
+    name: 'openclaw-plugin-taskctl',
+    version: '0.4.14',
+    artifact: 'artifacts/openclaw-plugin-taskctl-0.4.14.tgz',
+    sha256: 'f'.repeat(64),
+  },
   from: {
     source_revision: SOURCE,
     sqlite_schemas: [5],
@@ -88,6 +99,31 @@ test('rejects predecessor fingerprint and source drift', () => {
     workspaceSha256: { ...workspace, 'AGENTS.md': 'd'.repeat(64) },
     toolsSha256: TOOLS_HASH,
   }), /workspace fingerprint mismatch/u);
+});
+
+test('permits same plugin version only as exact frozen artifact reuse', () => {
+  const samePluginRelease = { ...release, plugin: { ...predecessorPlugin } };
+  assert.equal(validatePredecessorBinding({
+    release: samePluginRelease,
+    predecessorRelease,
+    sourceRevision: SOURCE,
+    workspaceSha256: workspace,
+    toolsSha256: TOOLS_HASH,
+  }), true);
+
+  for (const plugin of [
+    { ...predecessorPlugin, sha256: 'e'.repeat(64) },
+    { ...predecessorPlugin, artifact: 'artifacts/openclaw-plugin-taskctl-repacked.tgz' },
+    { ...predecessorPlugin, name: 'different-plugin' },
+  ]) {
+    assert.throws(() => validatePredecessorBinding({
+      release: { ...samePluginRelease, plugin },
+      predecessorRelease,
+      sourceRevision: SOURCE,
+      workspaceSha256: workspace,
+      toolsSha256: TOOLS_HASH,
+    }), /same-version target plugin must reuse exact predecessor plugin artifact identity/u);
+  }
 });
 
 test('rejects predecessor identity widening beyond the exact source release', () => {

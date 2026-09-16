@@ -410,4 +410,37 @@ grep -qx old-agent "$R/workspace-tasks/AGENTS.md"
 test "$(logical_db_fingerprint "$R/state/data/tasks/tasks.sqlite3")" = "$BDB"
 test "$(cat "$R/gateway.state")" = active
 
+echo STAGE=same-plugin-taskctl-upgrade
+node - "$FIX/plugins/taskctl/package.json" "$FIX/plugins/taskctl/package-lock.json" "$FIX/plugins/taskctl/openclaw.plugin.json" <<'NODE'
+const fs=require('fs');
+for(const file of process.argv.slice(2)){
+  const x=JSON.parse(fs.readFileSync(file,'utf8'));
+  x.version='0.4.0';
+  if(x.packages?.[''])x.packages[''].version='0.4.0';
+  fs.writeFileSync(file,JSON.stringify(x,null,2)+'\n');
+}
+NODE
+SAME_PKG="$TMP/same-plugin-pkg/package"
+rm -rf "$TMP/same-plugin-pkg"
+mkdir -p "$SAME_PKG"
+cp "$FIX/plugins/taskctl/package.json" "$SAME_PKG/package.json"
+tar -czf "$FIX/artifacts/openclaw-plugin-taskctl-0.4.0.tgz" -C "$TMP/same-plugin-pkg" package
+SAME_SHA=$(sha256sum "$FIX/artifacts/openclaw-plugin-taskctl-0.4.0.tgz"|awk '{print $1}')
+printf '%s\n' "$SAME_SHA" > "$FIX/artifacts/openclaw-plugin-taskctl-0.4.0.sha256"
+node - "$FIX/release.json" "$SAME_SHA" <<'NODE'
+const fs=require('fs'),file=process.argv[2],sha=process.argv[3],r=JSON.parse(fs.readFileSync(file,'utf8'));
+r.plugin.version='0.4.0';
+r.plugin.artifact='artifacts/openclaw-plugin-taskctl-0.4.0.tgz';
+r.plugin.sha256=sha;
+fs.writeFileSync(file,JSON.stringify(r,null,2)+'\n');
+NODE
+git add agents/tasks
+git commit -qm 'same plugin taskctl fixture'
+R="$TMP/same-plugin-taskctl"; init_runtime "$R"
+preflight "$R" | grep -q 'start_is_target=0'
+run "$R" >/dev/null
+test "$(taskctl_runtime_version "$R")" = 0.4.1
+test "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$R/state/extensions/taskctl/package.json")" = 0.4.0
+preflight "$R" | grep -q 'start_is_target=1'
+
 echo TASK_AGENT_RELEASE_DEPLOY_TEST_PASS
