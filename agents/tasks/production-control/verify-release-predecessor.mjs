@@ -103,7 +103,7 @@ function gitObjectExists(repoRoot, revisionSpec) {
   }
 }
 
-function verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision }) {
+function verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision, effectiveBase }) {
   const markerPath = path.join(repoRoot, PUBLIC_BOOTSTRAP_PATH);
   if (!fs.existsSync(markerPath)) fail('predecessor history is unavailable and public bootstrap bridge is missing');
   const marker = JSON.parse(fs.readFileSync(markerPath, 'utf8'));
@@ -116,9 +116,9 @@ function verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, worksp
   const snapshotParents = git(repoRoot, ['show', '-s', '--format=%P', snapshot.commit]).split(/\s+/u).filter(Boolean);
   if (snapshotParents.length !== 1 || snapshotParents[0] !== snapshot.parent) fail('public bootstrap snapshot ancestry mismatch');
   try {
-    git(repoRoot, ['merge-base', '--is-ancestor', snapshot.commit, 'HEAD']);
+    git(repoRoot, ['merge-base', '--is-ancestor', snapshot.commit, effectiveBase]);
   } catch {
-    fail('public bootstrap snapshot is not an ancestor of HEAD');
+    fail('public bootstrap snapshot is not an ancestor of the pre-candidate base');
   }
   const snapshotRelease = JSON.parse(gitShow(repoRoot, snapshot.commit, 'agents/tasks/release.json'));
   if (sha256(stableJson(snapshotRelease)) !== marker.target.release_sha256) fail('public bootstrap snapshot release fingerprint mismatch');
@@ -156,7 +156,7 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
   const workspaceSourcePresent = gitObjectExists(repoRoot, `${workspaceSourceRevision}^{commit}`);
   if (!sourcePresent || !workspaceSourcePresent) {
     if (sourcePresent !== workspaceSourcePresent) fail('predecessor history is only partially available');
-    return verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision });
+    return verifyPublicBootstrapBridge({ repoRoot, release, sourceRevision, workspaceSourceRevision, effectiveBase });
   }
   git(repoRoot, ['cat-file', '-e', `${effectiveBase}^{commit}`]);
   const firstParent = new Set(git(repoRoot, ['rev-list', '--first-parent', effectiveBase]).split(/\n/u).filter(Boolean));
