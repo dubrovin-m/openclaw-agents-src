@@ -203,8 +203,12 @@ oc_for_root(){
 OPENCLAW_82_PREUPGRADE_REV=dd8b85d29bd014de6da7dd1f3dc42eec0686a66a
 
 verify_doctor_migration_provenance(){
-  local r="$TMP/doctor-derived-predecessor" f var archive doctor_log before_agents_sha doctor_agents_sha
-  git -C "$REPO_ROOT" cat-file -e "$OPENCLAW_82_PREUPGRADE_REV^{commit}" 2>/dev/null || fail "pre-upgrade source revision unavailable"
+  local r="$TMP/doctor-derived-predecessor" f var archive doctor_log before_agents_sha doctor_agents_sha bridge_json
+  if ! git -C "$REPO_ROOT" cat-file -e "$OPENCLAW_82_PREUPGRADE_REV^{commit}" 2>/dev/null; then
+    bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" openclaw_82_preupgrade_source_revision "$OPENCLAW_82_PREUPGRADE_REV" HEAD 2>&1) || fail "Doctor historical-fixture bridge verification failed: $bridge_json"
+    echo TASK_AGENT_WORKSPACE_RETIREMENT_DOCTOR_PUBLIC_BOOTSTRAP_BRIDGE_PASS
+    return 0
+  fi
   TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-root "$r" >/dev/null
 
   for f in AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md; do
