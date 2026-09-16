@@ -1,4 +1,5 @@
 import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
+import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import { Type } from "typebox";
 import { ACTIONS, executeContactctl } from "./index.js";
 const personId = Type.String({ pattern: "^P-[1-9]\\d*$" });
@@ -30,8 +31,19 @@ const meta = {
 const entry = defineToolPlugin({
     id: "contacts", name: "Contacts", description: "Bounded shared Person identity operations.",
     tools: (tool) => Object.keys(ACTIONS).map(action => tool({
-        name: action, label: meta[action].label, description: meta[action].description, parameters: CONTACT_SCHEMAS[action], optional: true,
-        execute: async (params, _config, context) => executeContactctl(action, params, { signal: context.signal }),
+        name: action,
+        label: meta[action].label,
+        description: meta[action].description,
+        parameters: CONTACT_SCHEMAS[action],
+        optional: true,
+        factory: () => ({
+            name: action,
+            label: meta[action].label,
+            description: meta[action].description,
+            parameters: CONTACT_SCHEMAS[action],
+            catalogMode: "direct-only",
+            execute: async (_toolCallId, params, signal) => jsonResult(await executeContactctl(action, params, { signal })),
+        }),
     })),
 });
 export default entry;

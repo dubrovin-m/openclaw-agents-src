@@ -14,6 +14,19 @@ describe("Contacts bounded tool surface",()=>{
     expect(names).not.toContain("contacts");
     expect(new Set(names).size).toBe(actions.length);
   });
+  it("keeps every Contact tool direct-visible in the Codex harness",()=>{
+    const runtimeTools:Array<Record<string,unknown>>=[];
+    (entry as any).register({
+      pluginConfig:{},
+      registerTool:(definition:unknown)=>{
+        const resolved=typeof definition==="function"?(definition as (ctx:unknown)=>unknown)({}):definition;
+        if(Array.isArray(resolved)) runtimeTools.push(...resolved as Array<Record<string,unknown>>);
+        else if(resolved) runtimeTools.push(resolved as Record<string,unknown>);
+      },
+    });
+    expect(runtimeTools.map(tool=>tool.name)).toEqual(actions);
+    expect(runtimeTools.every(tool=>tool.catalogMode==="direct-only")).toBe(true);
+  });
   it("keeps the manifest aligned",()=>{
     const manifest=JSON.parse(readFileSync(new URL("../openclaw.plugin.json",import.meta.url),"utf8"));
     expect(manifest.contracts.tools).toEqual(actions);
