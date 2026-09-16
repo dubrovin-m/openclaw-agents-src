@@ -362,7 +362,7 @@ install -d -m 700 "$R/home/.local/lib/openclaw-contacts" "$R/state/data/contacts
 install -m 600 "$REPO_ROOT/shared/contacts/core.cjs" "$R/home/.local/lib/openclaw-contacts/core.cjs"
 install -m 600 "$REPO_ROOT/shared/contacts/task-store.cjs" "$R/home/.local/lib/openclaw-contacts/task-store.cjs"
 install -m 700 "$REPO_ROOT/shared/contacts/contactctl" "$R/bin/contactctl"
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$R/state/data/contacts/contacts.sqlite3" "$R/bin/contactctl" init >/dev/null
+HOME="$R/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$R/state/data/contacts/contacts.sqlite3" "$R/bin/contactctl" init >/dev/null
 oc_for_root "$R" plugins install "$REPO_ROOT/shared/contacts/artifacts/openclaw-plugin-contacts-0.1.0.tgz" --force --accept-capabilities >/dev/null
 contacts_before=$(sha256sum "$R/state/data/contacts/contacts.sqlite3"|awk '{print $1}')
 expect_preflight_rejection "$R" "schema-6 predecessor with preinitialized Contacts"
