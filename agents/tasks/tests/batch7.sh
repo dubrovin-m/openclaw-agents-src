@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.7"'; contains "$a" '"schema_version":6'
+a=$(plain init); contains "$a" '"implementation_version":"0.4.8"'; contains "$a" '"schema_version":6'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'

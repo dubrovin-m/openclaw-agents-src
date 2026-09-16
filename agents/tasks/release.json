@@ -2,7 +2,7 @@
   "format": "task-agent-release-v2",
   "workspace_layout": "agents-md-tools-v1",
   "generation": {
-    "taskctl_version": "0.4.7",
+    "taskctl_version": "0.4.8",
     "sqlite_schema": 6,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.8.2",
@@ -10,13 +10,13 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.18",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.18.tgz",
-    "sha256": "83e7a1f5c9f3c6256ab047571efa193ea10ffa5a1b87a23149bf89c0b3209f5a"
+    "version": "0.4.19",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.19.tgz",
+    "sha256": "29a0433a1a8a3d44bda3bb336ea580961609d60aefee523f3fb7473f2c33e5f5"
   },
   "from": {
-    "source_revision": "9777c9b8c3d6758b5017d83cc7428b81690a3ae8",
-    "workspace_source_revision": "9777c9b8c3d6758b5017d83cc7428b81690a3ae8",
+    "source_revision": "cced917bee60b66fa29190cafb7ffe450b141830",
+    "workspace_source_revision": "cced917bee60b66fa29190cafb7ffe450b141830",
     "sqlite_schemas": [
       6
     ],
@@ -24,10 +24,10 @@
       "0.4.7"
     ],
     "plugin_versions": [
-      "0.4.17"
+      "0.4.18"
     ],
     "workspace_sha256": {
-      "AGENTS.md": "e6d49ff90f3603da90ab7fd08ef8ee0455852f5334db72ad3864eb25f69ac505",
+      "AGENTS.md": "c1ad1e0ab6f4b6ae5277e8083ea8a7d4c84ae0636c7cb5a4ce65eb59b848ad1e",
       "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
       "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
       "USER.md": "f88ac7bd8acfb48becff9598d1912a9a1cfb45becc44db5bac6e8a252e680306",

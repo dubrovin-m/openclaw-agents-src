@@ -66,6 +66,17 @@ expect_fail '{"number":2,"context":"auto"}' ref resolve AMBIGUOUS_REFERENCE
 run '{"operation_key":"p3","display_name":"Дмитрий Иванов"}' person create >/dev/null
 run '{"operation_key":"pm","from_id":"P-3","into_id":"P-2"}' person merge >/dev/null
 a=$(run '{"reference":"Дмитрий Иванов"}' person resolve); contains "$a" '"display_name":"Дима"'
+
+# Unique canonical surname fallback, ambiguity safety, and exact-alias precedence.
+a=$(run '{"operation_key":"surname-pobedinskaya","display_name":"Побединская Н."}' person create); contains "$a" '"created":true'
+a=$(run '{"reference":"Побединская"}' person resolve); contains "$a" '"display_name":"Побединская Н."'
+run '{"operation_key":"surname-alias","id":"P-4","alias":"Иванов"}' person alias_add >/dev/null
+run '{"operation_key":"surname-ivanov-a","display_name":"Иванов А."}' person create >/dev/null
+run '{"operation_key":"surname-ivanov-b","display_name":"Иванов Б."}' person create >/dev/null
+a=$(run '{"reference":"Иванов"}' person resolve); contains "$a" '"display_name":"Побединская Н."'
+run '{"operation_key":"surname-petrov-a","display_name":"Петров А."}' person create >/dev/null
+run '{"operation_key":"surname-petrov-b","display_name":"Петров Б."}' person create >/dev/null
+a=$(run '{"reference":"Петров"}' person resolve); contains "$a" '"count":2'; contains "$a" '"ambiguous":true'
 run '{"operation_key":"l2","display_name":"СД duplicate"}' label create >/dev/null
 run '{"operation_key":"tl2","task_id":"T-1","label_id":"L-2"}' task-label add >/dev/null
 run '{"operation_key":"lm","from_id":"L-2","into_id":"L-1"}' label merge >/dev/null
