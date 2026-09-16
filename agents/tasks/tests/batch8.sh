@@ -40,7 +40,7 @@ for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyRe
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
 const taskctl = read('taskctl');
-for (const required of ["const IMPLEMENTATION_VERSION = '0.4.7';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'"]) {
+for (const required of ["const IMPLEMENTATION_VERSION = '0.4.8';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'"]) {
   if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
@@ -104,7 +104,7 @@ DB="$TMP/tasks.sqlite3"
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" "$TASKCTL" init)
 node - "$init" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (result.schema_version !== 6 || result.implementation_version !== '0.4.7') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.7 / schema 6`);
+if (result.schema_version !== 6 || result.implementation_version !== '0.4.8') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.8 / schema 6`);
 NODE
 
 
@@ -133,7 +133,7 @@ NODE
 snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 node - "$snapshot" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (!result.ok || result.implementation_version !== '0.4.7' || result.schema_version !== 6 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
+if (!result.ok || result.implementation_version !== '0.4.8' || result.schema_version !== 6 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
 if (!Array.isArray(result.tasks) || result.tasks.length !== 250) process.exit(3);
 if (result.tasks.some((task) => task.title === 'Done' || task.title === 'Future')) process.exit(4);
 const first = result.tasks.find((task) => task.id === 'T-1');
