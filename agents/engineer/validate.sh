@@ -86,7 +86,8 @@ for required_text in \
   'BLOCKED' \
   'The v0 GitHub/implementation capability is read-only.' \
   'Do not automatically retry a failed material mutation.' \
-  'Do not schedule audits, updates, monitoring, or maintenance automatically in v0.'
+  'A registered scheduled VPS maintenance run is read-only.' \
+  'If a weekly exception review finds no material exception, return exactly `NO_REPLY`.'
 do
   grep -Fq "$required_text" "$ROOT/workspace/AGENTS.md" || fail "workspace contract marker missing: $required_text"
 done
