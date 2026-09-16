@@ -11,9 +11,11 @@ Engineer v0 is intentionally small. This package contains:
 - `workspace/` — runtime instructions and identity files;
 - `config/engineer-agent.fragment.json` — non-secret agent identity and workspace paths;
 - `config/engineer-tools.json` — the bounded model-visible tool and host-exec policy;
+- `bin/engineer-vps-maintenance-snapshot` — fixed-argument deterministic read-only evidence collector for the registered scheduled VPS maintenance case;
+- `tests/maintenance_snapshot_test.py` — collector boundary tests;
 - `validate.sh` — deterministic source validation.
 
-Engineer v0 has no custom plugin, backend, database, production controller, custom scheduler, or shared infrastructure of its own. Registered native OpenClaw Automation instances are runtime-owned provider state and are not defined by this package.
+Engineer v0 has no custom plugin, backend, database, production controller, custom scheduler, or shared infrastructure of its own. The maintenance collector is a bounded read-only helper: it accepts only `weekly` or `monthly`, gathers operational evidence, and has no mutation interface. Registered native OpenClaw Automation instances are runtime-owned provider state and are not defined by this package.
 
 The package does not contain or provision model credentials, GitHub credentials, Telegram bot tokens, Nexus write access, host approval allowlists, or other secrets/provider-managed state.
 
@@ -50,7 +52,7 @@ Run:
 bash validate.sh
 ```
 
-The package CI must validate the repository runtime contract, source layout, JSON configuration, least-privilege tool policy, workspace boundary, and absence of obvious secret material.
+The package CI must validate the repository runtime contract, source layout, JSON configuration, least-privilege tool policy, workspace boundary, the maintenance collector syntax/tests and non-shell mutation boundary, and absence of obvious secret material.
 
 ## Production boundary
 
