@@ -36,7 +36,7 @@ set -e
 [ ! -e "$LOST_CDB" ]
 rm -rf "$TMP/lost"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.implementation_version!=="0.4.10")process.exit(1)})'
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==1||x.implementation_version!=="0.1.0")process.exit(1)})'
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==1||x.implementation_version!=="0.1.1")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.
 crun '{"operation_key":"c1","display_name":"Побединская Н.","organization":"Компания","title":"Директор"}' create >/dev/null
 trun '{"reference":"Побединская"}' person resolve | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.outcome!=="MATCH"||x.matches[0].id!=="P-2")process.exit(1)})'
