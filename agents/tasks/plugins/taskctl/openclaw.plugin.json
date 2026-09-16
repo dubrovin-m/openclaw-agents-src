@@ -2,7 +2,7 @@
   "id": "taskctl",
   "name": "Taskctl",
   "description": "Typed Task Agent data access plus bounded Task production-control operations.",
-  "version": "0.4.19",
+  "version": "0.4.20",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -69,7 +69,8 @@
       "comment_list",
       "ref_resolve",
       "task_production_control",
-      "task_daily_review"
+      "task_daily_review",
+      "task_management_review"
     ]
   },
   "toolMetadata": {
@@ -242,6 +243,9 @@
       "optional": true
     },
     "task_daily_review": {
+      "optional": true
+    },
+    "task_management_review": {
       "optional": true
     }
   }

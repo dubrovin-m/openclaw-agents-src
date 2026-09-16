@@ -3,6 +3,7 @@ import { TASKCTL_ACTIONS, actionToolParameters, getActionDefinition } from "./co
 import { TASK_DAILY_REVIEW_TOOL, dailyReviewParameters, } from "./daily-review.js";
 import { createDailyReviewTool, registerDailyReviewSchedulerAccess, } from "./daily-review-runtime.js";
 import { executeTaskctl } from "./index.js";
+import { TASK_MANAGEMENT_REVIEW_TOOL, createManagementReviewTool, managementReviewParameters } from "./management-review.js";
 import { TASK_PRODUCTION_CONTROL_TOOL, executeProductionControl, productionControlApproval, productionControlParameters, } from "./production-control.js";
 const entry = defineToolPlugin({
     id: "taskctl",
@@ -35,6 +36,14 @@ const entry = defineToolPlugin({
             parameters: dailyReviewParameters,
             optional: true,
             factory: ({ api, toolContext }) => createDailyReviewTool(api, toolContext),
+        }),
+        tool({
+            name: TASK_MANAGEMENT_REVIEW_TOOL,
+            label: "Task Management Review",
+            description: "Build one fail-closed scheduler-only weekday management report without Task mutations.",
+            parameters: managementReviewParameters,
+            optional: true,
+            factory: ({ toolContext }) => createManagementReviewTool(toolContext),
         }),
     ],
 });

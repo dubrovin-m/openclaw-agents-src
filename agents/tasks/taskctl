@@ -7,7 +7,7 @@ const path = require('node:path');
 const crypto = require('node:crypto');
 const { DatabaseSync } = require('node:sqlite');
 
-const IMPLEMENTATION_VERSION = '0.4.8';
+const IMPLEMENTATION_VERSION = '0.4.9';
 const SCHEMA_VERSION = 6;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = 'Дубровин М.';
@@ -185,6 +185,31 @@ function reviewSnapshot(p){
   }catch(e){if(inTx){try{db.exec('ROLLBACK;');}catch{}}throw e;}finally{db.close();}
 }
 
+const MANAGEMENT_REVIEW_EXCLUSIONS=['Савельев','Дубровин','Воронин','Митин','Побединская','Колесникова'];
+const RU_MONTHS_FULL=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
+function localMidnightIso(value){
+  const [year,month,day]=value.split('-').map(Number),target=Date.UTC(year,month-1,day,0,0,0);let guess=target;
+  for(let i=0;i<4;i+=1){const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(guess)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));const represented=Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second));const delta=target-represented;if(delta===0)break;guess+=delta;}
+  const iso=new Date(guess).toISOString(),parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',hourCycle:'h23'}).formatToParts(new Date(guess)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));
+  if(`${parts.year}-${parts.month}-${parts.day}`!==value||parts.hour!=='00'||parts.minute!=='00')throw new AppError('TIMEZONE_ERROR',`Cannot resolve ${value} midnight in ${TZ}`);return iso;
+}
+function managementReviewSnapshot(p){
+  const raw=required(p,'boundary',40),instant=new Date(raw);if(Number.isNaN(instant.getTime()))throw new AppError('INVALID_BOUNDARY','boundary must be a valid ISO timestamp');
+  const boundary=instant.toISOString(),reportDate=localDateAt(boundary),nextDate=addLocalDays(reportDate,1),dayStart=localMidnightIso(reportDate),dayEnd=localMidnightIso(nextDate),db=openReadDb();let inTx=false;
+  try{
+    const version=Number(db.prepare('PRAGMA user_version').get().user_version);if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Management Review requires schema ${SCHEMA_VERSION}; found ${version}`);
+    db.exec('BEGIN;');inTx=true;
+    const excluded=[];for(const reference of MANAGEMENT_REVIEW_EXCLUSIONS){const matches=peopleMatching(db,reference);if(matches.length>1)throw new AppError('AMBIGUOUS_PERSON',`Management Review exclusion is ambiguous: ${reference}`,{reference,candidates:matches.map(fmtPerson)});if(matches.length===1)excluded.push({reference,id:matches[0].id,display_name:matches[0].display_name});}
+    const ids=[...new Set(excluded.map(x=>x.id))],notIn=ids.length?` AND t.assignee_id NOT IN (${ids.map(()=>'?').join(',')})`:'';
+    const overdue=db.prepare(`SELECT t.title,t.assignee_id,p.display_name assignee,t.due_date,t.due_time FROM tasks t JOIN people p ON p.id=t.assignee_id WHERE t.status='OPEN' AND t.created_at<=? AND t.due_date IS NOT NULL AND t.due_date<?${notIn}`).all(boundary,reportDate,...ids).map(r=>({title:r.title,assignee_id:`P-${r.assignee_id}`,assignee:r.assignee,due_date:r.due_date,due_time:r.due_time??null}));
+    const completed=db.prepare(`SELECT t.title,t.assignee_id,p.display_name assignee,t.completed_at FROM tasks t JOIN people p ON p.id=t.assignee_id WHERE t.status='DONE' AND t.completed_at>=? AND t.completed_at<? AND t.completed_at<=?${notIn}`).all(dayStart,dayEnd,boundary,...ids).map(r=>({title:r.title,assignee_id:`P-${r.assignee_id}`,assignee:r.assignee,completed_at:r.completed_at}));
+    overdue.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.due_date.localeCompare(b.due_date)||(a.due_time??'').localeCompare(b.due_time??'')||a.title.localeCompare(b.title,'ru-RU'));completed.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.completed_at.localeCompare(b.completed_at)||a.title.localeCompare(b.title,'ru-RU'));
+    const dateText=(()=>{const [y,m,d]=reportDate.split('-').map(Number);return `${d} ${RU_MONTHS_FULL[m-1]} ${y}`;})(),group=(rows,render)=>{const blocks=[];let current=null,items=[];const flush=()=>{if(current!==null)blocks.push(`${current}\n${items.map((x,i)=>`${i+1}. ${render(x)}`).join('\n')}`);};for(const row of rows){if(row.assignee!==current){flush();current=row.assignee;items=[];}items.push(row);}flush();return blocks.join('\n\n');};
+    const overdueBody=group(overdue,row=>`${row.title} — срок ${row.due_date.slice(8,10)}.${row.due_date.slice(5,7)}`),completedBody=group(completed,row=>row.title),sections=[`ПРОСРОЧЕННЫЕ ПОРУЧЕНИЯ — ${overdue.length}${overdueBody?`\n\n${overdueBody}`:''}`,`ВЫПОЛНЕНО СЕГОДНЯ — ${completed.length}${completedBody?`\n\n${completedBody}`:''}`];
+    db.exec('COMMIT;');inTx=false;return{ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,boundary,local_date:reportDate,timezone:TZ,excluded_people:excluded.map(x=>({reference:x.reference,id:`P-${x.id}`,display_name:x.display_name})),overdue_count:overdue.length,completed_today_count:completed.length,message:`${dateText}\n\n${sections.join('\n\n')}`};
+  }catch(e){if(inTx){try{db.exec('ROLLBACK;');}catch{}}throw e;}finally{db.close();}
+}
+
 const fmtInbox=r=>({id:`I-${r.id}`,content:r.content,received_at:r.received_at,capture_key:r.capture_key});
 const fmtPerson=r=>({id:`P-${r.id}`,display_name:r.display_name,created_at:r.created_at});
 const fmtLabel=r=>({id:`L-${r.id}`,display_name:r.display_name,emoji:r.emoji??null,created_at:r.created_at});
@@ -359,6 +384,7 @@ let db;
 try{
   const [scope,action]=process.argv.slice(2),hiddenMaterialize=scope==='recurrence'&&action==='materialize',p=payload(!['init','health'].includes(scope)&&!hiddenMaterialize);
   if(scope==='review'&&action==='snapshot')ok(reviewSnapshot(p));
+  else if(scope==='review'&&action==='management-snapshot')ok(managementReviewSnapshot(p));
   else if(hiddenMaterialize){db=openDb();db.exec('BEGIN IMMEDIATE;');try{const result=materializeCalendars(db);db.exec('COMMIT;');ok(result);}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
   else{
     db=openDb();
