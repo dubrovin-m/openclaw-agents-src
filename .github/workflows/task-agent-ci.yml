@@ -8,7 +8,6 @@ on:
     paths:
       - "runtime-contract.json"
       - "shared/runtime-contract/**"
-      - "shared/contacts/**"
       - "agents/tasks/**"
       - ".github/workflows/task-agent-ci.yml"
     types: [opened, synchronize, reopened, ready_for_review]
@@ -49,7 +48,7 @@ jobs:
             relevant=false
             if [[ ! "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
               relevant=true
-            elif git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|shared/contacts/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)'; then
+            elif git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)'; then
               relevant=true
             fi
           fi
@@ -88,30 +87,6 @@ jobs:
           node --check shared/runtime-contract/runtime-contract.mjs
           node shared/runtime-contract/runtime-contract.mjs repo-check .
           node --test shared/runtime-contract/runtime-contract.test.mjs
-
-      - name: Install Shared Contacts plugin dependencies
-        if: steps.scope.outputs.relevant == 'true'
-        working-directory: shared/contacts/plugin
-        run: timeout 300s npm ci
-
-      - name: Test and validate Shared Contacts
-        if: steps.scope.outputs.relevant == 'true'
-        run: |
-          set -euo pipefail
-          node --check shared/contacts/core.cjs
-          node --check shared/contacts/task-store.cjs
-          node --check shared/contacts/contactctl
-          timeout 180s bash shared/contacts/tests/shared-contacts.sh
-          cd shared/contacts/plugin
-          timeout 180s npm test
-          timeout 180s npm run plugin:build
-          timeout 180s npm run plugin:validate
-          cd ../../..
-          node shared/contacts/validate-release.mjs
-          pack_dir="$(mktemp -d)"
-          timeout 120s npm pack ./shared/contacts/plugin --pack-destination "$pack_dir" >/dev/null
-          cmp -s "$pack_dir/openclaw-plugin-contacts-0.1.0.tgz" shared/contacts/artifacts/openclaw-plugin-contacts-0.1.0.tgz
-          rm -rf "$pack_dir"
 
       - name: Install plugin dependencies
         if: steps.scope.outputs.relevant == 'true'
@@ -245,7 +220,4 @@ jobs:
           git diff --exit-code -- \
             agents/tasks/plugins/taskctl/package-lock.json \
             agents/tasks/plugins/taskctl/openclaw.plugin.json \
-            agents/tasks/plugins/taskctl/dist \
-            shared/contacts/plugin/package-lock.json \
-            shared/contacts/plugin/openclaw.plugin.json \
-            shared/contacts/plugin/dist
+            agents/tasks/plugins/taskctl/dist
