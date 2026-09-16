@@ -243,7 +243,7 @@ NODE
   calendar_materializer_exact
 }
 taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
-contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" "$CONTACTCTL_TARGET" health; else "$CONTACTCTL_TARGET" health; fi; }
+contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; else CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; fi; }
 start_gateway_best_effort(){ systemctl_user start openclaw-gateway.service >/dev/null 2>&1 || true; GATEWAY_STOPPED=0; }
 
 abort_deploy(){
