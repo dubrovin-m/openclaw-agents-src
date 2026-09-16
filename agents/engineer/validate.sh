@@ -15,6 +15,8 @@ for path in \
   "$ROOT/README.md" \
   "$ROOT/config/engineer-agent.fragment.json" \
   "$ROOT/config/engineer-tools.json" \
+  "$ROOT/bin/engineer-vps-maintenance-snapshot" \
+  "$ROOT/tests/maintenance_snapshot_test.py" \
   "$ROOT/workspace/AGENTS.md" \
   "$ROOT/workspace/SOUL.md" \
   "$ROOT/workspace/IDENTITY.md" \
@@ -31,6 +33,29 @@ done
 [ ! -e "$ROOT/workspace/BOOTSTRAP.md" ] || fail "v0 must not ship an interactive bootstrap ritual"
 
 node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || fail "repository runtime contract mismatch"
+
+python3 -m py_compile "$ROOT/bin/engineer-vps-maintenance-snapshot" || fail "maintenance collector syntax invalid"
+python3 -m unittest "$ROOT/tests/maintenance_snapshot_test.py" >/dev/null || fail "maintenance collector tests failed"
+
+python3 - "$ROOT/bin/engineer-vps-maintenance-snapshot" <<'PYVALIDATE' || exit 2
+import ast
+import pathlib
+import sys
+
+path = pathlib.Path(sys.argv[1])
+source = path.read_text(encoding="utf-8")
+tree = ast.parse(source)
+
+for node in ast.walk(tree):
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if isinstance(node.func.value, ast.Name) and node.func.value.id == "subprocess" and node.func.attr == "run":
+            for kw in node.keywords:
+                if kw.arg == "shell" and isinstance(kw.value, ast.Constant) and kw.value.value is True:
+                    raise SystemExit("Engineer validation failed: maintenance collector must not use shell=True")
+    if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute):
+        if isinstance(node.func.value, ast.Name) and node.func.value.id in {"os", "shutil"} and node.func.attr in {"remove", "unlink", "rmtree"}:
+            raise SystemExit(f"Engineer validation failed: mutating filesystem call is forbidden: {node.func.value.id}.{node.func.attr}")
+PYVALIDATE
 
 node - "$ROOT/config/engineer-agent.fragment.json" "$ROOT/config/engineer-tools.json" <<'NODE' || exit 2
 const fs = require('node:fs');
