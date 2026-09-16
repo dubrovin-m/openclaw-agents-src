@@ -11,10 +11,10 @@ bash "$ROOT/install.sh" --test-root "$TMP" --apply > "$TMP/install.out"
 grep -q '^PRODUCTION_CONTROL_INSTALL_PASS$' "$TMP/install.out"
 grep -q '^mode=STAGED_NOT_ENABLED$' "$TMP/install.out"
 grep -q "^installed_revision=$EXPECTED_REVISION$" "$TMP/install.out"
-grep -q "^source=$TMP/home/.local/share/openclaw-production-control/openclaw-agents-src$" "$TMP/install.out"
+grep -q "^source=$TMP/home/.local/share/openclaw-production-control/openclaw-agents$" "$TMP/install.out"
 
 LIB="$TMP/home/.local/lib/openclaw-production-control"
-SOURCE="$TMP/home/.local/share/openclaw-production-control/openclaw-agents-src"
+SOURCE="$TMP/home/.local/share/openclaw-production-control/openclaw-agents"
 SYSTEMD="$TMP/home/.config/systemd/user"
 [ -x "$LIB/controller.mjs" ]
 [ -x "$LIB/diagnose.mjs" ]

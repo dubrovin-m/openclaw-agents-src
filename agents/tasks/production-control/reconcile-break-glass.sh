@@ -72,7 +72,7 @@ else
   STATE_DIR="$HOME/.local/state/openclaw-production-control"
   LIB_DIR="$HOME/.local/lib/openclaw-production-control"
   SYSTEMD_DIR="$HOME/.config/systemd/user"
-  SOURCE_DIR="$HOME/.local/share/openclaw-production-control/openclaw-agents-src"
+  SOURCE_DIR="$HOME/.local/share/openclaw-production-control/openclaw-agents"
 fi
 
 STATE_FILE="$STATE_DIR/state.json"
