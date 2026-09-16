@@ -118,6 +118,7 @@ PREDECESSOR="$TMP/taskctl-predecessor"
 git show "$PREDECESSOR_SHA:agents/tasks/taskctl" > "$PREDECESSOR"
 chmod 700 "$PREDECESSOR"
 MIGDB="$TMP/migration.sqlite3"
+MIGCDB="$TMP/migration-contacts.sqlite3"
 prun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$1" node "$PREDECESSOR" "$2" "$3"; }
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" node "$PREDECESSOR" init >/dev/null
 prun '{"operation_key":"mp","display_name":"Иванов И."}' person create >/dev/null
@@ -133,23 +134,25 @@ try{const tables=['inbox_items','capture_receipts','people','person_aliases','la
 NODE
 )
 contains "$before" '"uv":4'
-health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":7'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
-after=$(node - "$MIGDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});
-try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id FROM tasks ORDER BY id').all(),projects:Number(d.prepare('SELECT count(*) n FROM projects').get().n),integrity:d.prepare('PRAGMA integrity_check').get().integrity_check,fk:d.prepare('PRAGMA foreign_key_check').all().length};for(const t of tables)out.rows[t]=Number(d.prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();}
+health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":7'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
+after=$(node - "$MIGDB" "$MIGCDB" <<'NODE'
+const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});
+try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),cuv:Number(c.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id FROM tasks ORDER BY id').all(),projects:Number(d.prepare('SELECT count(*) n FROM projects').get().n),local_people:Number(d.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").get().n),self:Number(c.prepare("SELECT count(*) n FROM people WHERE is_self=1 AND status='ACTIVE'").get().n),integrity:d.prepare('PRAGMA integrity_check').get().integrity_check,fk:d.prepare('PRAGMA foreign_key_check').all().length,cintegrity:c.prepare('PRAGMA integrity_check').get().integrity_check,cfk:c.prepare('PRAGMA foreign_key_check').all().length};for(const t of tables)out.rows[t]=Number((t==='people'||t==='person_aliases'?c:d).prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();c.close();}
 NODE
 )
 node - "$before" "$after" <<'NODE'
-const b=JSON.parse(process.argv[2]),a=JSON.parse(process.argv[3]);if(b.uv!==4||a.uv!==6||a.projects!==0||a.integrity!=='ok'||a.fk!==0)process.exit(2);if(JSON.stringify(b.rows)!==JSON.stringify(a.rows))process.exit(3);if(a.task.some(t=>t.project_id!==null))process.exit(4);const stripped=a.task.map(({project_id,...x})=>x);if(JSON.stringify(stripped)!==JSON.stringify(b.task))process.exit(5);
+const b=JSON.parse(process.argv[2]),a=JSON.parse(process.argv[3]);if(b.uv!==4||a.uv!==7||a.cuv!==1||a.projects!==0||a.local_people!==0||a.self!==1||a.integrity!=='ok'||a.cintegrity!=='ok'||a.fk!==0||a.cfk!==0)process.exit(2);if(JSON.stringify(b.rows)!==JSON.stringify(a.rows))process.exit(3);if(a.task.some(t=>t.project_id!==null))process.exit(4);const stripped=a.task.map(({project_id,...x})=>x);if(JSON.stringify(stripped)!==JSON.stringify(b.task))process.exit(5);
 NODE
 
 # Representative mid-migration failure rolls all DDL back to complete schema v4.
 FAULTDB="$TMP/fault.sqlite3"
+FAULTCDB="$TMP/fault-contacts.sqlite3"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_TEST_NOW="$NOW" node "$PREDECESSOR" init >/dev/null
 set +e
-fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_TEST_MIGRATION_FAULT=after-task-column node "$TASKCTL" health); rc=$?
+fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_CONTACTS_DB="$FAULTCDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_TEST_MIGRATION_FAULT=after-task-column node "$TASKCTL" health); rc=$?
 set -e
 [ "$rc" -ne 0 ]; contains "$fault" '"code":"TEST_MIGRATION_FAULT"'
+[ ! -e "$FAULTCDB" ]
 node - "$FAULTDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});
 try{if(Number(d.prepare('PRAGMA user_version').get().user_version)!==4)process.exit(2);if(d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get())process.exit(3);if(d.prepare('PRAGMA table_info(tasks)').all().some(x=>x.name==='project_id'))process.exit(4);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(5);}finally{d.close();}

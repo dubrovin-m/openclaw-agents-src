@@ -353,6 +353,21 @@ verify_doctor_migration_provenance
 BASE="$TMP/predecessor-base"
 init_predecessor_runtime "$BASE"
 
+# Shared Contacts is activated only by the coordinated schema-6 -> schema-7 cutover.
+# A schema-6 predecessor with independently initialized Contacts is outside the
+# declared starting fingerprint and must fail before any mutation.
+R="$TMP/preinitialized-contacts"
+clone_predecessor_runtime "$BASE" "$R"
+install -d -m 700 "$R/home/.local/lib/openclaw-contacts" "$R/state/data/contacts"
+install -m 600 "$REPO_ROOT/shared/contacts/core.cjs" "$R/home/.local/lib/openclaw-contacts/core.cjs"
+install -m 600 "$REPO_ROOT/shared/contacts/task-store.cjs" "$R/home/.local/lib/openclaw-contacts/task-store.cjs"
+install -m 700 "$REPO_ROOT/shared/contacts/contactctl" "$R/bin/contactctl"
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$R/state/data/contacts/contacts.sqlite3" "$R/bin/contactctl" init >/dev/null
+oc_for_root "$R" plugins install "$REPO_ROOT/shared/contacts/artifacts/openclaw-plugin-contacts-0.1.0.tgz" --force --accept-capabilities >/dev/null
+contacts_before=$(sha256sum "$R/state/data/contacts/contacts.sqlite3"|awk '{print $1}')
+expect_preflight_rejection "$R" "schema-6 predecessor with preinitialized Contacts"
+test "$(sha256sum "$R/state/data/contacts/contacts.sqlite3"|awk '{print $1}')" = "$contacts_before" || fail "rejected preflight mutated preinitialized Contacts DB"
+
 # The declared OpenClaw 2026.8.2 predecessor must fail closed when
 # its Doctor migration provenance is incomplete or the retired file reappears.
 R="$TMP/missing-archive"
