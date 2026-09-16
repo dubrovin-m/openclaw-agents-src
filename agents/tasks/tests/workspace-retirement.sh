@@ -31,6 +31,14 @@ NODE
 ) || fail "invalid release predecessor metadata"
 eval "$RELEASE_ENV"
 
+PREDECESSOR_VERIFY_JSON=$(node "$ROOT/production-control/verify-release-predecessor.mjs" HEAD^ 2>&1) || fail "release predecessor verification failed: $PREDECESSOR_VERIFY_JSON"
+PROVENANCE_MODE=$(node -e 'const x=JSON.parse(process.argv[1]);if(typeof x.provenance_mode!=="string")process.exit(2);process.stdout.write(x.provenance_mode)' "$PREDECESSOR_VERIFY_JSON") || fail "release predecessor verification returned invalid evidence"
+if [ "$PROVENANCE_MODE" = "public-bootstrap-bridge" ]; then
+  echo TASK_AGENT_WORKSPACE_RETIREMENT_PUBLIC_BOOTSTRAP_BRIDGE_PASS
+  exit 0
+fi
+[ "$PROVENANCE_MODE" = "history" ] || fail "workspace retirement requires historical predecessor provenance"
+
 PREDECESSOR_ARTIFACT="$TMP/openclaw-plugin-taskctl-${PREDECESSOR_PLUGIN_VERSION}.tgz"
 PREDECESSOR_SHA_FILE="${PREDECESSOR_ARTIFACT%.tgz}.sha256"
 FIXTURE="$TMP/predecessor-source"

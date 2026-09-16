@@ -2,7 +2,10 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PREDECESSOR_WORKSPACE_FILES,
+  sha256,
+  stableJson,
   validatePredecessorBinding,
+  validatePublicBootstrapBridge,
 } from '../verify-release-predecessor.mjs';
 
 const SOURCE = 'a'.repeat(40);
@@ -122,4 +125,56 @@ test('a release without a predecessor must explicitly retire source provenance',
     workspaceSha256: {},
     toolsSha256: null,
   }), /retired predecessor workspace source revision remains/u);
+});
+
+
+test('public bootstrap bridge is pinned to one exact clean-history release and predecessor', () => {
+  const bootstrapRelease = {
+    generation: { taskctl_version: '0.4.7', sqlite_schema: 6 },
+    plugin: { version: '0.4.17' },
+    from: {
+      source_revision: SOURCE,
+      workspace_source_revision: SOURCE,
+      plugin_versions: ['0.4.16'],
+    },
+  };
+  const marker = {
+    format: 'task-agent-public-source-bootstrap-v1',
+    target: {
+      plugin_version: '0.4.17',
+      taskctl_version: '0.4.7',
+      sqlite_schema: 6,
+      release_sha256: sha256(stableJson(bootstrapRelease)),
+    },
+    legacy_predecessor: {
+      source_revision: SOURCE,
+      workspace_source_revision: SOURCE,
+    },
+    public_snapshot: {
+      commit: 'd'.repeat(40),
+      tree: 'e'.repeat(40),
+      parent: 'f'.repeat(40),
+    },
+    historical_test_revisions: {
+      batch7_schema4_source_revision: 'c'.repeat(40),
+      schema5_source_revision: 'b'.repeat(40),
+    },
+  };
+  assert.equal(validatePublicBootstrapBridge({ release: bootstrapRelease, marker }), true);
+  assert.throws(() => validatePublicBootstrapBridge({
+    release: { ...bootstrapRelease, plugin: { version: '0.4.18' } },
+    marker,
+  }), /target plugin mismatch/u);
+  assert.throws(() => validatePublicBootstrapBridge({
+    release: { ...bootstrapRelease, from: { ...bootstrapRelease.from, source_revision: 'b'.repeat(40) } },
+    marker,
+  }), /release fingerprint mismatch|predecessor revision mismatch/u);
+  assert.throws(() => validatePublicBootstrapBridge({
+    release: bootstrapRelease,
+    marker: { ...marker, public_snapshot: { ...marker.public_snapshot, tree: 'not-a-sha' } },
+  }), /snapshot identity is invalid/u);
+  assert.throws(() => validatePublicBootstrapBridge({
+    release: bootstrapRelease,
+    marker: { ...marker, historical_test_revisions: { batch7_schema4_source_revision: 'not-a-sha' } },
+  }), /historical test revision is invalid/u);
 });

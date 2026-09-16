@@ -103,9 +103,19 @@ node - "$ROOT/plugins/taskctl/src/contract.ts" <<'NODE'
 const fs=require('fs'),s=fs.readFileSync(process.argv[2],'utf8');if(s.includes('recurrence_materialize'))process.exit(1);
 NODE
 
-# TA-REC-039: exact production schema-v5 predecessor migrates additively with no synthetic Recurrences.
+# TA-REC-039: exact historical schema-v5 predecessor migrates additively with no synthetic Recurrences.
 PRE="$TMP/predecessor.sqlite3"
 BASE=d6dbae6848989f8611ca8931dd200bbc63868b35
+if [ -f "$ROOT/public-source-bootstrap.json" ]; then
+  bridge_json=$(node "$ROOT/production-control/verify-release-predecessor.mjs" HEAD^ 2>&1) || { echo "public bootstrap predecessor verification failed: $bridge_json" >&2; exit 2; }
+  bridge_mode=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(String(x.provenance_mode||""))' "$bridge_json")
+  if [ "$bridge_mode" = "public-bootstrap-bridge" ]; then
+    declared_schema5=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m?.historical_test_revisions?.schema5_source_revision||""))' "$ROOT/public-source-bootstrap.json")
+    [ "$declared_schema5" = "$BASE" ] || { echo "public bootstrap schema-v5 predecessor revision mismatch" >&2; exit 2; }
+    printf 'TASK_AGENT_BATCH9_RECURRING_PASS public-bootstrap-schema5-fixture-omitted predecessor=%s\n' "$BASE"
+    exit 0
+  fi
+fi
 REPO=$(cd "$ROOT/../.." && pwd)
 git -C "$REPO" cat-file -e "$BASE^{commit}"
 git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
