@@ -6,9 +6,10 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel) || { echo "repository root unavailable" >&2; exit 2; }
 TMP=$(mktemp -d /tmp/task-agent-workspace-retirement.XXXXXX)
-# Share npm download cache across disposable fixtures; it is test scratch state
-# and must never become part of a cloned runtime/recovery fixture.
-export npm_config_cache="$TMP/npm-cache"
+# Keep npm cache outside disposable runtime fixtures. CI setup/npm steps and local
+# qualification can reuse the host cache, while cloned runtime/recovery state
+# remains independent of npm scratch data.
+export npm_config_cache="${TASK_AGENT_TEST_NPM_CACHE:-$HOME/.npm}"
 cleanup(){ rm -rf "$TMP"; }
 trap cleanup EXIT INT TERM
 
