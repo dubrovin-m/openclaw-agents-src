@@ -110,7 +110,7 @@ jobs:
           node shared/contacts/validate-release.mjs
           pack_dir="$(mktemp -d)"
           timeout 120s npm pack ./shared/contacts/plugin --pack-destination "$pack_dir" >/dev/null
-          cmp -s "$pack_dir/openclaw-plugin-contacts-0.1.1.tgz" shared/contacts/artifacts/openclaw-plugin-contacts-0.1.1.tgz
+          cmp -s "$pack_dir/openclaw-plugin-contacts-0.1.2.tgz" shared/contacts/artifacts/openclaw-plugin-contacts-0.1.2.tgz
           rm -rf "$pack_dir"
 
       - name: Install plugin dependencies
