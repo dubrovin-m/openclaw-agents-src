@@ -325,7 +325,7 @@ restore_state() {
 
   if [ -n "$test_root" ]; then
     HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" config validate || fail "Restored config invalid"
-    TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$contacts_db" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
+    HOME="$home_dir" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$contacts_db" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
   else
     "$openclaw_bin" config validate || fail "Restored config invalid"
     "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
