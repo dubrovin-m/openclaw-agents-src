@@ -2,7 +2,7 @@
   "id": "contacts",
   "name": "Contacts",
   "description": "Bounded shared Person identity operations.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -23,34 +23,5 @@
       "contact_alias_remove",
       "contact_merge"
     ]
-  },
-  "toolMetadata": {
-    "contact_search": {
-      "optional": true
-    },
-    "contact_resolve": {
-      "optional": true
-    },
-    "contact_get": {
-      "optional": true
-    },
-    "contact_create": {
-      "optional": true
-    },
-    "contact_update": {
-      "optional": true
-    },
-    "contact_rename": {
-      "optional": true
-    },
-    "contact_alias_add": {
-      "optional": true
-    },
-    "contact_alias_remove": {
-      "optional": true
-    },
-    "contact_merge": {
-      "optional": true
-    }
   }
 }

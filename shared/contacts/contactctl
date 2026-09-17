@@ -10,7 +10,7 @@ const INSTALLED_LIB = path.join(os.homedir(), '.local', 'lib', 'openclaw-contact
 const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_LIB, 'core.cjs')) ? SOURCE_LIB : INSTALLED_LIB;
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.1.1';
+const IMPLEMENTATION_VERSION = '0.1.2';
 const PROD_DB = path.join(os.homedir(), '.openclaw', 'data', 'contacts', 'contacts.sqlite3');
 const DB_PATH = process.env.CONTACTCTL_ALLOW_DB_OVERRIDE === '1' && process.env.CONTACTCTL_DB
   ? path.resolve(process.env.CONTACTCTL_DB) : PROD_DB;

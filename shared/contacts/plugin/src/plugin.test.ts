@@ -14,22 +14,26 @@ describe("Contacts bounded tool surface",()=>{
     expect(names).not.toContain("contacts");
     expect(new Set(names).size).toBe(actions.length);
   });
-  it("keeps every Contact tool direct-visible in the Codex harness",()=>{
+  it("keeps every Contact tool default-admitted and direct-visible in the Codex harness",()=>{
     const runtimeTools:Array<Record<string,unknown>>=[];
+    const registrations:Array<Record<string,unknown>|undefined>=[];
     (entry as any).register({
       pluginConfig:{},
-      registerTool:(definition:unknown)=>{
+      registerTool:(definition:unknown,options?:Record<string,unknown>)=>{
+        registrations.push(options);
         const resolved=typeof definition==="function"?(definition as (ctx:unknown)=>unknown)({}):definition;
         if(Array.isArray(resolved)) runtimeTools.push(...resolved as Array<Record<string,unknown>>);
         else if(resolved) runtimeTools.push(resolved as Record<string,unknown>);
       },
     });
     expect(runtimeTools.map(tool=>tool.name)).toEqual(actions);
+    expect(registrations.every(options=>options?.optional!==true)).toBe(true);
     expect(runtimeTools.every(tool=>tool.catalogMode==="direct-only")).toBe(true);
   });
-  it("keeps the manifest aligned",()=>{
+  it("keeps the manifest aligned and default-admitted",()=>{
     const manifest=JSON.parse(readFileSync(new URL("../openclaw.plugin.json",import.meta.url),"utf8"));
     expect(manifest.contracts.tools).toEqual(actions);
+    expect(Object.values(manifest.toolMetadata??{}).some((value:any)=>value?.optional===true)).toBe(false);
   });
   it("rejects cross-entity ids and extra fields at the schema boundary",()=>{
     expect(Value.Check(CONTACT_SCHEMAS.contact_get,{id:"P-1"})).toBe(true);

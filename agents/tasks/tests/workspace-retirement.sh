@@ -379,7 +379,7 @@ install -m 600 "$REPO_ROOT/shared/contacts/core.cjs" "$R/home/.local/lib/opencla
 install -m 600 "$REPO_ROOT/shared/contacts/task-store.cjs" "$R/home/.local/lib/openclaw-contacts/task-store.cjs"
 install -m 700 "$REPO_ROOT/shared/contacts/contactctl" "$R/bin/contactctl"
 HOME="$R/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$R/state/data/contacts/contacts.sqlite3" "$R/bin/contactctl" init >/dev/null
-oc_for_root "$R" plugins install "$REPO_ROOT/shared/contacts/artifacts/openclaw-plugin-contacts-0.1.1.tgz" --force --accept-capabilities >/dev/null
+oc_for_root "$R" plugins install "$REPO_ROOT/shared/contacts/artifacts/openclaw-plugin-contacts-0.1.2.tgz" --force --accept-capabilities >/dev/null
 contacts_before=$(sha256sum "$R/state/data/contacts/contacts.sqlite3"|awk '{print $1}')
 expect_preflight_rejection "$R" "schema-6 predecessor with preinitialized Contacts"
 test "$(sha256sum "$R/state/data/contacts/contacts.sqlite3"|awk '{print $1}')" = "$contacts_before" || fail "rejected preflight mutated preinitialized Contacts DB"
@@ -433,7 +433,7 @@ node - "$RESULT" <<'NODE' || fail "deploy did not complete"
 const r=require(process.argv[2]);if(r.result!=='PASS'||r.stage!=='COMPLETE'||r.mutation_started!==true)process.exit(2);
 NODE
 test "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$R/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN_VERSION" || fail "target plugin not installed"
-node "$PLUGIN_REGISTRY_HELPER" verify-target "$R/state/state/openclaw.sqlite" 2026.8.2 "$TARGET_PLUGIN_VERSION" 0.1.1 || fail "target plugin registry ownership is not exact"
+node "$PLUGIN_REGISTRY_HELPER" verify-target "$R/state/state/openclaw.sqlite" 2026.8.2 "$TARGET_PLUGIN_VERSION" 0.1.2 || fail "target plugin registry ownership is not exact"
 test ! -e "$R/workspace-tasks/TOOLS.md" || fail "target deployment recreated retired TOOLS.md"
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
 [ -n "$RECOVERY" ] || fail "v4 recovery set missing"
