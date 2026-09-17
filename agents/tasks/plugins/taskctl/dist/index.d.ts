@@ -43,3 +43,6 @@ export declare function buildDailyReviewSnapshotInvocation(boundaryIso: string):
 export declare function runDailyReviewSnapshot(boundaryIso: string, options?: RunOptions): Promise<unknown>;
 export declare function buildManagementReviewSnapshotInvocation(boundaryIso: string): TaskctlInvocation;
 export declare function runManagementReviewSnapshot(boundaryIso: string, options?: RunOptions): Promise<unknown>;
+export type ReminderInternalAction = "dispatch" | "render" | "settle";
+export declare function buildReminderInternalInvocation(action: ReminderInternalAction, payload: JsonObject): TaskctlInvocation;
+export declare function runReminderInternal(action: ReminderInternalAction, payload: JsonObject, options?: RunOptions): Promise<unknown>;

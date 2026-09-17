@@ -106,7 +106,7 @@ TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-roo
 ln -s "$RUNTIME/state" "$RUNTIME/home/.openclaw"
 
 DEFAULT_HEALTH=$(oc_env "$RUNTIME/bin/taskctl" health)
-node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.implementation_version!=="0.4.10"||x.schema_version!==7)process.exit(1)' "$DEFAULT_HEALTH" || fail "default taskctl path does not resolve isolated schema 7 store"
+node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.implementation_version!=="0.4.11"||x.schema_version!==8)process.exit(1)' "$DEFAULT_HEALTH" || fail "default taskctl path does not resolve isolated schema 8 store"
 
 TODAY=$(TZ=Europe/Moscow date +%F)
 YESTERDAY=$(node -e 'const d=new Date(process.argv[1]+"T00:00:00Z");d.setUTCDate(d.getUTCDate()-1);process.stdout.write(d.toISOString().slice(0,10))' "$TODAY")

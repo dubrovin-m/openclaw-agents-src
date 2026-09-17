@@ -18,7 +18,7 @@ expect_ids(){ local payload=$1 expected=$2 actual; actual=$(ids "$(run "$payload
 # multi-Label first-canonical grouping, unlabeled-last behavior, due_time ordering,
 # stable replay, and no list-side mutation.
 a=$(plain init)
-node -e 'const x=JSON.parse(process.argv[1]); if(x.implementation_version!==process.argv[2] || x.schema_version!==7) process.exit(1)' "$a" "$RELEASE_TASKCTL_VERSION"
+node -e 'const x=JSON.parse(process.argv[1]); if(x.implementation_version!==process.argv[2] || x.schema_version!==8) process.exit(1)' "$a" "$RELEASE_TASKCTL_VERSION"
 run '{"operation_key":"la","display_name":"А"}' label create >/dev/null
 run '{"operation_key":"lb","display_name":"Б"}' label create >/dev/null
 

@@ -101,6 +101,6 @@ set -e
 node - "$PRE" <<'NODE'
 const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('pragma user_version').get().user_version)!==5||db.prepare("select count(*) n from tasks where title='Preserve'").get().n!==1||db.prepare("select name from sqlite_master where type='table' and name='recurrences'").get())process.exit(1);}finally{db.close();}
 NODE
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==7||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==8||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
 
 printf 'TASK_AGENT_RECURRENCE_QUALIFICATION_PASS\n'

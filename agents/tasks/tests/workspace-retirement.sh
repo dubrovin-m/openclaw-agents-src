@@ -3,6 +3,12 @@ set -euo pipefail
 umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+if node - "$ROOT/release.json" <<'NODE'
+const r=require(process.argv[2]);process.exit(r?.shared_contacts?.predecessor_mode==='exact'&&r?.reminder_dispatcher?0:1);
+NODE
+then
+  exec bash "$ROOT/tests/reminder-deploy.sh"
+fi
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel) || { echo "repository root unavailable" >&2; exit 2; }
 TMP=$(mktemp -d /tmp/task-agent-workspace-retirement.XXXXXX)

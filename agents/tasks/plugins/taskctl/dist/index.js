@@ -39,7 +39,7 @@ const validNewTask = (v) => { if (v === null || typeof v !== "object" || Array.i
     return false; if (has(x, "project_id") && !validProjectId(x.project_id))
     return false; return true; };
 function valueError(action, key, value) {
-    const stringLimits = { operation_key: 500, capture_key: 500, content: 20000, title: 2000, assignee: 500, search: 1000, display_name: 500, reference: 500, alias: 500, expansion: 2000, label: 500 };
+    const stringLimits = { operation_key: 500, capture_key: 500, content: 20000, title: 2000, text: 2000, assignee: 500, search: 1000, display_name: 500, reference: 500, alias: 500, expansion: 2000, label: 500 };
     if (Object.hasOwn(stringLimits, key) && !validString(value, stringLimits[key]))
         return key + " must be a non-empty bounded string";
     if (key === "reason" && !validString(value, 2000, true))
@@ -49,7 +49,11 @@ function valueError(action, key, value) {
     if (["create_assignee", "create_label"].includes(key) && typeof value !== "boolean")
         return key + " must be boolean";
     if (key === "id") {
-        if (action.startsWith("recurrence_")) {
+        if (action.startsWith("reminder_")) {
+            if (!validCanonicalId(value, "REM"))
+                return "id must be a canonical REM-* identifier";
+        }
+        else if (action.startsWith("recurrence_")) {
             if (!validCanonicalId(value, "R"))
                 return "id must be a canonical R-* identifier";
         }
@@ -63,7 +67,9 @@ function valueError(action, key, value) {
                 return "id has the wrong entity type";
         }
     }
-    if (key === "task_id" && !validId(value, "T"))
+    if (key === "task_id" && action === "reminder_create" && !validCanonicalId(value, "T"))
+        return "task_id must be a canonical T-* identifier";
+    if (key === "task_id" && action !== "reminder_create" && !validId(value, "T"))
         return "task_id must be a T-* id or positive integer";
     if (key === "assignee_id" && action.startsWith("recurrence_") && !validCanonicalId(value, "P"))
         return "assignee_id must be a canonical P-* id";
@@ -111,8 +117,10 @@ function valueError(action, key, value) {
         return "label_ids must contain canonical L-* ids";
     if (key === "target_project_id" && value !== null && !validProjectId(value))
         return "target_project_id must be a canonical PRJ-* id or null";
-    if (["first_due_date", "cycle_anchor_date"].includes(key) && !validDate(value, false))
+    if (["first_due_date", "cycle_anchor_date", "trigger_date"].includes(key) && !validDate(value, false))
         return key + " must be a real YYYY-MM-DD date";
+    if (key === "trigger_time" && (typeof value !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)))
+        return "trigger_time must be HH:MM";
     if (key === "tasks" && (!Array.isArray(value) || value.length < 1 || value.length > 20 || !value.every(validNewTask)))
         return "tasks contains an invalid task specification";
     if (key === "labels" && (!Array.isArray(value) || value.length > 20 || !value.every(validLabelSpec)))
@@ -243,3 +251,24 @@ export function buildManagementReviewSnapshotInvocation(boundaryIso) {
     return { executable: TASKCTL_EXECUTABLE, argv: ["review", "management-snapshot"], options: { shell: false, env: { HOME: "/home/dubrovin", PATH: "/usr/bin:/bin", LANG: "C.UTF-8", TZ: "Europe/Moscow", TASKCTL_PAYLOAD: JSON.stringify({ boundary }) }, stdio: ["ignore", "pipe", "pipe"] } };
 }
 export async function runManagementReviewSnapshot(boundaryIso, options = {}) { return runInvocation(buildManagementReviewSnapshotInvocation(boundaryIso), { ...options, outputLimitBytes: options.outputLimitBytes ?? 2 * 1024 * 1024 }); }
+export function buildReminderInternalInvocation(action, payload) {
+    const allowed = action === "dispatch" ? ["claim_token", "boundary", "limit"] : action === "render" ? ["claim_token"] : ["claim_token", "delivered"];
+    if (!payload || Array.isArray(payload) || typeof payload !== "object")
+        throw new Error("Reminder internal payload must be an object");
+    const keys = Object.keys(payload);
+    if (keys.some(key => !allowed.includes(key)))
+        throw new Error(`Reminder internal ${action} payload contains unsupported fields`);
+    if (!validString(payload.claim_token, 500))
+        throw new Error("Reminder internal claim_token is required");
+    if (action === "dispatch") {
+        const boundary = payload.boundary;
+        if (typeof boundary !== "string" || !boundary.trim() || Number.isNaN(new Date(boundary).getTime()))
+            throw new Error("Reminder internal boundary must be a valid ISO timestamp");
+        if (payload.limit !== undefined && (!Number.isSafeInteger(payload.limit) || Number(payload.limit) < 1 || Number(payload.limit) > 100))
+            throw new Error("Reminder internal limit must be 1..100");
+    }
+    if (action === "settle" && typeof payload.delivered !== "boolean")
+        throw new Error("Reminder internal delivered must be boolean");
+    return { executable: TASKCTL_EXECUTABLE, argv: ["reminder-internal", action], options: { shell: false, env: { HOME: "/home/dubrovin", PATH: "/usr/bin:/bin", LANG: "C.UTF-8", TZ: "Europe/Moscow", TASKCTL_PAYLOAD: JSON.stringify(payload) }, stdio: ["ignore", "pipe", "pipe"] } };
+}
+export async function runReminderInternal(action, payload, options = {}) { return runInvocation(buildReminderInternalInvocation(action, payload), options); }

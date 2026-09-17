@@ -2,29 +2,29 @@
   "format": "task-agent-release-v2",
   "workspace_layout": "agents-md-tools-v1",
   "generation": {
-    "taskctl_version": "0.4.10",
-    "sqlite_schema": 7,
+    "taskctl_version": "0.4.11",
+    "sqlite_schema": 8,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.8.2",
     "openclaw_compat": ">=2026.8.2"
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.21",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.21.tgz",
-    "sha256": "861f44fce8c135f42e05c6dc892f825cc89dbc788a5e90cd5f19f1ceb76f6b4f"
+    "version": "0.4.22",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.22.tgz",
+    "sha256": "2134f5615ec29867c421aa07bf1f5ecd49e8e9aa505f37d4bdd1d9a199b6ee36"
   },
   "from": {
-    "source_revision": "42329b0edab9d8d3ab9fa16257fc11723cd6acaf",
-    "workspace_source_revision": "42329b0edab9d8d3ab9fa16257fc11723cd6acaf",
+    "source_revision": "eb4d5b60ba0e17d9db8205885ed401d873e7687d",
+    "workspace_source_revision": "eb4d5b60ba0e17d9db8205885ed401d873e7687d",
     "sqlite_schemas": [
-      6
+      7
     ],
     "taskctl_versions": [
-      "0.4.9"
+      "0.4.10"
     ],
     "plugin_versions": [
-      "0.4.20"
+      "0.4.21"
     ],
     "workspace_sha256": {
       "AGENTS.md": "c1ad1e0ab6f4b6ae5277e8083ea8a7d4c84ae0636c7cb5a4ce65eb59b848ad1e",
@@ -49,6 +49,23 @@
     "release_path": "../../shared/contacts/release.json",
     "release_sha256": "a650255643cb5b4fb4c3479469f27ea85ec0d6200b8374431a1960d3a042623b",
     "implementation_version": "0.1.2",
-    "sqlite_schema": 1
+    "sqlite_schema": 1,
+    "predecessor_mode": "exact"
+  },
+  "reminder_dispatcher": {
+    "kind": "openclaw-script-automation-v1",
+    "declaration_key": "tasks.reminder-dispatch.v1",
+    "name": "tasks-reminder-dispatch",
+    "cron": "* * * * *",
+    "timezone": "Europe/Moscow",
+    "exact": true,
+    "script": "const dispatch = await task_reminder_dispatch({});\njson(dispatch.count > 0 ? { notify: dispatch.message } : {});",
+    "tool": "task_reminder_dispatch",
+    "timeout_seconds": 30,
+    "tool_budget": 1,
+    "delivery_channel": "telegram",
+    "delivery_account": "tasks",
+    "delivery_recipient_source": "tasks-owner-allowFrom-singleton",
+    "best_effort": false
   }
 }

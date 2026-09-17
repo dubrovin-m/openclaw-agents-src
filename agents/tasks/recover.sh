@@ -78,9 +78,10 @@ try{
   const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
   const fk=db.prepare('PRAGMA foreign_key_check').all().length;
   const uv=Number(db.prepare('PRAGMA user_version').get().user_version);
-  if(integrity!=='ok'||fk!==0||![4,5,6,7].includes(uv))process.exit(2);
+  if(integrity!=='ok'||fk!==0||![4,5,6,7,8].includes(uv))process.exit(2);
   if(uv===6||uv===7){const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');if(!['id','status','mode','title','assignee_id','rule_json','calendar_cursor_date'].every(x=>rec.includes(x))||!['recurrence_id','label_id'].every(x=>rl.includes(x))||!['recurrence_id','occurrence_key','task_id','template_json'].every(x=>ro.includes(x))||!['recurrence_id','event_type','occurred_at'].every(x=>re.includes(x)))process.exit(2);}
-  if(uv===7){const names=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").all();if(names.length!==0)process.exit(2);}
+  if(uv===7||uv===8){const names=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").all();if(names.length!==0)process.exit(2);}
+  if(uv===8){const cols=db.prepare('PRAGMA table_info(reminders)').all().map(x=>x.name);if(!['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>cols.includes(x)))process.exit(2);}
   process.stdout.write(String(uv));
 } finally {db.close();}
 NODE
@@ -123,6 +124,12 @@ NODE
     grep -Eq "^[0-9a-f]{64}  calendar-materializer\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: calendar-materializer.before.json"
     node - "$backup/calendar-materializer.before.json" <<'NODE' || fail "Recovery calendar materializer snapshot is invalid"
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(x?.format!=='task-agent-calendar-materializer-recovery-v1'||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||x.jobs.length!==0)process.exit(2);
+NODE
+  fi
+  if [ -f "$backup/reminder-dispatcher.before.json" ]; then
+    grep -Eq "^[0-9a-f]{64}  reminder-dispatcher\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: reminder-dispatcher.before.json"
+    node - "$backup/reminder-dispatcher.before.json" <<'NODE' || fail "Recovery Reminder dispatcher snapshot is invalid"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(x?.format!=='task-agent-reminder-dispatcher-recovery-v1'||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||x.jobs.length!==0)process.exit(2);
 NODE
   fi
 
@@ -192,6 +199,25 @@ const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:
 NODE
 }
 
+reconcile_reminder_dispatcher_before() {
+  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/reminder-dispatcher.before.json" key current ids id
+  [ -f "$snapshot" ] || return 0
+  key=$(node -e 'const x=require(process.argv[1]);if(x.format!=="task-agent-reminder-dispatcher-recovery-v1"||!Array.isArray(x.jobs)||x.jobs.length!==0)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery Reminder dispatcher snapshot unsupported"
+  if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; fi
+  ids=$(node - "$key" "$current" <<'NODE'
+const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);for(const j of jobs)if(j?.declarationKey===key&&typeof j?.id==='string')process.stdout.write(j.id+'\n');
+NODE
+) || fail "Unable to resolve Reminder dispatcher jobs"
+  while IFS= read -r id; do
+    [ -n "$id" ] || continue
+    if [ -n "${TEST_ROOT:-}" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; fi
+  done <<<"$ids"
+  if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; fi
+  node - "$key" "$current" <<'NODE' || fail "Reminder dispatcher Automation remains after cleanup"
+const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);if(jobs.some(j=>j?.declarationKey===key))process.exit(1);
+NODE
+}
+
 restore_state() {
   local test_root=$1 backup=$2 manage_gateway=$3
   local home_dir state_dir state_db config_path workspace bin_dir taskctl_target contactctl_target db_path contacts_db contacts_lib contacts_plugin_dir plugin_dir openclaw_bin systemctl_bin host_openclaw_root peer_dir peer_link f format workspace_files expected_db_schema
@@ -237,13 +263,14 @@ restore_state() {
   if [ "$manage_gateway" -eq 1 ]; then
     systemctl_bin=$(command -v systemctl || true)
     [ -n "$systemctl_bin" ] || fail "systemctl unavailable"
-    if [ -f "$backup/calendar-materializer.before.json" ]; then
+    if [ -f "$backup/calendar-materializer.before.json" ] || [ -f "$backup/reminder-dispatcher.before.json" ]; then
       if [ -n "$test_root" ]; then
         if ! TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user is-active --quiet openclaw-gateway.service; then TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user start openclaw-gateway.service || fail "Failed to start test Gateway for Automation recovery"; fi
       else
         if ! "$systemctl_bin" --user is-active --quiet openclaw-gateway.service; then "$systemctl_bin" --user start openclaw-gateway.service || fail "Failed to start Gateway for Automation recovery"; fi
       fi
       reconcile_calendar_materializer_before "$backup" "$openclaw_bin" "$home_dir" "$state_dir" "$config_path"
+      reconcile_reminder_dispatcher_before "$backup" "$openclaw_bin" "$home_dir" "$state_dir" "$config_path"
     fi
     if [ -n "$test_root" ]; then
       TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user stop openclaw-gateway.service || fail "Failed to stop test Gateway"
@@ -298,7 +325,7 @@ restore_state() {
 
   if [ -n "$test_root" ]; then
     HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" config validate || fail "Restored config invalid"
-    TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$contacts_db" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
+    HOME="$home_dir" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$contacts_db" "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"
   else
     "$openclaw_bin" config validate || fail "Restored config invalid"
     "$taskctl_target" health >/dev/null || fail "Restored taskctl health failed"

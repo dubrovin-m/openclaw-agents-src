@@ -15,6 +15,10 @@
     "task_update",
     "task_complete",
     "task_cancel",
+    "reminder_create",
+    "reminder_list",
+    "reminder_reschedule",
+    "reminder_cancel",
     "project_create",
     "project_list",
     "project_get",
@@ -58,7 +62,8 @@
     "recurrence_cancel",
     "read",
     "task_daily_review",
-    "task_management_review"
+    "task_management_review",
+    "task_reminder_dispatch"
   ],
   "deny": [
     "write",

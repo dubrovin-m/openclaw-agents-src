@@ -15,7 +15,7 @@ const json = (rel) => JSON.parse(read(rel));
 const fail = (message) => { throw new Error(message); };
 
 const release = json('release.json');
-if (release?.generation?.sqlite_schema !== 7) fail('Batch 8 must validate Daily Review against the Recurrence-capable schema v7 generation');
+if (release?.generation?.sqlite_schema !== 8) fail('Batch 8 must validate Daily Review against the current schema v8 generation');
 
 const tools = json('config/tasks-tools.json');
 if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_daily_review').length !== 1) {
@@ -24,21 +24,26 @@ if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_d
 if (tools.allow.filter((name) => name === 'task_management_review').length !== 1) {
   fail('task_management_review must be host-allowlisted exactly once');
 }
+if (tools.allow.filter((name) => name === 'task_reminder_dispatch').length !== 1) {
+  fail('task_reminder_dispatch must be host-allowlisted exactly once for scheduler-only execution');
+}
 for (const denied of ['write','edit','apply_patch','exec','process','gateway','cron','browser','sessions_spawn','sessions_send','subagents','nodes']) {
   if (!tools.deny?.includes(denied)) fail(`Task Agent deny policy lost ${denied}`);
 }
 
 const manifest = json('plugins/taskctl/openclaw.plugin.json');
 const staticTools = manifest?.contracts?.tools;
-if (!Array.isArray(staticTools) || staticTools.length !== 58) fail('Batch 8 static plugin registry must contain 58 tools');
+if (!Array.isArray(staticTools) || staticTools.length !== 63) fail('Batch 8 static plugin registry must contain 63 tools');
 if (staticTools.filter((name) => name === 'task_daily_review').length !== 1) fail('static registry must declare task_daily_review exactly once');
 if (staticTools.filter((name) => name === 'task_management_review').length !== 1) fail('static registry must declare task_management_review exactly once');
+if (staticTools.filter((name) => name === 'task_reminder_dispatch').length !== 1) fail('static registry must declare task_reminder_dispatch exactly once');
 if (manifest?.toolMetadata?.task_daily_review?.optional !== true) fail('task_daily_review must remain optional');
 if (manifest?.toolMetadata?.task_management_review?.optional !== true) fail('task_management_review must remain optional');
 
 const contract = read('plugins/taskctl/src/contract.ts');
 if (/task_daily_review/.test(contract)) fail('task_daily_review must not enter TASKCTL_ACTIONS/ordinary Task contracts');
 if (/task_management_review/.test(contract)) fail('task_management_review must not enter TASKCTL_ACTIONS/ordinary Task contracts');
+if (/task_reminder_dispatch/.test(contract)) fail('task_reminder_dispatch must not enter TASKCTL_ACTIONS/ordinary Task contracts');
 
 
 const index = read('plugins/taskctl/src/index.ts');
@@ -46,7 +51,7 @@ for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyRe
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
 const taskctl = read('taskctl');
-for (const required of ["const IMPLEMENTATION_VERSION = '0.4.10';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
+for (const required of ["const IMPLEMENTATION_VERSION = '0.4.11';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
   if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
@@ -69,7 +74,7 @@ for (const required of [
   'sessionPersistence: "detached"',
   'disableTools: true',
   'modelRun: true',
-  'TASKCTL_SCHEMA_VERSION = 7',
+  'TASKCTL_SCHEMA_VERSION = 8',
   'runDailyReviewSnapshot',
   'completionStatus === "succeeded"',
   'deliveryStatus === "delivered"',
@@ -94,8 +99,9 @@ if (/\b(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/.test(daily)) {
 }
 
 const tests = read('plugins/taskctl/src/plugin.test.ts');
-if (!tests.includes('ordinaryToolNames()).toHaveLength(56)')) fail('ordinary 56-tool surface regression is not asserted');
+if (!tests.includes('ordinaryToolNames()).toHaveLength(60)')) fail('ordinary 60-tool surface regression is not asserted');
 if (!tests.includes('expect(byName.has(TASK_DAILY_REVIEW_TOOL)).toBe(false)')) fail('ordinary normalized surface must exclude Daily Review');
+if (!tests.includes('expect(byName.has(TASK_REMINDER_DISPATCH_TOOL)).toBe(false)')) fail('ordinary normalized surface must exclude Reminder dispatcher');
 
 const reviewTests = read('plugins/taskctl/src/daily-review.test.ts');
 for (const requiredTest of [
@@ -114,7 +120,7 @@ CDB="$TMP/tasks-contacts.sqlite3"
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init)
 node - "$init" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (result.schema_version !== 7 || result.implementation_version !== '0.4.10') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.10 / schema 7`);
+if (result.schema_version !== 8 || result.implementation_version !== '0.4.11') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.11 / schema 8`);
 NODE
 
 
@@ -144,7 +150,7 @@ NODE
 snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 node - "$snapshot" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (!result.ok || result.implementation_version !== '0.4.10' || result.schema_version !== 7 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
+if (!result.ok || result.implementation_version !== '0.4.11' || result.schema_version !== 8 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
 if (!Array.isArray(result.tasks) || result.tasks.length !== 250) process.exit(3);
 if (result.tasks.some((task) => task.title === 'Done' || task.title === 'Future')) process.exit(4);
 const first = result.tasks.find((task) => task.id === 'T-1');

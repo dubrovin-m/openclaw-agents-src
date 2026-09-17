@@ -10,6 +10,7 @@ import {
 } from "./daily-review-runtime.js";
 import { executeTaskctl } from "./index.js";
 import { TASK_MANAGEMENT_REVIEW_TOOL, createManagementReviewTool, managementReviewParameters } from "./management-review.js";
+import { TASK_REMINDER_DISPATCH_TOOL, createReminderDispatchTool, registerReminderRuntime, reminderDispatchParameters } from "./reminder-runtime.js";
 import {
   TASK_PRODUCTION_CONTROL_TOOL,
   executeProductionControl,
@@ -57,6 +58,14 @@ const entry = defineToolPlugin({
       optional: true,
       factory: ({ toolContext }) => createManagementReviewTool(toolContext),
     }),
+    tool({
+      name: TASK_REMINDER_DISPATCH_TOOL,
+      label: "Task Reminder Dispatcher",
+      description: "Claim due one-shot Reminders only inside the registered Reminder Automation run.",
+      parameters: reminderDispatchParameters,
+      optional: true,
+      factory: ({ toolContext }) => createReminderDispatchTool(toolContext),
+    }),
   ],
 });
 
@@ -64,6 +73,7 @@ const registerTools = entry.register;
 entry.register = (api) => {
   registerTools(api);
   registerDailyReviewSchedulerAccess(api);
+  registerReminderRuntime(api);
   api.on("before_tool_call", (event, context) => productionControlApproval(event, context));
 };
 

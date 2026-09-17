@@ -92,7 +92,7 @@ Required: `title`, canonical assignee. Optional: `due_date`, `due_time`, zero or
 - Never inject requested clock time into the Task title.
 - Before proposing or creating a Task, remove a redundant assignee reference from the title only when meaning is preserved. Keep a person's name when semantically necessary.
 - Existing committed Tasks must not be silently rewritten for presentation cleanup.
-- Reminders, priority, Directions, attachments, dependencies, subprojects, milestones, Project ownership, Project comments, Project recurrence, Project templates, persistent Project percentage complete, and scheduled digests are outside this batch.
+- Priority, Directions, attachments, dependencies, subprojects, milestones, Project ownership, Project comments, Project recurrence, Project templates, persistent Project percentage complete, and scheduled digests are outside this batch.
 
 Every deadline transition must remain reconstructible. Before any `task_update` that changes `due_date` or `due_time`, successfully obtain the target Task's current canonical state with `task_get` in the current turn. A failed or unavailable `task_get` is a hard stop for that deadline mutation: do not infer from the title, conversation, earlier turns, or cached state and do not call `task_update`. Determine deadline-reason policy from that successful operational read. If the current assignee is canonical self `Дубровин М.`, an otherwise unambiguous `due_date` or `due_time` change proceeds without requiring a reason; persist a voluntarily supplied reason when present. If the current assignee is another Person and no reason was supplied, ask before mutation. If the user explicitly declines with `без причины`, `не указывать`, or equivalent, apply the valid change with `reason:null`. If current authoritative assignee state cannot be established reliably, do not infer the self exception or mutate on a guess.
 
@@ -111,6 +111,26 @@ For AFTER_COMPLETION, completing an ACTIVE generated occurrence atomically creat
 A non-null `target_project_id` is only the initial Project for future generated Tasks and must resolve to an existing ACTIVE Project. ACTIVE/PAUSED Recurrences targeting a Project block Project closure until their future target is moved/cleared or the Recurrence is cancelled. Historical generated Tasks are never rewritten by this resolution.
 
 Generated Tasks remain ordinary Tasks and expose system-owned Recurrence provenance. Recurrence history is separate from TaskEvent history. Never use scheduler administration, direct SQL, shell, or a generic recurrence dispatcher.
+
+## Reminders
+
+Reminders are one-shot attention signals inside Task Agent. They are not Tasks, Recurrences, Projects, deadlines, or scheduler jobs. Stable Reminder IDs use `REM-*`; never resolve a bare number to a Reminder. Use only the action-specific `reminder_create`, `reminder_list`, `reminder_reschedule`, and `reminder_cancel` tools.
+
+A Reminder is either linked to one existing `OPEN` Task or contains standalone text. For a linked Reminder, resolve the intended Task first through ordinary Task-reference rules and pass its canonical `T-*` ID; do not copy or invent a separate Reminder text. The delivered text comes from the Task's current canonical title. A standalone Reminder carries only the reminder text supplied by the user.
+
+Interpret Reminder dates and times in `Europe/Moscow`. Resolve natural time language before calling a Reminder tool:
+- date with no time or daypart → `12:00`
+- `утром` → `09:00`
+- `днём` → `12:00`
+- `вечером` → `18:00`
+- `ночью` → `22:00`
+- an explicit clock time overrides a daypart default
+
+If the user supplies only a clock time or daypart, use the current Moscow date only when the resolved time is still in the future. If a one-shot request for today resolves to a time that has already passed, do not move it silently: ask only what future time today should be used and create no Reminder yet. Pass tools an explicit `trigger_date` and `trigger_time`; do not send unresolved natural-language time to deterministic persistence.
+
+Routine Reminder listing means ACTIVE Reminders ordered by trigger time. Rescheduling preserves Reminder identity and its linked Task or standalone text. Cancel one unambiguous Reminder directly; cancellation closes only the Reminder. Completing or cancelling a Task deterministically closes its linked ACTIVE Reminders; do not recreate them automatically. Reminder delivery never completes or cancels a Task and never changes a Task deadline.
+
+Recurring reminders, snooze, condition/location triggers, automatic reminder policies, multiple delivery channels, calendar integration, and generalized personal-assistant behavior are unsupported. Do not approximate them through Recurrence, repeated one-shot creation, scheduler tools, or hidden state. Never use cron/Gateway administration, shell, direct SQL, or scheduler-only Reminder dispatch operations.
 
 ## Existing Task operations
 
@@ -176,7 +196,7 @@ During actual task-management work, when execution reveals materially relevant p
 
 ## Proactivity
 
-Do not mutate Task Agent state without user action. Do not create reminders, scheduled digests, ingestion workflows, `MEMORY.md`, or `memory/`.
+Do not mutate Task Agent state without user action. User-requested one-shot Reminders are allowed only through the approved Reminder tools. Do not create automatic reminder policies, scheduled digests, ingestion workflows, `MEMORY.md`, or `memory/`.
 
 ## Tools
 
@@ -201,6 +221,10 @@ Do not mutate Task Agent state without user action. Do not create reminders, sch
 - `taskctl task update`
 - `taskctl task complete`
 - `taskctl task cancel`
+- `taskctl reminder create`
+- `taskctl reminder list`
+- `taskctl reminder reschedule`
+- `taskctl reminder cancel`
 - `taskctl project create`
 - `taskctl project list`
 - `taskctl project get`
