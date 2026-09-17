@@ -24,7 +24,7 @@ export function targetWorkspaceFiles(layout) {
 }
 
 export function recoveryFormat(layout, release = {}) {
-  if (release.shared_contacts) return 'task-agent-recovery-v3';
+  if (release.shared_contacts) return 'task-agent-recovery-v4';
   if (layout === AGENTS_TOOLS_LAYOUT) return 'task-agent-recovery-v2';
   if (layout === LEGACY_LAYOUT) return 'task-agent-recovery-v1';
   throw new Error(`unsupported workspace layout: ${layout}`);

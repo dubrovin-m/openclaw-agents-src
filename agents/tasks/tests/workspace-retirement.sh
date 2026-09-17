@@ -133,7 +133,7 @@ done
 test "$(json_stable_sha "$FIXTURE/config/tasks-tools.json")" = "$EXPECTED_TOOLS_SHA" || fail "materialized predecessor tools mismatch"
 test "$(sha256sum "$ROOT/workspace/TOOLS.md"|awk '{print $1}')" = "$EXPECTED_TOOLS_MD_SHA" || fail "current retired TOOLS.md source no longer matches declared migration provenance"
 test "$(node "$ROOT/workspace-layout.mjs" layout "$ROOT/release.json")" = agents-md-tools-v1 || fail "unexpected workspace layout"
-test "$(node "$ROOT/workspace-layout.mjs" recovery-format "$ROOT/release.json")" = task-agent-recovery-v3 || fail "unexpected recovery format"
+test "$(node "$ROOT/workspace-layout.mjs" recovery-format "$ROOT/release.json")" = task-agent-recovery-v4 || fail "unexpected recovery format"
 
 OPENCLAW_BIN=$(command -v openclaw || true)
 [ -n "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
@@ -436,22 +436,43 @@ test "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$R/sta
 node "$PLUGIN_REGISTRY_HELPER" verify-target "$R/state/state/openclaw.sqlite" 2026.8.2 "$TARGET_PLUGIN_VERSION" 0.1.1 || fail "target plugin registry ownership is not exact"
 test ! -e "$R/workspace-tasks/TOOLS.md" || fail "target deployment recreated retired TOOLS.md"
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
-[ -n "$RECOVERY" ] || fail "v3 recovery set missing"
-test "$(cat "$RECOVERY/RECOVERY_FORMAT")" = task-agent-recovery-v3 || fail "wrong recovery format"
-test -f "$RECOVERY/plugin-registry.before.json" || fail "v3 recovery set missing plugin registry snapshot"
-node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$RECOVERY/plugin-registry.before.json" || fail "v3 plugin registry snapshot invalid"
-node - "$RECOVERY/contacts-state.json" <<'NODE' || fail "v3 predecessor Contacts state is invalid"
+[ -n "$RECOVERY" ] || fail "v4 recovery set missing"
+test "$(cat "$RECOVERY/RECOVERY_FORMAT")" = task-agent-recovery-v4 || fail "wrong recovery format"
+test -f "$RECOVERY/plugin-registry.before.json" || fail "v4 recovery set missing plugin registry snapshot"
+node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$RECOVERY/plugin-registry.before.json" || fail "v4 plugin registry snapshot invalid"
+node - "$RECOVERY/contacts-state.json" <<'NODE' || fail "v4 predecessor Contacts state is invalid"
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if(x.format!=='shared-contacts-recovery-v1'||x.db_present||x.lib_present||x.contactctl_present||x.plugin_present)process.exit(1);
 NODE
 for f in contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz; do
-  test ! -e "$RECOVERY/$f" || fail "v3 recovery retained nonexistent predecessor Contacts artifact: $f"
+  test ! -e "$RECOVERY/$f" || fail "v4 recovery retained nonexistent predecessor Contacts artifact: $f"
 done
+
+# Recovery v3 was already emitted by the deployed parent implementation. It
+# does not contain provider plugin-registry state and must remain inspectable
+# under its historical contract after v4 is introduced.
+LEGACY_V3="$TMP/legacy-v3-recovery"
+cp -a "$RECOVERY" "$LEGACY_V3"
+rm -f "$LEGACY_V3/plugin-registry.before.json"
+printf '%s\n' task-agent-recovery-v3 > "$LEGACY_V3/RECOVERY_FORMAT"
+(
+  cd "$LEGACY_V3"
+  rm -f SHA256SUMS
+  checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz contacts-state.json)
+  [ ! -f calendar-materializer.before.json ] || checksum_files+=(calendar-materializer.before.json)
+  sha256sum "${checksum_files[@]}" > SHA256SUMS
+)
+set +e
+bash "$ROOT/recover.sh" --test-root "$R" --inspect --from "$LEGACY_V3" >/dev/null 2>&1
+LEGACY_CODE=$?
+set -e
+test "$LEGACY_CODE" -eq 3 || fail "legacy v3 recovery set is no longer inspectable"
+
 set +e
 bash "$ROOT/recover.sh" --test-root "$R" --inspect --from "$RECOVERY" >/dev/null 2>&1
 CODE=$?
 set -e
-test "$CODE" -eq 3 || fail "v3 recovery inspection failed"
+test "$CODE" -eq 3 || fail "v4 recovery inspection failed"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null
 assert_predecessor_restored "$R"
 test "$(plugin_registry_row_fingerprint "$R")" = "$PRE_REGISTRY_FINGERPRINT" || fail "manual recovery did not restore plugin registry exactly"

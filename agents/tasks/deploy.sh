@@ -447,7 +447,7 @@ NODE
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_lib_present" -eq 1 ]; then tar -czf "$RECOVERY_SET/contacts-lib.before.tar.gz" -C "$(dirname "$CONTACTS_LIB")" "$(basename "$CONTACTS_LIB")" || return 1; fi
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contactctl_present" -eq 1 ]; then install -m 700 "$CONTACTCTL_TARGET" "$RECOVERY_SET/contactctl.before" || return 1; fi
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_plugin_present" -eq 1 ]; then tar --exclude='contacts/node_modules/openclaw' -czf "$RECOVERY_SET/contacts-plugin.before.tar.gz" -C "$(dirname "$CONTACTS_PLUGIN_DIR")" contacts || return 1; fi
-  if [ "$RECOVERY_FORMAT" = "task-agent-recovery-v3" ]; then node "$PLUGIN_REGISTRY_HELPER" snapshot "$STATE_DB" "$RECOVERY_SET/plugin-registry.before.json" || return 1; fi
+  if [ "$RECOVERY_FORMAT" = "task-agent-recovery-v4" ]; then node "$PLUGIN_REGISTRY_HELPER" snapshot "$STATE_DB" "$RECOVERY_SET/plugin-registry.before.json" || return 1; fi
   tar --exclude='taskctl/node_modules/openclaw' -czf "$RECOVERY_SET/taskctl-managed.before.tar.gz" -C "$(dirname "$PLUGIN_DIR")" taskctl || return 1
   local args=() f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do args+=("workspace-tasks/$f"); done; tar -czf "$RECOVERY_SET/workspace-tasks.before.tar.gz" -C "$(dirname "$WORKSPACE")" "${args[@]}" || return 1
   printf '%s\n' "$RECOVERY_FORMAT" > "$RECOVERY_SET/RECOVERY_FORMAT"
