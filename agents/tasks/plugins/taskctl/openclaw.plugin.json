@@ -2,7 +2,7 @@
   "id": "taskctl",
   "name": "Taskctl",
   "description": "Typed Task Agent data access plus bounded Task production-control operations.",
-  "version": "0.4.21",
+  "version": "0.4.22",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -27,6 +27,10 @@
       "task_get",
       "task_detail",
       "task_history",
+      "reminder_create",
+      "reminder_list",
+      "reminder_reschedule",
+      "reminder_cancel",
       "recurrence_create",
       "recurrence_list",
       "recurrence_get",
@@ -70,7 +74,8 @@
       "ref_resolve",
       "task_production_control",
       "task_daily_review",
-      "task_management_review"
+      "task_management_review",
+      "task_reminder_dispatch"
     ]
   },
   "toolMetadata": {
@@ -114,6 +119,18 @@
       "optional": true
     },
     "task_history": {
+      "optional": true
+    },
+    "reminder_create": {
+      "optional": true
+    },
+    "reminder_list": {
+      "optional": true
+    },
+    "reminder_reschedule": {
+      "optional": true
+    },
+    "reminder_cancel": {
       "optional": true
     },
     "recurrence_create": {
@@ -246,6 +263,9 @@
       "optional": true
     },
     "task_management_review": {
+      "optional": true
+    },
+    "task_reminder_dispatch": {
       "optional": true
     }
   }

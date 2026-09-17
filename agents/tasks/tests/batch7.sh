@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.10"'; contains "$a" '"schema_version":7'
+a=$(plain init); contains "$a" '"implementation_version":"0.4.11"'; contains "$a" '"schema_version":8'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'
@@ -134,14 +134,14 @@ try{const tables=['inbox_items','capture_receipts','people','person_aliases','la
 NODE
 )
 contains "$before" '"uv":4'
-health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":7'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
+health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":8'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
 after=$(node - "$MIGDB" "$MIGCDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});
 try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),cuv:Number(c.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id FROM tasks ORDER BY id').all(),projects:Number(d.prepare('SELECT count(*) n FROM projects').get().n),local_people:Number(d.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").get().n),self:Number(c.prepare("SELECT count(*) n FROM people WHERE is_self=1 AND status='ACTIVE'").get().n),integrity:d.prepare('PRAGMA integrity_check').get().integrity_check,fk:d.prepare('PRAGMA foreign_key_check').all().length,cintegrity:c.prepare('PRAGMA integrity_check').get().integrity_check,cfk:c.prepare('PRAGMA foreign_key_check').all().length};for(const t of tables)out.rows[t]=Number((t==='people'||t==='person_aliases'?c:d).prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();c.close();}
 NODE
 )
 node - "$before" "$after" <<'NODE'
-const b=JSON.parse(process.argv[2]),a=JSON.parse(process.argv[3]);if(b.uv!==4||a.uv!==7||a.cuv!==1||a.projects!==0||a.local_people!==0||a.self!==1||a.integrity!=='ok'||a.cintegrity!=='ok'||a.fk!==0||a.cfk!==0)process.exit(2);if(JSON.stringify(b.rows)!==JSON.stringify(a.rows))process.exit(3);if(a.task.some(t=>t.project_id!==null))process.exit(4);const stripped=a.task.map(({project_id,...x})=>x);if(JSON.stringify(stripped)!==JSON.stringify(b.task))process.exit(5);
+const b=JSON.parse(process.argv[2]),a=JSON.parse(process.argv[3]);if(b.uv!==4||a.uv!==8||a.cuv!==1||a.projects!==0||a.local_people!==0||a.self!==1||a.integrity!=='ok'||a.cintegrity!=='ok'||a.fk!==0||a.cfk!==0)process.exit(2);if(JSON.stringify(b.rows)!==JSON.stringify(a.rows))process.exit(3);if(a.task.some(t=>t.project_id!==null))process.exit(4);const stripped=a.task.map(({project_id,...x})=>x);if(JSON.stringify(stripped)!==JSON.stringify(b.task))process.exit(5);
 NODE
 
 # Representative mid-migration failure rolls all DDL back to complete schema v4.

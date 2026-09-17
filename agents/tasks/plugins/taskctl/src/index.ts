@@ -22,13 +22,14 @@ const validEmoji=(v:unknown)=>v===null||typeof v==="string"&&v.trim().length>0&&
 const validLabelSpec=(v:unknown)=>{if(validString(v,500))return true;if(v===null||typeof v!=="object"||Array.isArray(v))return false;const x=v as JsonObject,keys=Object.keys(x);if(keys.some(k=>!["id","name","create"].includes(k)))return false;const refs=["id","name"].filter(k=>has(x,k));if(refs.length!==1)return false;if(has(x,"id")&&!validId(x.id,"L"))return false;if(has(x,"name")&&!validString(x.name,500))return false;if(has(x,"create")&&(typeof x.create!=="boolean"||!has(x,"name")))return false;return true;};
 const validNewTask=(v:unknown)=>{if(v===null||typeof v!=="object"||Array.isArray(v))return false;const x=v as JsonObject,allowed=["title","assignee","create_assignee","status","due_date","due_time","labels","project_id"];if(Object.keys(x).some(k=>!allowed.includes(k))||!validString(x.title,2000)||!validString(x.assignee,500))return false;if(has(x,"create_assignee")&&typeof x.create_assignee!=="boolean")return false;if(has(x,"status")&&!["OPEN","DONE"].includes(String(x.status)))return false;if(has(x,"due_date")&&!validDate(x.due_date)||has(x,"due_time")&&!validTime(x.due_time))return false;if(x.due_time!==undefined&&x.due_time!==null&&(!has(x,"due_date")||x.due_date===null))return false;if(has(x,"labels")&&(!Array.isArray(x.labels)||x.labels.length>20||!x.labels.every(validLabelSpec)))return false;if(has(x,"project_id")&&!validProjectId(x.project_id))return false;return true;};
 function valueError(action:TaskctlAction,key:string,value:unknown):string|null {
-  const stringLimits:Record<string,number>={operation_key:500,capture_key:500,content:20000,title:2000,assignee:500,search:1000,display_name:500,reference:500,alias:500,expansion:2000,label:500};
+  const stringLimits:Record<string,number>={operation_key:500,capture_key:500,content:20000,title:2000,text:2000,assignee:500,search:1000,display_name:500,reference:500,alias:500,expansion:2000,label:500};
   if(Object.hasOwn(stringLimits,key)&&!validString(value,stringLimits[key]))return key+" must be a non-empty bounded string";
   if(key==="reason"&&!validString(value,2000,true))return"reason must be a non-empty string or null";
   if(key==="emoji"&&!validEmoji(value))return"emoji must be a non-empty presentation string up to 32 characters or null";
   if(["create_assignee","create_label"].includes(key)&&typeof value!=="boolean")return key+" must be boolean";
-  if(key==="id"){if(action.startsWith("recurrence_")){if(!validCanonicalId(value,"R"))return"id must be a canonical R-* identifier";}else if(action.startsWith("project_")){if(!validProjectId(value))return"id must be a canonical PRJ-* identifier";}else{const prefix=action.startsWith("inbox_")?"I":action.startsWith("task_")?"T":action.startsWith("person_")?"P":action.startsWith("label_")?"L":"";if(!prefix||!validId(value,prefix))return"id has the wrong entity type";}}
-  if(key==="task_id"&&!validId(value,"T"))return"task_id must be a T-* id or positive integer";
+  if(key==="id"){if(action.startsWith("reminder_")){if(!validCanonicalId(value,"REM"))return"id must be a canonical REM-* identifier";}else if(action.startsWith("recurrence_")){if(!validCanonicalId(value,"R"))return"id must be a canonical R-* identifier";}else if(action.startsWith("project_")){if(!validProjectId(value))return"id must be a canonical PRJ-* identifier";}else{const prefix=action.startsWith("inbox_")?"I":action.startsWith("task_")?"T":action.startsWith("person_")?"P":action.startsWith("label_")?"L":"";if(!prefix||!validId(value,prefix))return"id has the wrong entity type";}}
+  if(key==="task_id"&&action==="reminder_create"&&!validCanonicalId(value,"T"))return"task_id must be a canonical T-* identifier";
+  if(key==="task_id"&&action!=="reminder_create"&&!validId(value,"T"))return"task_id must be a T-* id or positive integer";
   if(key==="assignee_id"&&action.startsWith("recurrence_")&&!validCanonicalId(value,"P"))return"assignee_id must be a canonical P-* id";
   if(key==="assignee_id"&&!action.startsWith("recurrence_")&&!validId(value,"P"))return"assignee_id must be a P-* id or positive integer";
   if(key==="label_id"&&!validId(value,"L"))return"label_id must be an L-* id or positive integer";
@@ -49,7 +50,8 @@ function valueError(action:TaskctlAction,key:string,value:unknown):string|null {
   if(key==="seed_task_id"&&!validCanonicalId(value,"T"))return"seed_task_id must be a canonical T-* id";
   if(key==="label_ids"&&(!Array.isArray(value)||value.length>20||!value.every(v=>validCanonicalId(v,"L"))))return"label_ids must contain canonical L-* ids";
   if(key==="target_project_id"&&value!==null&&!validProjectId(value))return"target_project_id must be a canonical PRJ-* id or null";
-  if(["first_due_date","cycle_anchor_date"].includes(key)&&!validDate(value,false))return key+" must be a real YYYY-MM-DD date";
+  if(["first_due_date","cycle_anchor_date","trigger_date"].includes(key)&&!validDate(value,false))return key+" must be a real YYYY-MM-DD date";
+  if(key==="trigger_time"&&(typeof value!=="string"||!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)))return"trigger_time must be HH:MM";
   if(key==="tasks"&&(!Array.isArray(value)||value.length<1||value.length>20||!value.every(validNewTask)))return"tasks contains an invalid task specification";
   if(key==="labels"&&(!Array.isArray(value)||value.length>20||!value.every(validLabelSpec)))return"labels contains an invalid label specification";
   return null;
@@ -112,3 +114,14 @@ export function buildManagementReviewSnapshotInvocation(boundaryIso:string):Task
   return{executable:TASKCTL_EXECUTABLE,argv:["review","management-snapshot"],options:{shell:false,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",TASKCTL_PAYLOAD:JSON.stringify({boundary})},stdio:["ignore","pipe","pipe"]}};
 }
 export async function runManagementReviewSnapshot(boundaryIso:string,options:RunOptions={}){return runInvocation(buildManagementReviewSnapshotInvocation(boundaryIso),{...options,outputLimitBytes:options.outputLimitBytes??2*1024*1024});}
+export type ReminderInternalAction = "dispatch" | "render" | "settle";
+export function buildReminderInternalInvocation(action:ReminderInternalAction,payload:JsonObject):TaskctlInvocation{
+  const allowed=action==="dispatch"?["claim_token","boundary","limit"]:action==="render"?["claim_token"]:["claim_token","delivered"];
+  if(!payload||Array.isArray(payload)||typeof payload!=="object")throw new Error("Reminder internal payload must be an object");
+  const keys=Object.keys(payload);if(keys.some(key=>!allowed.includes(key)))throw new Error(`Reminder internal ${action} payload contains unsupported fields`);
+  if(!validString(payload.claim_token,500))throw new Error("Reminder internal claim_token is required");
+  if(action==="dispatch"){const boundary=payload.boundary;if(typeof boundary!=="string"||!boundary.trim()||Number.isNaN(new Date(boundary).getTime()))throw new Error("Reminder internal boundary must be a valid ISO timestamp");if(payload.limit!==undefined&&(!Number.isSafeInteger(payload.limit)||Number(payload.limit)<1||Number(payload.limit)>100))throw new Error("Reminder internal limit must be 1..100");}
+  if(action==="settle"&&typeof payload.delivered!=="boolean")throw new Error("Reminder internal delivered must be boolean");
+  return{executable:TASKCTL_EXECUTABLE,argv:["reminder-internal",action],options:{shell:false,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",TASKCTL_PAYLOAD:JSON.stringify(payload)},stdio:["ignore","pipe","pipe"]}};
+}
+export async function runReminderInternal(action:ReminderInternalAction,payload:JsonObject,options:RunOptions={}){return runInvocation(buildReminderInternalInvocation(action,payload),options);}

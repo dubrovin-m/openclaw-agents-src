@@ -105,6 +105,34 @@ export declare const ACTION_REGISTRY: Readonly<{
         readonly label: "Task history";
         readonly description: "Read the chronological Task mutation history; Project-association history is not recorded in this version.";
     };
+    readonly reminder_create: {
+        readonly argv: readonly ["reminder", "create"];
+        readonly required: readonly ["operation_key", "trigger_date", "trigger_time"];
+        readonly allowed: readonly ["operation_key", "task_id", "text", "trigger_date", "trigger_time"];
+        readonly exactlyOneOf: readonly [readonly ["task_id", "text"]];
+        readonly label: "Reminder create";
+        readonly description: "Create one one-shot Reminder, either linked to one existing OPEN Task or carrying standalone text, at one explicit Europe/Moscow date and time.";
+    };
+    readonly reminder_list: {
+        readonly argv: readonly ["reminder", "list"];
+        readonly allowed: readonly ["limit"];
+        readonly label: "Reminder list";
+        readonly description: "List ACTIVE one-shot Reminders ordered by trigger time.";
+    };
+    readonly reminder_reschedule: {
+        readonly argv: readonly ["reminder", "reschedule"];
+        readonly required: readonly ["operation_key", "id", "trigger_date", "trigger_time"];
+        readonly allowed: readonly ["operation_key", "id", "trigger_date", "trigger_time"];
+        readonly label: "Reminder reschedule";
+        readonly description: "Move one ACTIVE Reminder to one explicit future Europe/Moscow date and time without changing its Task or text identity.";
+    };
+    readonly reminder_cancel: {
+        readonly argv: readonly ["reminder", "cancel"];
+        readonly required: readonly ["operation_key", "id"];
+        readonly allowed: readonly ["operation_key", "id"];
+        readonly label: "Reminder cancel";
+        readonly description: "Close one ACTIVE Reminder without changing a linked Task.";
+    };
     readonly recurrence_create: {
         readonly argv: readonly ["recurrence", "create"];
         readonly required: readonly ["operation_key", "mode", "rule"];
@@ -389,7 +417,7 @@ export declare const ACTION_REGISTRY: Readonly<{
     };
 }>;
 export type TaskctlAction = keyof typeof ACTION_REGISTRY;
-export declare const TASKCTL_ACTIONS: readonly ("task_update" | "task_complete" | "task_cancel" | "inbox_add" | "inbox_list" | "inbox_get" | "inbox_discard" | "inbox_commit" | "task_create" | "task_list" | "task_search" | "task_get" | "task_detail" | "task_history" | "recurrence_create" | "recurrence_list" | "recurrence_get" | "recurrence_detail" | "recurrence_history" | "recurrence_update" | "recurrence_pause" | "recurrence_resume" | "recurrence_cancel" | "project_create" | "project_list" | "project_get" | "project_rename" | "project_complete" | "project_cancel" | "task_project_set" | "person_list" | "person_resolve" | "person_create" | "person_rename" | "person_alias_add" | "person_alias_remove" | "person_merge" | "label_list" | "label_resolve" | "label_create" | "label_rename" | "label_set_emoji" | "label_alias_add" | "label_alias_remove" | "label_delete" | "label_merge" | "term_list" | "term_resolve" | "term_set" | "term_remove" | "task_label_add" | "task_label_remove" | "comment_add" | "comment_list" | "ref_resolve")[];
+export declare const TASKCTL_ACTIONS: readonly ("task_update" | "task_complete" | "task_cancel" | "inbox_add" | "inbox_list" | "inbox_get" | "inbox_discard" | "inbox_commit" | "task_create" | "task_list" | "task_search" | "task_get" | "task_detail" | "task_history" | "reminder_create" | "reminder_list" | "reminder_reschedule" | "reminder_cancel" | "recurrence_create" | "recurrence_list" | "recurrence_get" | "recurrence_detail" | "recurrence_history" | "recurrence_update" | "recurrence_pause" | "recurrence_resume" | "recurrence_cancel" | "project_create" | "project_list" | "project_get" | "project_rename" | "project_complete" | "project_cancel" | "task_project_set" | "person_list" | "person_resolve" | "person_create" | "person_rename" | "person_alias_add" | "person_alias_remove" | "person_merge" | "label_list" | "label_resolve" | "label_create" | "label_rename" | "label_set_emoji" | "label_alias_add" | "label_alias_remove" | "label_delete" | "label_merge" | "term_list" | "term_resolve" | "term_set" | "term_remove" | "task_label_add" | "task_label_remove" | "comment_add" | "comment_list" | "ref_resolve")[];
 export declare function getActionDefinition(action: TaskctlAction): ActionDefinition;
 export declare function actionPayloadSchema(action: TaskctlAction): JsonSchema;
 export declare function actionToolParameters(action: TaskctlAction): Type.TUnsafe<Record<string, unknown>>;

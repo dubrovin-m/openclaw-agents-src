@@ -11,6 +11,7 @@ const CANDIDATE_TASKCTL = join(process.cwd(), "..", "..", "taskctl");
 const VALID_PAYLOADS: Record<string, Record<string, unknown>> = {
   inbox_add:{operation_key:"1",content:"x",capture_key:"c"}, inbox_list:{}, inbox_get:{id:"I-1"}, inbox_discard:{operation_key:"2",id:"I-1"}, inbox_commit:{operation_key:"3",id:"I-1",tasks:[{title:"x",assignee:"Дубровин М.",project_id:"PRJ-1"}]},
   task_create:{operation_key:"4",title:"x",assignee:"Дубровин М.",project_id:"PRJ-1"}, task_list:{}, task_search:{search:"x"}, task_get:{id:"T-1"}, task_detail:{id:"T-1"}, task_history:{id:"T-1"}, task_update:{operation_key:"5",id:"T-1",title:"y"}, task_complete:{operation_key:"6",id:"T-1"}, task_cancel:{operation_key:"7",id:"T-1"},
+  reminder_create:{operation_key:"rem1",task_id:"T-1",trigger_date:"2026-09-17",trigger_time:"12:00"}, reminder_list:{}, reminder_reschedule:{operation_key:"rem2",id:"REM-1",trigger_date:"2026-09-18",trigger_time:"18:00"}, reminder_cancel:{operation_key:"rem3",id:"REM-1"},
   recurrence_create:{operation_key:"r1",mode:"CALENDAR",rule:{kind:"DAYS",interval:1,start_date:"2026-09-08"},title:"Recurring",assignee_id:"P-1"}, recurrence_list:{}, recurrence_get:{id:"R-1"}, recurrence_detail:{id:"R-1"}, recurrence_history:{id:"R-1"}, recurrence_update:{operation_key:"r2",id:"R-1",title:"Updated"}, recurrence_pause:{operation_key:"r3",id:"R-1"}, recurrence_resume:{operation_key:"r4",id:"R-1"}, recurrence_cancel:{operation_key:"r5",id:"R-1"},
   project_create:{operation_key:"pr1",title:"Project"}, project_list:{}, project_get:{id:"PRJ-1"}, project_rename:{operation_key:"pr2",id:"PRJ-1",title:"Renamed"}, project_complete:{operation_key:"pr3",id:"PRJ-1"}, project_cancel:{operation_key:"pr4",id:"PRJ-1"}, task_project_set:{operation_key:"pr5",task_id:"T-1",project_id:"PRJ-1"},
   person_list:{}, person_resolve:{reference:"Дубровин М."}, person_create:{operation_key:"8",display_name:"Дима"}, person_rename:{operation_key:"9",id:"P-1",display_name:"X"}, person_alias_add:{operation_key:"10",id:"P-1",alias:"Max"}, person_alias_remove:{operation_key:"11",id:"P-1",alias:"Max"}, person_merge:{operation_key:"12",from_id:"P-2",into_id:"P-1"},
@@ -20,8 +21,8 @@ const VALID_PAYLOADS: Record<string, Record<string, unknown>> = {
 };
 
 describe("taskctl deterministic action registry",()=>{
-  it("contains exactly the supported 55 actions",()=>{
-    expect(TASKCTL_ACTIONS).toHaveLength(55);
+  it("contains exactly the supported 59 actions",()=>{
+    expect(TASKCTL_ACTIONS).toHaveLength(59);
     expect([...TASKCTL_ACTIONS].sort()).toEqual(Object.keys(VALID_PAYLOADS).sort());
     expect(Object.keys(ACTION_REGISTRY).sort()).toEqual(Object.keys(VALID_PAYLOADS).sort());
   });
@@ -33,6 +34,9 @@ describe("taskctl deterministic action registry",()=>{
     expect(validateAndSanitizePayload("label_set_emoji",{operation_key:"x",id:"L-1",emoji:null})).toMatchObject({ok:true});
     expect(validateAndSanitizePayload("recurrence_create",{operation_key:"bad-rule-1",mode:"CALENDAR",rule:{interval:1,unit:"DAYS"},title:"x",assignee_id:"P-1"})).toMatchObject({ok:false});
     expect(validateAndSanitizePayload("recurrence_create",{operation_key:"bad-rule-2",mode:"AFTER_COMPLETION",rule:{kind:"DAYS",interval:1,start_date:"2026-09-08"},title:"x",assignee_id:"P-1",first_due_date:"2026-09-08"})).toMatchObject({ok:false});
+    expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",text:"Позвонить",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:true});
+    expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",task_id:"T-1",text:"bad",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:false});
+    expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:false});
   });
   it("keeps Operational Project contracts action-specific and fail-closed",()=>{
     expect(ACTION_REGISTRY.task_project_set.required).toEqual(["operation_key","task_id","project_id"]);
@@ -66,6 +70,16 @@ describe("taskctl deterministic action registry",()=>{
       expect(validateAndSanitizePayload(action,{operation_key:"x",task_id:"T-1",label_id:"L-1",create_label:true})).toMatchObject({ok:false});
     }
   });
+  it("keeps Reminder contracts action-specific and canonical-id-only",()=>{
+    expect(ACTION_REGISTRY.reminder_create.required).toEqual(["operation_key","trigger_date","trigger_time"]);
+    expect(ACTION_REGISTRY.reminder_create.exactlyOneOf).toEqual([["task_id","text"]]);
+    expect(validateAndSanitizePayload("reminder_create",{operation_key:"x",task_id:"T-1",trigger_date:"2026-09-17",trigger_time:"12:00"})).toMatchObject({ok:true});
+    expect(validateAndSanitizePayload("reminder_create",{operation_key:"x",task_id:1,trigger_date:"2026-09-17",trigger_time:"12:00"})).toMatchObject({ok:false});
+    expect(validateAndSanitizePayload("reminder_reschedule",{operation_key:"x",id:"REM-1",trigger_date:"2026-09-17",trigger_time:"09:00"})).toMatchObject({ok:true});
+    expect(validateAndSanitizePayload("reminder_reschedule",{operation_key:"x",id:"R-1",trigger_date:"2026-09-17",trigger_time:"09:00"})).toMatchObject({ok:false});
+    expect(validateAndSanitizePayload("reminder_cancel",{operation_key:"x",id:"1"})).toMatchObject({ok:false});
+    expect(validateAndSanitizePayload("reminder_list",{status:"ACTIVE"})).toMatchObject({ok:false});
+  });
   it("rejects cross-action fields and incomplete updates",()=>{
     expect(validateAndSanitizePayload("inbox_commit",{operation_key:"x",content:"bad"})).toMatchObject({ok:false});
     expect(validateAndSanitizePayload("task_update",{operation_key:"x",id:"T-1",reason:"only"})).toMatchObject({ok:false});
@@ -89,6 +103,9 @@ describe("taskctl deterministic action registry",()=>{
       ["inbox_commit",{operation_key:"x",id:"I-1",tasks:[{title:"x",assignee:"A",extra:true}]}],
       ["task_label_add",{operation_key:"x",task_id:"T-1",label:"A",label_id:"L-1"}],
       ["label_set_emoji",{operation_key:"x",id:"L-1",emoji:""}],
+      ["reminder_create",{operation_key:"x",task_id:"T-1",text:"both",trigger_date:"2026-09-17",trigger_time:"12:00"}],
+      ["reminder_create",{operation_key:"x",task_id:"T-1",trigger_date:"2026-02-30",trigger_time:"12:00"}],
+      ["reminder_reschedule",{operation_key:"x",id:"REM-1",trigger_date:"2026-09-17",trigger_time:"25:00"}],
     ];
     for(const [action,payload] of invalid)expect(validateAndSanitizePayload(action,payload),action).toMatchObject({ok:false});
     let spawned=false;

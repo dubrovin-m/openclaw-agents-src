@@ -21,6 +21,7 @@ const personId = entityId("P");
 const labelId = entityId("L");
 const projectId = Type.String({ pattern: "^PRJ-[1-9]\\d*$" });
 const recurrenceId = Type.String({ pattern: "^R-[1-9]\\d*$" });
+const reminderId = Type.String({ pattern: "^REM-[1-9]\\d*$" });
 const canonicalTaskId = Type.String({ pattern: "^T-[1-9]\\d*$" });
 const canonicalPersonId = Type.String({ pattern: "^P-[1-9]\\d*$" });
 const canonicalLabelId = Type.String({ pattern: "^L-[1-9]\\d*$" });
@@ -98,6 +99,9 @@ const FIELD_SCHEMAS: Record<string, TSchema> = {
   target_project_id: Type.Union([projectId, Type.Null()]),
   first_due_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
   cycle_anchor_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+  text: Type.String({ minLength: 1, maxLength: 2000 }),
+  trigger_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+  trigger_time: Type.String({ pattern: "^(?:[01]\\d|2[0-3]):[0-5]\\d$" }),
 };
 
 export const ACTION_REGISTRY = Object.freeze({
@@ -156,6 +160,22 @@ export const ACTION_REGISTRY = Object.freeze({
   task_history: {
     argv: ["task", "history"], required: ["id"], allowed: ["id"],
     label: "Task history", description: "Read the chronological Task mutation history; Project-association history is not recorded in this version.",
+  },
+  reminder_create: {
+    argv: ["reminder", "create"], required: ["operation_key", "trigger_date", "trigger_time"], allowed: ["operation_key", "task_id", "text", "trigger_date", "trigger_time"], exactlyOneOf: [["task_id", "text"]],
+    label: "Reminder create", description: "Create one one-shot Reminder, either linked to one existing OPEN Task or carrying standalone text, at one explicit Europe/Moscow date and time.",
+  },
+  reminder_list: {
+    argv: ["reminder", "list"], allowed: ["limit"],
+    label: "Reminder list", description: "List ACTIVE one-shot Reminders ordered by trigger time.",
+  },
+  reminder_reschedule: {
+    argv: ["reminder", "reschedule"], required: ["operation_key", "id", "trigger_date", "trigger_time"], allowed: ["operation_key", "id", "trigger_date", "trigger_time"],
+    label: "Reminder reschedule", description: "Move one ACTIVE Reminder to one explicit future Europe/Moscow date and time without changing its Task or text identity.",
+  },
+  reminder_cancel: {
+    argv: ["reminder", "cancel"], required: ["operation_key", "id"], allowed: ["operation_key", "id"],
+    label: "Reminder cancel", description: "Close one ACTIVE Reminder without changing a linked Task.",
   },
   recurrence_create: {
     argv: ["recurrence", "create"], required: ["operation_key", "mode", "rule"], allowed: ["operation_key", "mode", "rule", "seed_task_id", "title", "assignee_id", "label_ids", "target_project_id", "due_time", "first_due_date"],
@@ -335,6 +355,7 @@ function idSchemaForAction(action: TaskctlAction): TSchema {
   if (action.startsWith("task_")) return taskId;
   if (action.startsWith("project_")) return projectId;
   if (action.startsWith("recurrence_")) return recurrenceId;
+  if (action.startsWith("reminder_")) return reminderId;
   if (action.startsWith("person_")) return personId;
   if (action.startsWith("label_")) return labelId;
   throw new Error(`Action ${action} does not support a root id field`);
@@ -350,6 +371,7 @@ function fieldSchema(action: TaskctlAction, field: string): TSchema {
     return filterStatus;
   }
   if (field === "project_id") return action === "task_project_set" ? nullableProjectId : projectId;
+  if (field === "task_id" && action === "reminder_create") return canonicalTaskId;
   if (field === "assignee_id" && action.startsWith("recurrence_")) return canonicalPersonId;
   const schema = FIELD_SCHEMAS[field];
   if (!schema) throw new Error(`Missing model-visible field schema for ${action}.${field}`);
