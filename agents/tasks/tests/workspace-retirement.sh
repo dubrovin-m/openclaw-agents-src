@@ -291,7 +291,7 @@ assert_no_contacts_runtime(){
   test ! -e "$r/state/extensions/contacts" || fail "predecessor unexpectedly contains Contacts plugin"
   node - "$r/state/openclaw.json" <<'NODE' || fail "predecessor config retains Contacts activation"
 const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-if(c?.plugins?.entries?.contacts||c?.plugins?.installs?.contacts||(c?.plugins?.allow||[]).includes('contacts'))process.exit(1);
+if(c?.plugins?.entries?.contacts||c?.plugins?.installs?.contacts||(c?.plugins?.allow||[]).includes('contacts')||Object.prototype.hasOwnProperty.call(c?.agents?.entries?.main??{},'tools'))process.exit(1);
 NODE
 }
 
@@ -315,6 +315,7 @@ const fs=require('fs'),p=process.argv[2],c=JSON.parse(fs.readFileSync(p,'utf8'))
 if(c.plugins?.entries)delete c.plugins.entries.contacts;
 if(c.plugins?.installs)delete c.plugins.installs.contacts;
 if(Array.isArray(c.plugins?.allow))c.plugins.allow=c.plugins.allow.filter(x=>x!=='contacts');
+if(c?.agents?.entries?.main)delete c.agents.entries.main.tools;
 fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
 NODE
 

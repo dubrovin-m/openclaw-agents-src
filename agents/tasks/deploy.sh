@@ -114,6 +114,11 @@ fi
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
 TARGET_TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json" 2>/dev/null || true)
 [ -n "$TARGET_TOOLS_JSON" ] || fail_plain "Unable to load target Task Agent tool policy"
+TARGET_MAIN_CONTACTS_TOOLS_JSON=""
+if [ "$CONTACTS_ENABLED" = "1" ]; then
+  TARGET_MAIN_CONTACTS_TOOLS_JSON=$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(x)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(2);process.stdout.write(JSON.stringify(x))" "$ROOT/config/main-contacts-tools.json" 2>/dev/null || true)
+  [ -n "$TARGET_MAIN_CONTACTS_TOOLS_JSON" ] || fail_plain "Unable to load target main Contacts tool policy"
+fi
 
 if [ -n "$TEST_ROOT" ]; then
   case "$TEST_ROOT" in /*) ;; *) fail_plain "--test-root must be absolute";; esac
@@ -291,6 +296,18 @@ config_tools_match_target(){
 const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),want=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),got=c?.agents?.entries?.tasks?.tools;const stable=x=>x===null||typeof x!=='object'?JSON.stringify(x):Array.isArray(x)?'['+x.map(stable).join(',')+']':'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}';if(stable(got)!==stable(want))process.exit(1);
 NODE
 }
+main_contacts_policy_target_exact(){
+  [ "$CONTACTS_ENABLED" = "1" ] || return 0
+  node - "$CONFIG" "$ROOT/config/main-contacts-tools.json" <<'NODE'
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),want=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),got=c?.agents?.entries?.main?.tools;const stable=x=>x===null||typeof x!=="object"?JSON.stringify(x):Array.isArray(x)?'['+x.map(stable).join(',')+']':'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}';if(c?.tools?.profile!=="coding"||stable(got)!==stable(want))process.exit(1);
+NODE
+}
+main_contacts_policy_starting_eligible(){
+  [ "$CONTACTS_ENABLED" = "1" ] || return 0
+  node - "$CONFIG" <<'NODE'
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),main=c?.agents?.entries?.main;if(c?.tools?.profile!=="coding"||!main||Object.prototype.hasOwnProperty.call(main,'tools'))process.exit(1);
+NODE
+}
 workspace_matches_target(){
   local f
   for f in "${TARGET_WORKSPACE_FILES[@]}"; do cmp -s "$ROOT/workspace/$f" "$WORKSPACE/$f" || return 1; done
@@ -319,7 +336,10 @@ taskctl_version(){ local identity; identity=$(taskctl_runtime_identity) || retur
 contacts_source_exact(){
   [ "$CONTACTS_ENABLED" = "1" ] || return 0
   [ -f "$CONTACTS_RELEASE" ] && [ "$(sha256sum "$CONTACTS_RELEASE"|awk '{print $1}')" = "$EXPECTED_CONTACTS_RELEASE_SHA" ] || return 1
-  [ -f "$CONTACTS_ROOT/core.cjs" ] && [ -f "$CONTACTS_ROOT/task-store.cjs" ] && [ -x "$CONTACTS_ROOT/contactctl" ] || return 1
+  [ -f "$CONTACTS_ROOT/core.cjs" ] && [ -f "$CONTACTS_ROOT/task-store.cjs" ] && [ -x "$CONTACTS_ROOT/contactctl" ] && [ -f "$ROOT/config/main-contacts-tools.json" ] || return 1
+  node - "$ROOT/config/main-contacts-tools.json" <<'NODE' || return 1
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(JSON.stringify(x)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(1);
+NODE
   node - "$CONTACTS_RELEASE" "$CONTACTS_ROOT" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || return 1
 const fs=require('fs'),crypto=require('crypto'),path=require('path'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=process.argv[3],v=process.argv[4],schema=Number(process.argv[5]),sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');if(r?.format!=='shared-contacts-release-v1'||r.implementation_version!==v||r.sqlite_schema!==schema)process.exit(2);for(const f of ['core.cjs','task-store.cjs','contactctl'])if(r.runtime_files?.[f]!==sha(path.join(root,f)))process.exit(2);const a=path.join(root,r.plugin.artifact);if(r.plugin?.name!=='openclaw-plugin-contacts'||r.plugin?.version!==v||r.plugin?.sha256!==sha(a))process.exit(2);
 NODE
@@ -343,9 +363,9 @@ taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROO
 taskctl_starting_eligible(){ local identity current schema found_v=0 found_s=0 v; identity=$(taskctl_runtime_identity) || return 1; current=${identity%% *}; schema=${identity##* }; for v in $FROM_TASKCTL_VERSIONS; do [ "$current" = "$v" ] && found_v=1; done; for v in $FROM_SQLITE_SCHEMAS; do [ "$schema" = "$v" ] && found_s=1; done; [ "$found_v" -eq 1 ] && [ "$found_s" -eq 1 ]; }
 db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6)||(want===7&&!s.physical_v7))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
 db_starting_eligible(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),allowed=process.argv[2].split(/ +/).filter(Boolean).map(Number);if(!allowed.includes(s.user_version)||s.integrity!=="ok"||s.fk!==0||(s.user_version===4&&!s.physical_v4)||(s.user_version===5&&!s.physical_v5)||(s.user_version===6&&!s.physical_v6))process.exit(1)' "$state" "$FROM_SQLITE_SCHEMAS"; }
-target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && oc config validate >/dev/null 2>&1; }
+target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && main_contacts_policy_target_exact && oc config validate >/dev/null 2>&1; }
 starting_runtime_eligible(){
-  db_starting_eligible || return 1; taskctl_starting_eligible || return 1; contacts_starting_eligible || return 1
+  db_starting_eligible || return 1; taskctl_starting_eligible || return 1; contacts_starting_eligible || return 1; main_contacts_policy_starting_eligible || return 1
   local pv found=0 v; pv=$(plugin_version) || return 1; for v in $FROM_PLUGIN_VERSIONS; do [ "$pv" = "$v" ] && found=1; done; [ "$found" -eq 1 ] || return 1
   workspace_matches_from || return 1; [ "$(current_tools_sha)" = "$FROM_TOOLS_SHA" ] || return 1; oc config validate >/dev/null 2>&1 || return 1
 }
@@ -416,6 +436,7 @@ NODE
     fi
   fi
   oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target Task Agent tool policy is not accepted by OpenClaw"
+  if [ "$CONTACTS_ENABLED" = "1" ]; then oc config set "agents.entries.main.tools" "$TARGET_MAIN_CONTACTS_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target main Contacts tool policy is not accepted by OpenClaw"; fi
 }
 
 create_recovery_set(){
@@ -508,7 +529,8 @@ main(){
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then rm -f "$WORKSPACE/TOOLS.md" || abort_deploy "WORKSPACE_INSTALL" "failed to remove retired TOOLS.md"; fi
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do install -m 644 "$ROOT/workspace/$f" "$WORKSPACE/$f" || abort_deploy "WORKSPACE_INSTALL" "workspace install failed: $f"; done
   oc plugins install "$ARTIFACT" --force --accept-capabilities || abort_deploy "PLUGIN_INSTALL" "plugin install failed"
-  oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json || abort_deploy "TOOL_POLICY_INSTALL" "Task Agent tool policy update failed"; maybe_fault "after-install"
+  oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json || abort_deploy "TOOL_POLICY_INSTALL" "Task Agent tool policy update failed"
+  if [ "$CONTACTS_ENABLED" = "1" ]; then oc config set "agents.entries.main.tools" "$TARGET_MAIN_CONTACTS_TOOLS_JSON" --strict-json || abort_deploy "TOOL_POLICY_INSTALL" "main Contacts tool policy update failed"; fi; maybe_fault "after-install"
 
   validate_target || abort_deploy "OFFLINE_VALIDATE" "target offline validation failed"; maybe_fault "after-offline-validate"
   systemctl_user start openclaw-gateway.service || abort_deploy "GATEWAY_START" "failed to start Gateway"; GATEWAY_STOPPED=0
