@@ -7,6 +7,7 @@ import {
   REMINDER_DISPATCH_CRON,
   REMINDER_DISPATCH_DECLARATION,
   REMINDER_TIMEZONE,
+  TASK_REMINDER_DISPATCH_TOOL,
   buildReminderDispatchScript,
   createReminderDispatchTool,
   executeReminderDispatch,
@@ -27,12 +28,16 @@ function fixture() {
     enabled: true,
     schedule: { kind: "cron", expr: REMINDER_DISPATCH_CRON, tz: REMINDER_TIMEZONE, staggerMs: 0 },
     sessionTarget: "isolated",
-    payload: { kind: "script" },
+    payload: { kind: "script", script: buildReminderDispatchScript(), toolsAllow: [TASK_REMINDER_DISPATCH_TOOL] },
+    delivery: { mode: "announce", channel: "telegram", accountId: "tasks", to: "test-owner", bestEffort: false },
     state: { runningAtMs: Date.parse("2026-09-16T09:00:00.000Z") },
   };
   const service = { list: vi.fn(async () => [job]) };
   const hooks = new Map<string, Hook>();
-  const api = { on: (name: string, handler: Hook) => { hooks.set(name, handler); } };
+  const api = {
+    config: { channels: { telegram: { accounts: { tasks: { allowFrom: ["test-owner"] } } } } },
+    on: (name: string, handler: Hook) => { hooks.set(name, handler); },
+  };
   registerReminderRuntime(api as never);
   hooks.get("cron_reconciled")?.({ enabled: true }, { getCron: () => service, abortSignal: controller.signal });
   return { controller, job, service, hooks };
@@ -65,6 +70,28 @@ describe("Reminder scheduler runtime", () => {
       claim_token: "reminder:job-1:1789549200000",
       boundary: "2026-09-16T09:00:00.000Z",
     }, { signal: undefined });
+  });
+
+  it("fails closed when the persisted dispatcher delivery destination drifts", async () => {
+    const { job } = fixture();
+    job.delivery.to = "wrong-owner";
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "must not send" } as never);
+    await expect(executeReminderDispatch({ agentId: "tasks", sessionKey: "agent:tasks:cron:job-1:trigger" } as never))
+      .rejects.toThrow("delivery route drift");
+    expect(runInternal).not.toHaveBeenCalled();
+  });
+
+  it("revalidates the exact persisted delivery destination immediately before send", async () => {
+    const { hooks, job } = fixture();
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "stale" } as never);
+    await executeReminderDispatch({ agentId: "tasks", sessionKey: "agent:tasks:cron:job-1:trigger" } as never);
+    job.delivery.to = "wrong-owner";
+    const result = await hooks.get("reply_payload_sending")?.(
+      { payload: { text: "stale" }, sessionKey: "agent:tasks:cron:job-1:trigger" },
+      { channelId: "telegram", accountId: "tasks", sessionKey: "agent:tasks:cron:job-1:trigger" },
+    );
+    expect(result).toEqual({ cancel: true, reason: "reminder_pre_send_revalidation_failed" });
+    expect(runInternal).toHaveBeenCalledTimes(1);
   });
 
   it("re-renders the claimed payload immediately before Telegram send", async () => {

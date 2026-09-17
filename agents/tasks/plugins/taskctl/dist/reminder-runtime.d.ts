@@ -20,6 +20,15 @@ type SchedulerJob = {
     sessionTarget?: string;
     payload?: {
         kind?: string;
+        script?: string;
+        toolsAllow?: string[];
+    };
+    delivery?: {
+        mode?: string;
+        channel?: string;
+        accountId?: string;
+        to?: string;
+        bestEffort?: boolean;
     };
     state?: {
         runningAtMs?: number;
@@ -37,8 +46,9 @@ type ActiveClaim = {
 };
 declare function parseCurrentCronJobId(sessionKey: string | undefined, agentId?: string): string | null;
 declare function claimToken(jobId: string, runAtMs: number): string;
-declare function validateReminderJob(job: SchedulerJob): SchedulerJob;
-declare function findReminderJob(service: SchedulerService, jobId: string): Promise<SchedulerJob | null>;
+declare function resolveExpectedReminderRecipient(config: unknown): string;
+declare function validateReminderJob(job: SchedulerJob, expectedRecipient: string): SchedulerJob;
+declare function findReminderJob(service: SchedulerService, jobId: string, expectedRecipient: string): Promise<SchedulerJob | null>;
 export declare function buildReminderDispatchScript(): string;
 export declare function executeReminderDispatch(toolContext: OpenClawPluginToolContext, deps?: {
     signal?: AbortSignal;
@@ -74,6 +84,7 @@ export declare function registerReminderRuntime(api: OpenClawPluginApi): void;
 export declare const reminderRuntimeInternals: {
     parseCurrentCronJobId: typeof parseCurrentCronJobId;
     claimToken: typeof claimToken;
+    resolveExpectedReminderRecipient: typeof resolveExpectedReminderRecipient;
     validateReminderJob: typeof validateReminderJob;
     findReminderJob: typeof findReminderJob;
     handleReplyPayloadSending: typeof handleReplyPayloadSending;

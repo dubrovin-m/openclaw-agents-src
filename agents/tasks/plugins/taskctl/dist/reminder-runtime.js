@@ -7,6 +7,7 @@ export const REMINDER_DISPATCH_CRON = "* * * * *";
 export const REMINDER_TIMEZONE = "Europe/Moscow";
 const REMINDER_AGENT_ID = "tasks";
 const REMINDER_ACCOUNT_ID = "tasks";
+const REMINDER_CHANNEL_ID = "telegram";
 export const reminderDispatchParameters = Type.Object({}, { additionalProperties: false });
 let schedulerGeneration;
 const activeClaims = new Map();
@@ -30,7 +31,23 @@ function requireSchedulerGeneration() {
     }
     return generation;
 }
-function validateReminderJob(job) {
+function resolveExpectedReminderRecipient(config) {
+    const root = config && typeof config === "object" && !Array.isArray(config) ? config : null;
+    const channels = root?.channels && typeof root.channels === "object" && !Array.isArray(root.channels) ? root.channels : null;
+    const telegram = channels?.telegram && typeof channels.telegram === "object" && !Array.isArray(channels.telegram) ? channels.telegram : null;
+    const accounts = telegram?.accounts && typeof telegram.accounts === "object" && !Array.isArray(telegram.accounts) ? telegram.accounts : null;
+    const tasks = accounts?.[REMINDER_ACCOUNT_ID] && typeof accounts[REMINDER_ACCOUNT_ID] === "object" && !Array.isArray(accounts[REMINDER_ACCOUNT_ID])
+        ? accounts[REMINDER_ACCOUNT_ID] : null;
+    const allowFrom = tasks?.allowFrom;
+    if (!Array.isArray(allowFrom) || allowFrom.length !== 1) {
+        throw new Error("Reminder delivery requires exactly one tasks Telegram owner");
+    }
+    const recipient = String(allowFrom[0] ?? "").trim();
+    if (!recipient)
+        throw new Error("Reminder delivery owner is invalid");
+    return recipient;
+}
+function validateReminderJob(job, expectedRecipient) {
     if (job.declarationKey !== REMINDER_DISPATCH_DECLARATION) {
         throw new Error("Reminder dispatcher cron identity mismatch");
     }
@@ -43,11 +60,21 @@ function validateReminderJob(job) {
         (job.schedule.staggerMs !== undefined && job.schedule.staggerMs !== 0)) {
         throw new Error("Reminder dispatcher schedule drift detected");
     }
-    if (job.payload?.kind !== "script")
-        throw new Error("Reminder dispatcher must use a script payload");
+    if (job.payload?.kind !== "script" ||
+        job.payload.script !== buildReminderDispatchScript() ||
+        JSON.stringify(job.payload.toolsAllow ?? []) !== JSON.stringify([TASK_REMINDER_DISPATCH_TOOL])) {
+        throw new Error("Reminder dispatcher payload drift detected");
+    }
+    if (job.delivery?.mode !== "announce" ||
+        job.delivery.channel !== REMINDER_CHANNEL_ID ||
+        job.delivery.accountId !== REMINDER_ACCOUNT_ID ||
+        job.delivery.to !== expectedRecipient ||
+        job.delivery.bestEffort !== false) {
+        throw new Error("Reminder dispatcher delivery route drift detected");
+    }
     return job;
 }
-async function findReminderJob(service, jobId) {
+async function findReminderJob(service, jobId, expectedRecipient) {
     const jobs = await service.list({ includeDisabled: true });
     const matches = jobs.filter((job) => job.id === jobId);
     if (matches.length !== 1)
@@ -55,7 +82,7 @@ async function findReminderJob(service, jobId) {
     const job = matches[0];
     if (job.declarationKey !== REMINDER_DISPATCH_DECLARATION)
         return null;
-    return validateReminderJob(job);
+    return validateReminderJob(job, expectedRecipient);
 }
 function requireObject(value, label) {
     if (!value || Array.isArray(value) || typeof value !== "object")
@@ -89,7 +116,7 @@ export async function executeReminderDispatch(toolContext, deps = {}) {
     if (!jobId)
         throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to a tasks cron session`);
     const generation = requireSchedulerGeneration();
-    const job = await findReminderJob(generation.service, jobId);
+    const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
     if (!job)
         throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to the registered Reminder dispatcher`);
     generation.abortSignal.throwIfAborted();
@@ -137,7 +164,11 @@ async function handleReplyPayloadSending(event, context) {
     if (!claim)
         return { cancel: true, reason: "reminder_claim_identity_ambiguous" };
     try {
-        if (context.channelId !== "telegram" || context.accountId !== REMINDER_ACCOUNT_ID) {
+        const generation = requireSchedulerGeneration();
+        const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
+        if (!job)
+            return { cancel: true, reason: "reminder_dispatcher_drift" };
+        if (context.channelId !== REMINDER_CHANNEL_ID || context.accountId !== REMINDER_ACCOUNT_ID) {
             return { cancel: true, reason: "reminder_delivery_route_mismatch" };
         }
         const rendered = requireSuccessfulTaskctl(await runReminderInternal("render", { claim_token: claim.token }), "Reminder pre-send render");
@@ -183,7 +214,16 @@ export function registerReminderRuntime(api) {
             schedulerGeneration = undefined;
             return;
         }
-        schedulerGeneration = { service: service, abortSignal: context.abortSignal };
+        try {
+            schedulerGeneration = {
+                service: service,
+                abortSignal: context.abortSignal,
+                expectedRecipient: resolveExpectedReminderRecipient(api.config),
+            };
+        }
+        catch {
+            schedulerGeneration = undefined;
+        }
     });
     api.on("reply_payload_sending", (event, context) => handleReplyPayloadSending(event, context));
     api.on("cron_changed", (event) => handleCronChanged(event));
@@ -192,6 +232,7 @@ export function registerReminderRuntime(api) {
 export const reminderRuntimeInternals = {
     parseCurrentCronJobId,
     claimToken,
+    resolveExpectedReminderRecipient,
     validateReminderJob,
     findReminderJob,
     handleReplyPayloadSending,
