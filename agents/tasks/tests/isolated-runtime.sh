@@ -201,6 +201,29 @@ console.log('ISOLATED_CONTACT_DEFAULT_ADMISSION_PASS');
 JS_CONTACT_ADMISSION
 
 HOST_OPENCLAW_ROOT=$(resolve_host_openclaw_root)
+env HOME="$RUNTIME/home" OPENCLAW_HOME="$RUNTIME/home" OPENCLAW_STATE_DIR="$RUNTIME/state" OPENCLAW_CONFIG_PATH="$RUNTIME/state/openclaw.json"   node --input-type=module - "$RUNTIME/state/openclaw.json" "$HOST_OPENCLAW_ROOT" "$TARGET_CONTACT_TOOL_COUNT" <<'JS_CONTACT_EFFECTIVE_POLICY'
+import fs from 'node:fs';
+import {pathToFileURL} from 'node:url';
+const [configPath,hostRoot,countText]=process.argv.slice(2);const expectedCount=Number(countText);
+const cfg=JSON.parse(fs.readFileSync(configPath,'utf8'));
+if(cfg?.tools?.profile!=='coding'||JSON.stringify(cfg?.agents?.entries?.main?.tools)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(2);
+const inventoryFiles=fs.readdirSync(`${hostRoot}/dist`).filter((name)=>/^tools-effective-inventory-.*\.js$/.test(name));
+const resolvers=[];
+for(const name of inventoryFiles){const module=await import(pathToFileURL(`${hostRoot}/dist/${name}`).href);if(module.n?.name==='resolveEffectiveToolInventory')resolvers.push(module.n);}
+if(resolvers.length!==1)process.exit(2);
+const [resolve]=resolvers;
+const inventory=(config,agentId)=>resolve({cfg:config,agentId,sessionKey:`agent:${agentId}:contacts-policy-test`,modelProvider:'openai-codex',modelId:'gpt-5.3-codex',modelApi:'openai-responses'});
+const names=(result)=>(result.groups??[]).flatMap((group)=>(group.tools??group.entries??[]).map((tool)=>tool.name??tool.id));
+const contacts=(result)=>names(result).filter((name)=>String(name).startsWith('contact_')).sort();
+const expected=['contact_alias_add','contact_alias_remove','contact_create','contact_get','contact_merge','contact_rename','contact_resolve','contact_search','contact_update'].sort();
+const withoutPolicy=structuredClone(cfg);delete withoutPolicy.agents.entries.main.tools;
+if(contacts(inventory(withoutPolicy,'main')).length!==0)process.exit(2);
+const mainContacts=contacts(inventory(cfg,'main'));
+if(mainContacts.length!==expectedCount||JSON.stringify(mainContacts)!==JSON.stringify(expected))process.exit(2);
+if(contacts(inventory(cfg,'tasks')).length!==0||contacts(inventory(cfg,'engineer')).length!==0)process.exit(2);
+console.log('ISOLATED_CONTACT_CODING_PROFILE_ADMISSION_PASS');
+JS_CONTACT_EFFECTIVE_POLICY
+
 node --input-type=module - "$RUNTIME/state/extensions/taskctl/dist/plugin.js" "$HOST_OPENCLAW_ROOT" "$TARGET_TOOL_COUNT" <<'JS_SCHEMA'
 import {pathToFileURL} from 'node:url';
 const [pluginPath,hostRoot,countText]=process.argv.slice(2);const expectedCount=Number(countText);

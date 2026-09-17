@@ -30,9 +30,10 @@ ARTIFACT="$ROOT/$ARTIFACT_REL"
 CONTACTS_RELEASE="$CONTACTS_ROOT/release.json"
 CONTACTS_ARTIFACT="$CONTACTS_ROOT/$(node -e 'const r=require(process.argv[1]);const a=r?.plugin?.artifact;if(typeof a!=="string")process.exit(2);process.stdout.write(a)' "$CONTACTS_RELEASE")"
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
-TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json")
-
 fail(){ echo "$*" >&2; exit 2; }
+TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json")
+MAIN_CONTACTS_TOOLS_JSON=$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(x)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(2);process.stdout.write(JSON.stringify(x))" "$ROOT/config/main-contacts-tools.json") || fail "Invalid main Contacts tool policy"
+
 validate_source(){
   local contacts_release="$ROOT/$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.shared_contacts.release_path)' "$RELEASE_FILE")" expected_contacts_sha; expected_contacts_sha=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.shared_contacts.release_sha256)' "$RELEASE_FILE"); [ -f "$contacts_release" ] && [ "$(sha256sum "$contacts_release"|awk '{print $1}')" = "$expected_contacts_sha" ] || fail "Shared Contacts release fingerprint mismatch"
   [ -f "$CONTACTS_ROOT/core.cjs" ] && [ -f "$CONTACTS_ROOT/task-store.cjs" ] && [ -f "$CONTACTS_ROOT/contactctl" ] && [ -f "$CONTACTS_ARTIFACT" ] || fail "Shared Contacts source missing"
@@ -77,11 +78,11 @@ run_isolated_install(){
 const fs=require('fs'),a=JSON.parse(fs.readFileSync(process.argv[2]));delete a.id;a.workspace=process.argv[3];a.agentDir=process.argv[4];process.stdout.write(JSON.stringify(a));
 NODE
 ); node - "$config_path" "$agent_json" <<'NODE'
-const fs=require('fs'),a=JSON.parse(process.argv[3]);fs.writeFileSync(process.argv[2],JSON.stringify({agents:{entries:{tasks:a}}},null,2)+'\n');
+const fs=require('fs'),a=JSON.parse(process.argv[3]);fs.writeFileSync(process.argv[2],JSON.stringify({tools:{profile:'coding',sessions:{visibility:'agent'}},agents:{ownership:'explicit',entries:{main:{},tasks:a,engineer:{tools:{allow:['read','write','edit','exec','process','apply_patch','progress_card']}}}}},null,2)+'\n');
 NODE
   chmod 600 "$config_path"
   oc(){ env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow OPENCLAW_HOME="$test_home" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" "$@"; }
-  oc config validate; oc plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; oc plugins install "$ARTIFACT" --force --accept-capabilities; oc config set 'agents.entries.tasks.tools' "$TOOLS_JSON" --strict-json --dry-run; oc config set 'agents.entries.tasks.tools' "$TOOLS_JSON" --strict-json; oc config validate
+  oc config validate; oc plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; oc plugins install "$ARTIFACT" --force --accept-capabilities; oc config set 'agents.entries.tasks.tools' "$TOOLS_JSON" --strict-json --dry-run; oc config set 'agents.entries.main.tools' "$MAIN_CONTACTS_TOOLS_JSON" --strict-json --dry-run; oc config set 'agents.entries.tasks.tools' "$TOOLS_JSON" --strict-json; oc config set 'agents.entries.main.tools' "$MAIN_CONTACTS_TOOLS_JSON" --strict-json; oc config validate
   env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$state_dir/data/contacts/contacts.sqlite3" "$taskctl_target" init >/dev/null
   health=$(env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$state_dir/data/contacts/contacts.sqlite3" "$taskctl_target" health)
   node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2];if(h.implementation_version!==v||h.schema_version!==Number(process.argv[3]))process.exit(2)' "$health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA"
@@ -98,8 +99,9 @@ node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/
 test "$(openclaw --version|awk '{print $2}')" = "$EXPECTED_OPENCLAW_VERSION"
 node --check "$ROOT/taskctl"; bash "$ROOT/tests/smoke.sh" "$ROOT/taskctl"; bash "$ROOT/tests/batch4.sh"
 (cd "$ROOT/plugins/taskctl" && npm ci && npm test && npm run build && npm run plugin:build && npm run plugin:validate)
-node -e "const c=require('/home/dubrovin/.openclaw/openclaw.json');if(!c?.agents?.entries?.tasks)process.exit(2)"
+node -e "const c=require('/home/dubrovin/.openclaw/openclaw.json');if(!c?.agents?.entries?.tasks||!c?.agents?.entries?.main)process.exit(2)"
 openclaw config set "agents.entries.tasks.tools" "$TOOLS_JSON" --strict-json --dry-run
+openclaw config set "agents.entries.main.tools" "$MAIN_CONTACTS_TOOLS_JSON" --strict-json --dry-run
 install -d -m 700 /home/dubrovin/.local/lib/openclaw-contacts
 install -m 600 "$CONTACTS_ROOT/core.cjs" /home/dubrovin/.local/lib/openclaw-contacts/core.cjs
 install -m 600 "$CONTACTS_ROOT/task-store.cjs" /home/dubrovin/.local/lib/openclaw-contacts/task-store.cjs
@@ -107,6 +109,6 @@ install -m 700 "$CONTACTS_ROOT/contactctl" /home/dubrovin/.local/bin/contactctl
 install -m 700 "$ROOT/taskctl" /home/dubrovin/.local/bin/taskctl
 if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then rm -f /home/dubrovin/.openclaw/workspace-tasks/TOOLS.md; fi
 for f in $TARGET_WORKSPACE_FILES; do install -m 644 "$ROOT/workspace/$f" "/home/dubrovin/.openclaw/workspace-tasks/$f"; done
-openclaw plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; openclaw plugins install "$ARTIFACT" --force --accept-capabilities; openclaw config set "agents.entries.tasks.tools" "$TOOLS_JSON" --strict-json
+openclaw plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; openclaw plugins install "$ARTIFACT" --force --accept-capabilities; openclaw config set "agents.entries.tasks.tools" "$TOOLS_JSON" --strict-json; openclaw config set "agents.entries.main.tools" "$MAIN_CONTACTS_TOOLS_JSON" --strict-json
 openclaw config validate
 printf '\nTASK_AGENT_STAGE_DEPLOYED_RELOAD_REQUIRED\n'
