@@ -52,7 +52,7 @@ export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$REPO_ROOT"
 PRED_SRC="$TMP/predecessor-source"; mkdir -p "$PRED_SRC"
 git -C "$REPO_ROOT" archive "$PRED" | tar -x -C "$PRED_SRC"
 BASE="$TMP/predecessor"
-TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
+PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 
 # Production predecessor already contains the retired TOOLS.md archive required by
 # the current deployment fingerprint, although it is absent from active workspace.
