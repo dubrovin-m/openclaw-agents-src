@@ -35,7 +35,6 @@ const entry = defineToolPlugin({
         label: meta[action].label,
         description: meta[action].description,
         parameters: CONTACT_SCHEMAS[action],
-        optional: true,
         factory: () => ({
             name: action,
             label: meta[action].label,

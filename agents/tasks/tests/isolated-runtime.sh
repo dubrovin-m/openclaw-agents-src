@@ -185,6 +185,21 @@ oc plugins inspect contacts --runtime --json | jq -e --arg v "$TARGET_CONTACTS_V
   (["contact_search","contact_resolve","contact_get","contact_create","contact_update","contact_rename","contact_alias_add","contact_alias_remove","contact_merge"] | all(.[]; . as $name | ($names | index($name)) != null))
 ' >/dev/null
 
+node --input-type=module - "$RUNTIME/state/extensions/contacts/dist/plugin.js" "$TARGET_CONTACT_TOOL_COUNT" <<'JS_CONTACT_ADMISSION'
+import {pathToFileURL} from 'node:url';
+const [pluginPath,countText]=process.argv.slice(2);const expectedCount=Number(countText);
+const pluginModule=await import(pathToFileURL(pluginPath).href);
+const registrations=[];const tools=[];
+pluginModule.default.register({pluginConfig:{},registerTool(definition,options){
+  registrations.push(options);
+  const resolved=typeof definition==='function'?definition({}):definition;
+  if(Array.isArray(resolved)) tools.push(...resolved); else if(resolved) tools.push(resolved);
+}});
+if(registrations.length!==expectedCount||registrations.some((options)=>options?.optional===true))process.exit(2);
+if(tools.length!==expectedCount||tools.some((tool)=>tool.catalogMode!=='direct-only'))process.exit(2);
+console.log('ISOLATED_CONTACT_DEFAULT_ADMISSION_PASS');
+JS_CONTACT_ADMISSION
+
 HOST_OPENCLAW_ROOT=$(resolve_host_openclaw_root)
 node --input-type=module - "$RUNTIME/state/extensions/taskctl/dist/plugin.js" "$HOST_OPENCLAW_ROOT" "$TARGET_TOOL_COUNT" <<'JS_SCHEMA'
 import {pathToFileURL} from 'node:url';

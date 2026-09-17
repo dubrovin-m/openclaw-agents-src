@@ -21,9 +21,9 @@ NODE
 node "$HELPER" normalize-initial "$DB" 2026.8.2 0.4.20
 node "$HELPER" verify-normalized "$DB" 2026.8.2 0.4.20
 node - "$DB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2]);const row=db.prepare("SELECT value_json FROM config_machine_state WHERE state_key='plugins.installedIndex'").get(),w=JSON.parse(row.value_json),now=Date.now();w.revision=now;w.index.generatedAtMs=now;w.index.installRecords.contacts={version:'0.1.1'};w.index.installRecords.taskctl={version:'0.4.21'};w.index.plugins=[{pluginId:'taskctl',packageVersion:'0.4.21',enabled:true,installOwner:'taskctl',rootDir:'/task',origin:'global'},{pluginId:'contacts',packageVersion:'0.1.1',enabled:true,installOwner:'contacts',rootDir:'/contacts',origin:'global'}];db.prepare("UPDATE config_machine_state SET value_json=?,updated_at_ms=? WHERE state_key='plugins.installedIndex'").run(JSON.stringify(w),now);db.close();
+const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2]);const row=db.prepare("SELECT value_json FROM config_machine_state WHERE state_key='plugins.installedIndex'").get(),w=JSON.parse(row.value_json),now=Date.now();w.revision=now;w.index.generatedAtMs=now;w.index.installRecords.contacts={version:'0.1.2'};w.index.installRecords.taskctl={version:'0.4.21'};w.index.plugins=[{pluginId:'taskctl',packageVersion:'0.4.21',enabled:true,installOwner:'taskctl',rootDir:'/task',origin:'global'},{pluginId:'contacts',packageVersion:'0.1.2',enabled:true,installOwner:'contacts',rootDir:'/contacts',origin:'global'}];db.prepare("UPDATE config_machine_state SET value_json=?,updated_at_ms=? WHERE state_key='plugins.installedIndex'").run(JSON.stringify(w),now);db.close();
 NODE
-node "$HELPER" verify-target "$DB" 2026.8.2 0.4.21 0.1.1
+node "$HELPER" verify-target "$DB" 2026.8.2 0.4.21 0.1.2
 node "$HELPER" restore "$DB" "$SNAP"
 AFTER=$(node - "$DB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});const r=db.prepare("SELECT value_json,updated_at_ms FROM config_machine_state WHERE state_key='plugins.installedIndex'").get();process.stdout.write(JSON.stringify(r));db.close();
