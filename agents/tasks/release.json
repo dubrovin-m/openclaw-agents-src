@@ -15,26 +15,26 @@
     "sha256": "2662c0bd52b892f897abefc62cb050be9d74a56f7f60c59734830f29af7f4a04"
   },
   "from": {
-    "source_revision": "eb4d5b60ba0e17d9db8205885ed401d873e7687d",
-    "workspace_source_revision": "eb4d5b60ba0e17d9db8205885ed401d873e7687d",
+    "source_revision": "ade06f111c20ac485e9185ed322424ac59fd31e9",
+    "workspace_source_revision": "ade06f111c20ac485e9185ed322424ac59fd31e9",
     "sqlite_schemas": [
-      7
+      8
     ],
     "taskctl_versions": [
-      "0.4.10"
+      "0.4.11"
     ],
     "plugin_versions": [
-      "0.4.21"
+      "0.4.22"
     ],
     "workspace_sha256": {
-      "AGENTS.md": "c1ad1e0ab6f4b6ae5277e8083ea8a7d4c84ae0636c7cb5a4ce65eb59b848ad1e",
+      "AGENTS.md": "ea7a340d088b88c9710d221b4ca7dee7f72761c561130b4d1e2b5e96941f2eea",
       "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
       "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
       "USER.md": "f88ac7bd8acfb48becff9598d1912a9a1cfb45becc44db5bac6e8a252e680306",
       "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
       "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
     },
-    "tools_sha256": "ebdb0b24bb81c83de9abe43504f9b96be0513aee30117b29e3a81aa958151eec"
+    "tools_sha256": "5c50911478b79df83ce499c7925060820c99f4dbc9a8c35d6bb8831077d96862"
   },
   "calendar_materializer": {
     "kind": "openclaw-command-automation-v1",
@@ -47,9 +47,9 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "a650255643cb5b4fb4c3479469f27ea85ec0d6200b8374431a1960d3a042623b",
-    "implementation_version": "0.1.2",
-    "sqlite_schema": 1,
+    "release_sha256": "1e5f557038795b124df613da6c0995404ee02b02903d9c573d3631e3a89f693d",
+    "implementation_version": "0.1.3",
+    "sqlite_schema": 2,
     "predecessor_mode": "exact"
   },
   "reminder_dispatcher": {
@@ -66,6 +66,22 @@
     "delivery_channel": "telegram",
     "delivery_account": "tasks",
     "delivery_recipient_source": "tasks-owner-allowFrom-singleton",
+    "best_effort": false
+  },
+  "important_date_dispatcher": {
+    "kind": "openclaw-script-automation-v1",
+    "declaration_key": "contacts.important-dates.dispatch.v1",
+    "name": "contacts-important-dates-dispatch",
+    "cron": "0 9 * * *",
+    "timezone": "Europe/Moscow",
+    "exact": true,
+    "script": "const dispatch = await contact_date_reminder_dispatch({});\njson(dispatch.count > 0 ? { notify: dispatch.message } : {});",
+    "tool": "contact_date_reminder_dispatch",
+    "timeout_seconds": 30,
+    "tool_budget": 1,
+    "delivery_channel": "telegram",
+    "delivery_account": "default",
+    "delivery_recipient_source": "commands.ownerAllowFrom-singleton",
     "best_effort": false
   }
 }

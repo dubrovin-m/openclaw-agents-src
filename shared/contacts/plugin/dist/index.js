@@ -12,15 +12,23 @@ export const ACTIONS = {
     contact_alias_add: "alias_add",
     contact_alias_remove: "alias_remove",
     contact_merge: "merge",
+    contact_date_create: "date_create",
+    contact_date_list: "date_list",
+    contact_date_update: "date_update",
+    contact_date_reminders_set: "date_reminders_set",
+    contact_date_delete: "date_delete",
+    contact_date_upcoming: "date_upcoming",
 };
 const structuredError = (code, message, details = {}) => ({ ok: false, error: { code, message, ...details } });
-const buildInvocation = (action, payload) => ({
-    executable: CONTACTCTL_EXECUTABLE,
-    argv: [ACTIONS[action]],
-    options: { shell: false, env: { HOME: "/home/dubrovin", PATH: "/usr/bin:/bin", LANG: "C.UTF-8", TZ: "Europe/Moscow", CONTACTCTL_PAYLOAD: JSON.stringify(payload) }, stdio: ["ignore", "pipe", "pipe"] },
-});
-export async function executeContactctl(action, payload, options = {}) {
-    const invocation = buildInvocation(action, payload), timeoutMs = options.timeoutMs ?? CONTACTCTL_TIMEOUT_MS, spawnImpl = options.spawnImpl ?? spawn;
+function buildInvocation(argv, payload) {
+    return {
+        executable: CONTACTCTL_EXECUTABLE,
+        argv,
+        options: { shell: false, env: { HOME: "/home/dubrovin", PATH: "/usr/bin:/bin", LANG: "C.UTF-8", TZ: "Europe/Moscow", CONTACTCTL_PAYLOAD: JSON.stringify(payload) }, stdio: ["ignore", "pipe", "pipe"] },
+    };
+}
+async function runInvocation(invocation, options = {}) {
+    const timeoutMs = options.timeoutMs ?? CONTACTCTL_TIMEOUT_MS, spawnImpl = options.spawnImpl ?? spawn;
     const result = await new Promise((resolve) => {
         let child;
         try {
@@ -72,4 +80,10 @@ export async function executeContactctl(action, payload, options = {}) {
     if (result.code !== 0 || result.signal !== null || result.stderr.length > 0)
         return structuredError("CONTACTCTL_PROCESS_ERROR", "contactctl reported a process error", { exit_code: result.code, signal: result.signal, stderr: result.stderr.slice(0, 4096), contactctl: parsed });
     return parsed;
+}
+export async function executeContactctl(action, payload, options = {}) {
+    return runInvocation(buildInvocation([ACTIONS[action]], payload), options);
+}
+export async function runImportantDateInternal(action, payload, options = {}) {
+    return runInvocation(buildInvocation([action], payload), options);
 }

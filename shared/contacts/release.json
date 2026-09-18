@@ -1,17 +1,24 @@
 {
   "format": "shared-contacts-release-v1",
-  "implementation_version": "0.1.2",
-  "sqlite_schema": 1,
+  "implementation_version": "0.1.3",
+  "sqlite_schema": 2,
+  "from": {
+    "source_revision": "ade06f111c20ac485e9185ed322424ac59fd31e9",
+    "implementation_version": "0.1.2",
+    "sqlite_schema": 1,
+    "plugin_version": "0.1.2",
+    "release_sha256": "a650255643cb5b4fb4c3479469f27ea85ec0d6200b8374431a1960d3a042623b"
+  },
   "runtime_files": {
-    "core.cjs": "a11814747a6cbff8bc3aa861b55e48e0fe103d94619e05cb30c1c320d7c78b15",
-    "task-store.cjs": "f0d034b3b9c216a6412a822f96f57d0d43a8e0987dcd9cc4f6cf7c5a37d16711",
-    "contactctl": "0faff78a840fab8685549d4f52907c98460bdbc1935a83cc2f5a402fc13c0596"
+    "core.cjs": "6cafb63a323fd45e535483dbca9dfdacabe01485b3731f1ee0262c4c0ee83991",
+    "task-store.cjs": "30f291ea57b3ca4f97b99ddb8e0b0de5a5f06efb94fa072906c8b3708643d4a5",
+    "contactctl": "ba577191371c3706a0b2d11e58d44492ea8b02b7812250b15b46cbc2084644c5"
   },
   "plugin": {
     "name": "openclaw-plugin-contacts",
-    "version": "0.1.2",
-    "artifact": "artifacts/openclaw-plugin-contacts-0.1.2.tgz",
-    "sha256": "de0b808b79e90cf5d0870e4882663d41cebd0a25509aaf058353e3238f52d36b"
+    "version": "0.1.3",
+    "artifact": "artifacts/openclaw-plugin-contacts-0.1.3.tgz",
+    "sha256": "829e6a4cd44b020938594b3ee3b62cbf6f963827c8c49d919414ee874f2257bf"
   },
   "openclaw_build_version": "2026.8.2",
   "openclaw_compat": ">=2026.8.2",

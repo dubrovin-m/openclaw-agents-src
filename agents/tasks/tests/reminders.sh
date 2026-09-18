@@ -84,10 +84,11 @@ if(db.prepare('pragma integrity_check').get().integrity_check!=='ok')process.exi
 if(db.prepare('pragma foreign_key_check').all().length)process.exit(1);
 db.close();
 JS
-# TA-REM activation migration gate: exercise the exact declared schema-7 predecessor,
-# preserve representative Task/Recurrence/Inbox state, and prove migration rollback.
+# TA-REM activation migration gate: exercise the immutable schema-7 historical
+# Reminder predecessor. Current deployment predecessor may already be schema 8.
 REPO=$(cd "$ROOT/../.." && pwd)
-PRED=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.source_revision)' "$ROOT/release.json")
+CONTACTCTL="$REPO/shared/contacts/contactctl"
+PRED=eb4d5b60ba0e17d9db8205885ed401d873e7687d
 git -C "$REPO" cat-file -e "$PRED^{commit}"
 PREDROOT="$TMP/predecessor-root"
 mkdir -p "$PREDROOT"
@@ -109,10 +110,13 @@ JS
 )
 contains "$BEFORE" '"uv":7'
 cp "$PDB" "$TMP/fault-predecessor.sqlite3"; cp "$PCDB" "$TMP/fault-predecessor-contacts.sqlite3"
+# Production deployment owns the Contacts schema migration before Task validation.
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$PCDB" "$CONTACTCTL" init >/dev/null
 MIG=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$TASKCTL" health)
 node - "$BEFORE" "$MIG" "$PDB" "$PCDB" <<'JS'
 const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==8||health.implementation_version!=='0.4.11'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
 JS
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/fault-predecessor-contacts.sqlite3" "$CONTACTCTL" init >/dev/null
 set +e
 FAULT=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TMP/fault-predecessor.sqlite3" TASKCTL_CONTACTS_DB="$TMP/fault-predecessor-contacts.sqlite3" TASKCTL_TEST_NOW="$PN" TASKCTL_TEST_REMINDER_MIGRATION_FAULT=after-reminder-ddl node "$TASKCTL" health 2>&1); FRC=$?
 set -e

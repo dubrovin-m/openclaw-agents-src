@@ -12,8 +12,15 @@ export declare const ACTIONS: {
     readonly contact_alias_add: "alias_add";
     readonly contact_alias_remove: "alias_remove";
     readonly contact_merge: "merge";
+    readonly contact_date_create: "date_create";
+    readonly contact_date_list: "date_list";
+    readonly contact_date_update: "date_update";
+    readonly contact_date_reminders_set: "date_reminders_set";
+    readonly contact_date_delete: "date_delete";
+    readonly contact_date_upcoming: "date_upcoming";
 };
 export type ContactAction = keyof typeof ACTIONS;
+export type ImportantDateInternalAction = "date_dispatch" | "date_render" | "date_settle";
 type JsonObject = Record<string, unknown>;
 type SpawnContactctl = (executable: string, argv: readonly string[], options: {
     shell: false;
@@ -21,6 +28,11 @@ type SpawnContactctl = (executable: string, argv: readonly string[], options: {
     stdio: readonly ["ignore", "pipe", "pipe"];
 }) => ChildProcessWithoutNullStreams;
 export declare function executeContactctl(action: ContactAction, payload: JsonObject, options?: {
+    timeoutMs?: number;
+    signal?: AbortSignal;
+    spawnImpl?: SpawnContactctl;
+}): Promise<unknown>;
+export declare function runImportantDateInternal(action: ImportantDateInternalAction, payload: JsonObject, options?: {
     timeoutMs?: number;
     signal?: AbortSignal;
     spawnImpl?: SpawnContactctl;

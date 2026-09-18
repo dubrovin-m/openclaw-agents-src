@@ -28,6 +28,8 @@ TARGET_WORKSPACE_LAYOUT=$(node "$WORKSPACE_LAYOUT_HELPER" layout "$RELEASE_FILE"
 TARGET_WORKSPACE_FILES=$(node "$WORKSPACE_LAYOUT_HELPER" target-files "$RELEASE_FILE") || { echo "Invalid Task Agent workspace layout" >&2; exit 2; }
 ARTIFACT="$ROOT/$ARTIFACT_REL"
 CONTACTS_RELEASE="$CONTACTS_ROOT/release.json"
+TARGET_CONTACTS_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.implementation_version||""))' "$CONTACTS_RELEASE")
+TARGET_CONTACT_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$CONTACTS_ROOT/plugin/openclaw.plugin.json")
 CONTACTS_ARTIFACT="$CONTACTS_ROOT/$(node -e 'const r=require(process.argv[1]);const a=r?.plugin?.artifact;if(typeof a!=="string")process.exit(2);process.stdout.write(a)' "$CONTACTS_RELEASE")"
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
 fail(){ echo "$*" >&2; exit 2; }
@@ -87,7 +89,7 @@ NODE
   health=$(env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$db_path" TASKCTL_CONTACTS_DB="$state_dir/data/contacts/contacts.sqlite3" "$taskctl_target" health)
   node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2];if(h.implementation_version!==v||h.schema_version!==Number(process.argv[3]))process.exit(2)' "$health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA"
   test "$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.version||""))' "$state_dir/extensions/taskctl/package.json")" = "$TARGET_PLUGIN_VERSION"
-  contacts_inspect=$(oc plugins inspect contacts --runtime --json); node -e 'const x=JSON.parse(process.argv[1]),p=x?.plugin;if(p?.id!=="contacts"||p?.packageVersion!=="0.1.2"||p?.status!=="loaded"||p?.toolNames?.length!==9)process.exit(1)' "$contacts_inspect"
+  contacts_inspect=$(oc plugins inspect contacts --runtime --json); node -e 'const x=JSON.parse(process.argv[1]),p=x?.plugin;if(p?.id!=="contacts"||p?.packageVersion!==process.argv[2]||p?.status!=="loaded"||p?.enabled!==true||p?.toolNames?.length!==Number(process.argv[3]))process.exit(1)' "$contacts_inspect" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACT_TOOL_COUNT"
   test "$(stat -c %a "$config_path")" = 600; test "$(stat -c %a "$taskctl_target")" = 700; test "$(stat -c %a "$contactctl_target")" = 700; test "$(stat -c %a "$contacts_lib_dir/core.cjs")" = 600; test "$(stat -c %a "$db_path")" = 600; test "$(stat -c %a "$state_dir/data/contacts/contacts.sqlite3")" = 600
   printf '\nTASK_AGENT_TEST_ROOT_DEPLOYED\n'
 }

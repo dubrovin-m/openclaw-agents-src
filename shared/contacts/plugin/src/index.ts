@@ -14,23 +14,33 @@ export const ACTIONS = {
   contact_alias_add: "alias_add",
   contact_alias_remove: "alias_remove",
   contact_merge: "merge",
+  contact_date_create: "date_create",
+  contact_date_list: "date_list",
+  contact_date_update: "date_update",
+  contact_date_reminders_set: "date_reminders_set",
+  contact_date_delete: "date_delete",
+  contact_date_upcoming: "date_upcoming",
 } as const;
 export type ContactAction = keyof typeof ACTIONS;
+export type ImportantDateInternalAction = "date_dispatch" | "date_render" | "date_settle";
 type JsonObject = Record<string, unknown>;
 type SpawnContactctl=(executable:string,argv:readonly string[],options:{shell:false;env:NodeJS.ProcessEnv;stdio:readonly["ignore","pipe","pipe"]})=>ChildProcessWithoutNullStreams;
 const structuredError=(code:string,message:string,details:JsonObject={})=>({ok:false,error:{code,message,...details}});
-const buildInvocation=(action:ContactAction,payload:JsonObject)=>({
-  executable:CONTACTCTL_EXECUTABLE,
-  argv:[ACTIONS[action]] as readonly string[],
-  options:{shell:false as const,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",CONTACTCTL_PAYLOAD:JSON.stringify(payload)},stdio:["ignore","pipe","pipe"] as const},
-});
 
-export async function executeContactctl(action:ContactAction,payload:JsonObject,options:{timeoutMs?:number;signal?:AbortSignal;spawnImpl?:SpawnContactctl}={}){
-  const invocation=buildInvocation(action,payload),timeoutMs=options.timeoutMs??CONTACTCTL_TIMEOUT_MS,spawnImpl=options.spawnImpl??(spawn as unknown as SpawnContactctl);
+function buildInvocation(argv: readonly string[],payload:JsonObject){
+  return {
+    executable:CONTACTCTL_EXECUTABLE,
+    argv,
+    options:{shell:false as const,env:{HOME:"/home/dubrovin",PATH:"/usr/bin:/bin",LANG:"C.UTF-8",TZ:"Europe/Moscow",CONTACTCTL_PAYLOAD:JSON.stringify(payload)},stdio:["ignore","pipe","pipe"] as const},
+  };
+}
+
+async function runInvocation(invocation:ReturnType<typeof buildInvocation>,options:{timeoutMs?:number;signal?:AbortSignal;spawnImpl?:SpawnContactctl}={}){
+  const timeoutMs=options.timeoutMs??CONTACTCTL_TIMEOUT_MS,spawnImpl=options.spawnImpl??(spawn as unknown as SpawnContactctl);
   const result=await new Promise<{code:number|null;signal:NodeJS.Signals|null;stdout:string;stderr:string;timedOut:boolean;aborted:boolean;spawnError?:string}>((resolve)=>{
     let child:ChildProcessWithoutNullStreams;try{child=spawnImpl(invocation.executable,invocation.argv,invocation.options);}catch(error){resolve({code:null,signal:null,stdout:"",stderr:"",timedOut:false,aborted:false,spawnError:error instanceof Error?error.message:String(error)});return;}
     const stdout:Buffer[]=[],stderr:Buffer[]=[];let outBytes=0,errBytes=0,timedOut=false,aborted=false,settled=false;
-    const kill=()=>{if(!child.killed)child.kill("SIGKILL")};
+    const kill=()=>{if(!child.killed)child.kill("SIGKILL");};
     const timer=setTimeout(()=>{timedOut=true;kill();},timeoutMs);timer.unref?.();
     const onAbort=()=>{aborted=true;kill();};if(options.signal?.aborted)onAbort();else options.signal?.addEventListener("abort",onAbort,{once:true});
     child.stdout.on("data",chunk=>{outBytes+=chunk.length;if(outBytes<=CONTACTCTL_OUTPUT_LIMIT_BYTES)stdout.push(chunk);else kill();});
@@ -45,4 +55,12 @@ export async function executeContactctl(action:ContactAction,payload:JsonObject,
   let parsed:unknown;try{parsed=JSON.parse(result.stdout);}catch{return structuredError("CONTACTCTL_INVALID_JSON","contactctl stdout was not valid JSON",{exit_code:result.code,stderr:result.stderr.slice(0,4096)});}
   if(result.code!==0||result.signal!==null||result.stderr.length>0)return structuredError("CONTACTCTL_PROCESS_ERROR","contactctl reported a process error",{exit_code:result.code,signal:result.signal,stderr:result.stderr.slice(0,4096),contactctl:parsed});
   return parsed;
+}
+
+export async function executeContactctl(action:ContactAction,payload:JsonObject,options:{timeoutMs?:number;signal?:AbortSignal;spawnImpl?:SpawnContactctl}={}){
+  return runInvocation(buildInvocation([ACTIONS[action]],payload),options);
+}
+
+export async function runImportantDateInternal(action:ImportantDateInternalAction,payload:JsonObject,options:{timeoutMs?:number;signal?:AbortSignal;spawnImpl?:SpawnContactctl}={}){
+  return runInvocation(buildInvocation([action],payload),options);
 }
