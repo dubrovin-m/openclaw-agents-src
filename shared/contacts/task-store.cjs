@@ -86,7 +86,7 @@ function migrateV6ToV7(db, dbPath=contactsDbPath()){
 
 function prepareV7(db, dbPath=contactsDbPath()){
   attachContacts(db,dbPath);configureJournals(db);
-  contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts');
+  contacts.requireSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts');
   const integrity=contacts.integrity(db,'contacts');if(!integrity.ok)throw new Error(`Contacts integrity failed: ${integrity.errors.join('; ')}`);
   validatePersonReferences(db);
   return dbPath;

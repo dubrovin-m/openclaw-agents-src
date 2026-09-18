@@ -14,6 +14,7 @@ TARGET_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.wri
 CONTACTS_ROOT="$ROOT/../../shared/contacts"
 TARGET_CONTACTS_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.implementation_version))' "$CONTACTS_ROOT/release.json")
 TARGET_CONTACT_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$CONTACTS_ROOT/plugin/openclaw.plugin.json")
+TARGET_WORKSPACE_FILES=$(node "$ROOT/workspace-layout.mjs" target-files "$ROOT/release.json")
 ISOLATED_PATH="$NODE_BIN_DIR:/usr/bin:/bin"
 TEST_BASE=$(mktemp -d /tmp/task-agent-isolated-runtime.XXXXXX)
 RUNTIME="$TEST_BASE/runtime"
@@ -143,7 +144,7 @@ assert_no_production_trace() {
 
 snapshot_production "$BEFORE"
 
-run_with_trace install bash "$ROOT/install.sh" --test-root "$RUNTIME"
+run_with_trace install env TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-root "$RUNTIME"
 
 test -f "$RUNTIME/state/openclaw.json"
 test -x "$RUNTIME/bin/taskctl"
@@ -178,25 +179,26 @@ oc plugins inspect taskctl --runtime --json | jq -e --arg v "$TARGET_PLUGIN_VERS
     (["task_update", "task_complete", "task_cancel", "task_get", "inbox_add", "ref_resolve", "label_delete"] | all(.[]; . as $name | ($names | index($name)) != null)))
 ' >/dev/null
 
-oc plugins inspect contacts --runtime --json | jq -e --arg v "$TARGET_CONTACTS_VERSION" --arg count "$TARGET_CONTACT_TOOL_COUNT" '
-  .plugin as $p | $p.toolNames as $names |
-  $p.version == $v and $p.status == "loaded" and $p.enabled == true and
-  ($names | length) == ($count|tonumber) and
-  (["contact_search","contact_resolve","contact_get","contact_create","contact_update","contact_rename","contact_alias_add","contact_alias_remove","contact_merge"] | all(.[]; . as $name | ($names | index($name)) != null))
-' >/dev/null
+CONTACTS_INSPECT=$(oc plugins inspect contacts --runtime --json)
+node - "$CONTACTS_INSPECT" "$TARGET_CONTACTS_VERSION" "$CONTACTS_ROOT/plugin/openclaw.plugin.json" <<'JS_CONTACT_INSPECT'
+const fs=require('fs'),x=JSON.parse(process.argv[2]),v=process.argv[3],m=JSON.parse(fs.readFileSync(process.argv[4],'utf8')),p=x?.plugin;
+const expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.version!==v||p?.status!=='loaded'||p?.enabled!==true||JSON.stringify([...(p?.toolNames??[])].sort())!==JSON.stringify([...expected].sort()))process.exit(1);
+JS_CONTACT_INSPECT
 
-node --input-type=module - "$RUNTIME/state/extensions/contacts/dist/plugin.js" "$TARGET_CONTACT_TOOL_COUNT" <<'JS_CONTACT_ADMISSION'
-import {pathToFileURL} from 'node:url';
-const [pluginPath,countText]=process.argv.slice(2);const expectedCount=Number(countText);
+node --input-type=module - "$RUNTIME/state/extensions/contacts/dist/plugin.js" "$RUNTIME/state/extensions/contacts/openclaw.plugin.json" <<'JS_CONTACT_ADMISSION'
+import fs from 'node:fs';import {pathToFileURL} from 'node:url';
+const [pluginPath,manifestPath]=process.argv.slice(2),manifest=JSON.parse(fs.readFileSync(manifestPath,'utf8'));
+const declared=manifest.contracts.tools,optional=new Set(Object.entries(manifest.toolMetadata??{}).filter(([,v])=>v?.optional===true).map(([k])=>k));
+const publicNames=declared.filter((name)=>!optional.has(name)).sort();
 const pluginModule=await import(pathToFileURL(pluginPath).href);
 const registrations=[];const tools=[];
-pluginModule.default.register({pluginConfig:{},registerTool(definition,options){
-  registrations.push(options);
-  const resolved=typeof definition==='function'?definition({}):definition;
-  if(Array.isArray(resolved)) tools.push(...resolved); else if(resolved) tools.push(resolved);
+pluginModule.default.register({config:{},pluginConfig:{},on:()=>{},registerTool(definition,options){
+  const resolved=typeof definition==='function'?definition({toolContext:{agentId:'main',sessionKey:'agent:main:main'}}):definition;
+  const items=Array.isArray(resolved)?resolved:[resolved];for(const item of items)if(item)tools.push(item);
+  registrations.push({names:items.filter(Boolean).map((item)=>item.name),optional:options?.optional===true});
 }});
-if(registrations.length!==expectedCount||registrations.some((options)=>options?.optional===true))process.exit(2);
-if(tools.length!==expectedCount||tools.some((tool)=>tool.catalogMode!=='direct-only'))process.exit(2);
+if(registrations.length!==declared.length||registrations.filter((x)=>x.optional).length!==optional.size)process.exit(2);
+if(JSON.stringify(tools.map((tool)=>tool.name).sort())!==JSON.stringify(publicNames)||tools.some((tool)=>tool.catalogMode!=='direct-only'))process.exit(2);
 console.log('ISOLATED_CONTACT_DEFAULT_ADMISSION_PASS');
 JS_CONTACT_ADMISSION
 
@@ -215,11 +217,13 @@ const [resolve]=resolvers;
 const inventory=(config,agentId)=>resolve({cfg:config,agentId,sessionKey:`agent:${agentId}:contacts-policy-test`,modelProvider:'openai-codex',modelId:'gpt-5.3-codex',modelApi:'openai-responses'});
 const names=(result)=>(result.groups??[]).flatMap((group)=>(group.tools??group.entries??[]).map((tool)=>tool.name??tool.id));
 const contacts=(result)=>names(result).filter((name)=>String(name).startsWith('contact_')).sort();
-const expected=['contact_alias_add','contact_alias_remove','contact_create','contact_get','contact_merge','contact_rename','contact_resolve','contact_search','contact_update'].sort();
+const manifest=JSON.parse(fs.readFileSync(`${process.env.OPENCLAW_STATE_DIR}/extensions/contacts/openclaw.plugin.json`,'utf8'));
+const optional=new Set(Object.entries(manifest.toolMetadata??{}).filter(([,v])=>v?.optional===true).map(([k])=>k));
+const expected=manifest.contracts.tools.filter((name)=>!optional.has(name)).sort();
 const withoutPolicy=structuredClone(cfg);delete withoutPolicy.agents.entries.main.tools;
 if(contacts(inventory(withoutPolicy,'main')).length!==0)process.exit(2);
 const mainContacts=contacts(inventory(cfg,'main'));
-if(mainContacts.length!==expectedCount||JSON.stringify(mainContacts)!==JSON.stringify(expected))process.exit(2);
+if(JSON.stringify(mainContacts)!==JSON.stringify(expected))process.exit(2);
 if(contacts(inventory(cfg,'tasks')).length!==0||contacts(inventory(cfg,'engineer')).length!==0)process.exit(2);
 console.log('ISOLATED_CONTACT_CODING_PROFILE_ADMISSION_PASS');
 JS_CONTACT_EFFECTIVE_POLICY
@@ -274,9 +278,10 @@ test "$(stat -c '%a' "$RUNTIME/bin/taskctl")" = "700"
 test "$(stat -c '%a' "$RUNTIME/bin/contactctl")" = "700"
 test "$(stat -c '%a' "$RUNTIME/state/data/contacts/contacts.sqlite3")" = "600"
 test "$(stat -c '%a' "$RUNTIME/state/data/tasks/tasks.sqlite3")" = "600"
-for f in AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md; do
+for f in $TARGET_WORKSPACE_FILES; do
   test "$(stat -c '%a' "$RUNTIME/workspace-tasks/$f")" = "644"
 done
+test ! -e "$RUNTIME/workspace-tasks/TOOLS.md"
 
 PEER_LINK="$RUNTIME/state/extensions/taskctl/node_modules/openclaw"
 test -L "$PEER_LINK" || fail "Expected OpenClaw peer link was not created by plugin install"

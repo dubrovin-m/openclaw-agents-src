@@ -1,8 +1,8 @@
 {
   "id": "contacts",
   "name": "Contacts",
-  "description": "Bounded shared Person identity operations.",
-  "version": "0.1.2",
+  "description": "Bounded shared Person identity and Important Dates operations.",
+  "version": "0.1.3",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -21,7 +21,19 @@
       "contact_rename",
       "contact_alias_add",
       "contact_alias_remove",
-      "contact_merge"
+      "contact_merge",
+      "contact_date_create",
+      "contact_date_list",
+      "contact_date_update",
+      "contact_date_reminders_set",
+      "contact_date_delete",
+      "contact_date_upcoming",
+      "contact_date_reminder_dispatch"
     ]
+  },
+  "toolMetadata": {
+    "contact_date_reminder_dispatch": {
+      "optional": true
+    }
   }
 }

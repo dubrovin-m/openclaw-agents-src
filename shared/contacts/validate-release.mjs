@@ -14,6 +14,13 @@ const fail=(m)=>{throw new Error(m);};
 const shaRe=/^[0-9a-f]{64}$/;
 
 if(release?.format!=='shared-contacts-release-v1')fail('unsupported Shared Contacts release format');
+const from=release?.from;
+if(!from||!/^[0-9a-f]{40}$/.test(from.source_revision||'')||!/^0\.1\.\d+$/.test(from.implementation_version||'')||!Number.isSafeInteger(from.sqlite_schema)||from.sqlite_schema<1||!/^0\.1\.\d+$/.test(from.plugin_version||'')||!shaRe.test(from.release_sha256||''))fail('invalid Shared Contacts predecessor metadata');
+const predBytes=execFileSync('git',['-C',repo,'show',from.source_revision+':shared/contacts/release.json']);
+if(crypto.createHash('sha256').update(predBytes).digest('hex')!==from.release_sha256)fail('Shared Contacts predecessor release fingerprint mismatch');
+const pred=JSON.parse(predBytes.toString('utf8'));
+if(pred.implementation_version!==from.implementation_version||pred.sqlite_schema!==from.sqlite_schema||pred.plugin?.version!==from.plugin_version)fail('Shared Contacts predecessor identity mismatch');
+if(taskRelease?.from?.source_revision!==from.source_revision)fail('Task and Shared Contacts predecessor revisions diverge');
 if(!/^0\.1\.\d+$/.test(release.implementation_version||'')||!Number.isSafeInteger(release.sqlite_schema)||release.sqlite_schema<1)fail('invalid Shared Contacts generation');
 for(const file of ['core.cjs','task-store.cjs','contactctl']){
   if(!shaRe.test(release.runtime_files?.[file]||'')||release.runtime_files[file]!==sha(path.join(root,file)))fail(`runtime file fingerprint mismatch: ${file}`);

@@ -10,7 +10,7 @@ const INSTALLED_LIB = path.join(os.homedir(), '.local', 'lib', 'openclaw-contact
 const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_LIB, 'core.cjs')) ? SOURCE_LIB : INSTALLED_LIB;
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.1.2';
+const IMPLEMENTATION_VERSION = '0.1.3';
 const PROD_DB = path.join(os.homedir(), '.openclaw', 'data', 'contacts', 'contacts.sqlite3');
 const DB_PATH = process.env.CONTACTCTL_ALLOW_DB_OVERRIDE === '1' && process.env.CONTACTCTL_DB
   ? path.resolve(process.env.CONTACTCTL_DB) : PROD_DB;
@@ -23,13 +23,16 @@ const fail=(error)=>{const e=error instanceof AppError?error:new AppError('INTER
 const ok=(value)=>process.stdout.write(JSON.stringify(value)+'\n');
 const payload=()=>{const raw=process.env.CONTACTCTL_PAYLOAD;if(!raw)throw new AppError('PAYLOAD_REQUIRED','CONTACTCTL_PAYLOAD is required');if(Buffer.byteLength(raw)>PAYLOAD_LIMIT)throw new AppError('PAYLOAD_TOO_LARGE','CONTACTCTL_PAYLOAD is too large');let value;try{value=JSON.parse(raw);}catch{throw new AppError('INVALID_JSON','CONTACTCTL_PAYLOAD must be valid JSON');}if(!value||Array.isArray(value)||typeof value!=='object')throw new AppError('INVALID_PAYLOAD','payload must be an object');return value;};
 
-function openDb({create=false}={}){
+function openDb({create=false,migrate=false}={}){
   if(!create&&!fs.existsSync(DB_PATH))throw new AppError('CONTACTS_DB_MISSING','Contacts database is missing',undefined,3);
   const dir=path.dirname(DB_PATH);if(create)fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}
   const db=new DatabaseSync(DB_PATH,{timeout:5000});
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
-  if(create){contacts.ensureSchema(db);contacts.ensureSingleSelf(db);}
-  else{const version=Number(db.prepare('PRAGMA user_version').get().user_version);if(version!==contacts.CONTACT_SCHEMA_VERSION){db.close();throw new AppError('UNSUPPORTED_SCHEMA',`Unsupported Contacts schema version ${version}`);}}
+  try{
+    if(migrate)contacts.ensureSchema(db,'main',{fault:process.env.CONTACTCTL_TEST_MIGRATION_FAULT});
+    else contacts.requireSchema(db);
+    if(create)contacts.ensureSingleSelf(db);
+  }catch(error){try{db.close();}catch{}throw error;}
   try{fs.chmodSync(DB_PATH,0o600);}catch{}
   return db;
 }
@@ -43,21 +46,77 @@ const RULES={
   rename:{required:['operation_key','id','display_name'],allowed:['operation_key','id','display_name']},
   alias_add:{required:['operation_key','id','alias'],allowed:['operation_key','id','alias']},alias_remove:{required:['operation_key','id','alias'],allowed:['operation_key','id','alias']},
   merge:{required:['operation_key','from_id','into_id'],allowed:['operation_key','from_id','into_id']},
+  date_create:{required:['operation_key','person','type','month','day','reminders'],allowed:['operation_key','person','organization','title','type','year','month','day','annual','reminders']},
+  date_list:{allowed:['person','organization','title','type']},
+  date_update:{required:['operation_key','id'],allowed:['operation_key','id','type','year','month','day','annual']},
+  date_reminders_set:{required:['operation_key','id','reminders'],allowed:['operation_key','id','reminders']},
+  date_delete:{required:['operation_key','id'],allowed:['operation_key','id']},
+  date_upcoming:{required:['from_date','horizon_days'],allowed:['from_date','horizon_days','person','organization','title','type']},
+  date_dispatch:{required:['claim_token','boundary'],allowed:['claim_token','boundary','limit']},
+  date_render:{required:['claim_token'],allowed:['claim_token']},
+  date_settle:{required:['claim_token','delivered'],allowed:['claim_token','delivered']},
 };
-const nonEmpty=(v)=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=500;
+const nonEmpty=(v,max=500)=>typeof v==='string'&&v.trim().length>0&&v.trim().length<=max;
 const personId=(v)=>typeof v==='string'&&/^P-[1-9]\d*$/i.test(v.trim());
-function validate(action,p){const rule=RULES[action];if(!rule)throw new AppError('USAGE',`Unknown action: ${action}`);const keys=Object.keys(p),extra=keys.filter(k=>!rule.allowed.includes(k));if(extra.length)throw new AppError('INVALID_FIELD','payload contains unsupported fields',{fields:extra});for(const key of rule.required??[])if(!Object.hasOwn(p,key))throw new AppError('INVALID_FIELD',`${key} is required`);for(const key of ['operation_key','display_name','query','reference','alias'])if(Object.hasOwn(p,key)&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded non-empty string`);for(const key of ['organization','title'])if(Object.hasOwn(p,key)&&p[key]!==null&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded string or null`);for(const key of ['id','from_id','into_id'])if(Object.hasOwn(p,key)&&!personId(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a canonical P-* id`);if(Object.hasOwn(p,'limit')&&(!Number.isSafeInteger(p.limit)||p.limit<1||p.limit>200))throw new AppError('INVALID_FIELD','limit must be an integer from 1 to 200');if(action==='update'&&!['display_name','organization','title'].some(k=>Object.hasOwn(p,k)))throw new AppError('INVALID_FIELD','contact update requires at least one mutable field');return p;}
+const dateId=(v)=>typeof v==='string'&&/^DATE-[1-9]\d*$/i.test(v.trim());
+const realIsoDate=(v)=>{if(typeof v!=='string'||!/^\d{4}-\d{2}-\d{2}$/.test(v))return false;const d=new Date(v+'T00:00:00Z');return!Number.isNaN(d.getTime())&&d.toISOString().slice(0,10)===v;};
+const dateType=(v)=>['BIRTHDAY','ANNIVERSARY','OTHER'].includes(String(v??'').toUpperCase());
+const reminderSpec=(v)=>{
+  if(!v||Array.isArray(v)||typeof v!=='object'||Object.keys(v).some(k=>!['offset_value','offset_unit'].includes(k)))return false;
+  const value=v.offset_value,unit=String(v.offset_unit??'').toUpperCase();
+  if(!Number.isSafeInteger(value)||value<0||!['DAYS','WEEKS','MONTHS'].includes(unit))return false;
+  return !(unit==='DAYS'&&value>3650||unit==='WEEKS'&&value>520||unit==='MONTHS'&&value>120);
+};
+const reminders=(v)=>Array.isArray(v)&&v.length<=20&&v.every(reminderSpec);
+
+function validate(action,p){
+  const rule=RULES[action];if(!rule)throw new AppError('USAGE',`Unknown action: ${action}`);
+  const keys=Object.keys(p),extra=keys.filter(k=>!rule.allowed.includes(k));if(extra.length)throw new AppError('INVALID_FIELD','payload contains unsupported fields',{fields:extra});
+  for(const key of rule.required??[])if(!Object.hasOwn(p,key))throw new AppError('INVALID_FIELD',`${key} is required`);
+  for(const key of ['operation_key','display_name','query','reference','alias','person','claim_token'])if(Object.hasOwn(p,key)&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded non-empty string`);
+  for(const key of ['organization','title'])if(Object.hasOwn(p,key)&&p[key]!==null&&!nonEmpty(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a bounded string or null`);
+  for(const key of ['id','from_id','into_id'])if(Object.hasOwn(p,key)){
+    const expected=action.startsWith('date_')?'DATE-*':'P-*';
+    if(action.startsWith('date_')?!dateId(p[key]):!personId(p[key]))throw new AppError('INVALID_FIELD',`${key} must be a canonical ${expected} id`);
+  }
+  if(Object.hasOwn(p,'type')&&!dateType(p.type))throw new AppError('INVALID_FIELD','type must be BIRTHDAY, ANNIVERSARY, or OTHER');
+  if(Object.hasOwn(p,'year')&&p.year!==null&&(!Number.isSafeInteger(p.year)||p.year<1000||p.year>9999))throw new AppError('INVALID_FIELD','year must be null or an integer from 1000 to 9999');
+  if(Object.hasOwn(p,'month')&&(!Number.isSafeInteger(p.month)||p.month<1||p.month>12))throw new AppError('INVALID_FIELD','month must be 1..12');
+  if(Object.hasOwn(p,'day')&&(!Number.isSafeInteger(p.day)||p.day<1||p.day>31))throw new AppError('INVALID_FIELD','day must be 1..31');
+  if(Object.hasOwn(p,'annual')&&typeof p.annual!=='boolean')throw new AppError('INVALID_FIELD','annual must be boolean');
+  if(Object.hasOwn(p,'reminders')&&!reminders(p.reminders))throw new AppError('INVALID_FIELD','reminders must be an array of bounded DAYS/WEEKS/MONTHS offsets');
+  if(Object.hasOwn(p,'from_date')&&!realIsoDate(p.from_date))throw new AppError('INVALID_FIELD','from_date must be a real YYYY-MM-DD date');
+  if(Object.hasOwn(p,'horizon_days')&&(!Number.isSafeInteger(p.horizon_days)||p.horizon_days<0||p.horizon_days>730))throw new AppError('INVALID_FIELD','horizon_days must be 0..730');
+  if(Object.hasOwn(p,'boundary')&&(typeof p.boundary!=='string'||!p.boundary.trim()||Number.isNaN(new Date(p.boundary).getTime())))throw new AppError('INVALID_FIELD','boundary must be a valid ISO timestamp');
+  if(Object.hasOwn(p,'delivered')&&typeof p.delivered!=='boolean')throw new AppError('INVALID_FIELD','delivered must be boolean');
+  if(Object.hasOwn(p,'limit')&&(!Number.isSafeInteger(p.limit)||p.limit<1||p.limit>200))throw new AppError('INVALID_FIELD','limit must be an integer from 1 to 200');
+  if(action==='update'&&!['display_name','organization','title'].some(k=>Object.hasOwn(p,k)))throw new AppError('INVALID_FIELD','contact update requires at least one mutable field');
+  if(action==='date_update'&&!['type','year','month','day','annual'].some(k=>Object.hasOwn(p,k)))throw new AppError('INVALID_FIELD','date_update requires at least one mutable date field');
+  if(['date_list','date_upcoming'].includes(action)&&!Object.hasOwn(p,'person')&&(Object.hasOwn(p,'organization')||Object.hasOwn(p,'title')))throw new AppError('INVALID_FIELD','organization/title filters require person');
+  return p;
+}
 
 const formatted=(db,row)=>({...contacts.formatPerson(row),aliases:contacts.aliasesFor(db,row.id).map(x=>x.alias)});
-const mutation=(db,type,p,fn)=>{try{return contacts.mutate(db,type,p,fn);}catch(error){if(/operation_key/.test(error.message))throw new AppError('IDEMPOTENCY_ERROR',error.message);throw error;}};
+const mutation=(db,type,p,fn)=>{try{return contacts.mutate(db,type,p,fn);}catch(error){if(error instanceof AppError)throw error;if(/operation_key/.test(error.message))throw new AppError('IDEMPOTENCY_ERROR',error.message);if(/UNIQUE constraint failed: important_dates\.person_id, important_dates\.type/.test(error.message))throw new AppError('IMPORTANT_DATE_CONFLICT','This Person already has a birthday');throw error;}};
 function requireMatch(result,reference){if(result.outcome==='MATCH')return result.matches[0];if(result.outcome==='AMBIGUOUS')throw new AppError('AMBIGUOUS_PERSON','Person reference is ambiguous',{reference,candidates:result.matches.map(contacts.formatPerson)});throw new AppError('PERSON_NOT_FOUND','No canonical Person matches the reference',{reference},3);}
+function resolveDatePerson(db,p){return requireMatch(contacts.resolve(db,p.person,{organization:p.organization,title:p.title}),p.person);}
 
 function readAction(db,action,p){
   if(action==='health'){const integrity=contacts.integrity(db);return{ok:integrity.ok,implementation_version:IMPLEMENTATION_VERSION,schema_version:contacts.CONTACT_SCHEMA_VERSION,database:DB_PATH,integrity};}
   if(action==='list'){const rows=db.prepare("SELECT * FROM people WHERE status='ACTIVE' ORDER BY display_name,id").all();return{ok:true,people:rows.map(r=>formatted(db,r)),count:rows.length};}
-  if(action==='search'){const query=String(p.query??'').trim();if(!query)throw new AppError('INVALID_FIELD','query is required');const rows=contacts.search(db,query,{organization:p.organization,title:p.title,limit:p.limit});return{ok:true,query,people:rows.map(r=>formatted(db,r)),count:rows.length};}
-  if(action==='resolve'){const reference=String(p.reference??'').trim();if(!reference)throw new AppError('INVALID_FIELD','reference is required');const result=contacts.resolve(db,reference,{organization:p.organization,title:p.title});return{ok:true,reference,outcome:result.outcome,matches:result.matches.map(r=>formatted(db,r)),redirected_from:result.redirected_from??null};}
+  if(action==='search'){const query=String(p.query??'').trim();const rows=contacts.search(db,query,{organization:p.organization,title:p.title,limit:p.limit});return{ok:true,query,people:rows.map(r=>formatted(db,r)),count:rows.length};}
+  if(action==='resolve'){const reference=String(p.reference??'').trim();const result=contacts.resolve(db,reference,{organization:p.organization,title:p.title});return{ok:true,reference,outcome:result.outcome,matches:result.matches.map(r=>formatted(db,r)),redirected_from:result.redirected_from??null};}
   if(action==='get'){const raw=contacts.rawPerson(db,p.id);if(!raw)throw new AppError('NOT_FOUND',`Person ${p.id} not found`,undefined,3);const canonical=contacts.canonicalPerson(db,raw);return{ok:true,person:formatted(db,raw),canonical:formatted(db,canonical),redirected:raw.id!==canonical.id};}
+  if(action==='date_list'){
+    const person=p.person==null?null:resolveDatePerson(db,p);
+    const rows=contacts.listImportantDates(db,{person_id:person?.id,type:p.type});
+    return{ok:true,dates:rows.map(r=>contacts.formatImportantDate(db,r)),count:rows.length};
+  }
+  if(action==='date_upcoming'){
+    const person=p.person==null?null:resolveDatePerson(db,p);
+    const rows=contacts.importantDateOccurrences(db,{from_date:p.from_date,horizon_days:p.horizon_days,person_id:person?.id,type:p.type});
+    return{ok:true,from_date:p.from_date,horizon_days:p.horizon_days,dates:rows.map(x=>contacts.formatImportantDate(db,x.row,'main',{occurrence_date:x.occurrence_date,days_until:x.days_until})),count:rows.length};
+  }
   throw new AppError('USAGE',`Unknown read action: ${action}`);
 }
 
@@ -68,14 +127,45 @@ function writeAction(db,action,p){
   if(action==='alias_add')return mutation(db,'contact.alias_add',p,()=>{const aliases=contacts.addAlias(db,p.id,p.alias);const canonical=contacts.canonicalPerson(db,p.id);return{ok:true,person:formatted(db,canonical),aliases:aliases.map(x=>x.alias)};});
   if(action==='alias_remove')return mutation(db,'contact.alias_remove',p,()=>{const aliases=contacts.removeAlias(db,p.id,p.alias);const canonical=contacts.canonicalPerson(db,p.id);return{ok:true,person:formatted(db,canonical),aliases:aliases.map(x=>x.alias)};});
   if(action==='merge')return mutation(db,'contact.merge',p,()=>{const result=contacts.merge(db,p.from_id,p.into_id);return{ok:true,changed:result.changed,merged_from:contacts.formatPerson(result.from),person:formatted(db,result.person)};});
+  if(action==='date_create')return mutation(db,'contact.date_create',p,()=>{
+    const person=resolveDatePerson(db,p);
+    const input={person_id:person.id,type:p.type,month:p.month,day:p.day,reminders:p.reminders};
+    if(Object.hasOwn(p,'year'))input.year=p.year;
+    if(Object.hasOwn(p,'annual'))input.annual=p.annual;
+    const row=contacts.createImportantDate(db,input);
+    return{ok:true,date:contacts.formatImportantDate(db,row)};
+  });
+  if(action==='date_update')return mutation(db,'contact.date_update',p,()=>{
+    const row=contacts.updateImportantDate(db,p.id,p);
+    return{ok:true,date:contacts.formatImportantDate(db,row)};
+  });
+  if(action==='date_reminders_set')return mutation(db,'contact.date_reminders_set',p,()=>{
+    const row=contacts.setImportantDateReminders(db,p.id,p.reminders);
+    return{ok:true,date:contacts.formatImportantDate(db,row)};
+  });
+  if(action==='date_delete')return mutation(db,'contact.date_delete',p,()=>{
+    const row=contacts.rawImportantDate(db,p.id);if(!row)throw new AppError('NOT_FOUND',`ImportantDate ${p.id} not found`,undefined,3);
+    const before=contacts.formatImportantDate(db,row);contacts.deleteImportantDate(db,p.id);return{ok:true,deleted:before};
+  });
   throw new AppError('USAGE',`Unknown write action: ${action}`);
+}
+
+function internalAction(db,action,p){
+  if(action==='date_dispatch')return contacts.claimDueImportantDateReminders(db,p);
+  if(action==='date_render')return contacts.renderImportantDateClaim(db,p.claim_token);
+  if(action==='date_settle')return contacts.settleImportantDateClaim(db,p);
+  throw new AppError('USAGE',`Unknown internal action: ${action}`);
 }
 
 let db;
 try{
-  const [action]=process.argv.slice(2);db=openDb({create:action==='init'});
+  const [action]=process.argv.slice(2);db=openDb({create:action==='init',migrate:action==='init'});
   if(action==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:contacts.CONTACT_SCHEMA_VERSION,database:DB_PATH});
-  else{const integrity=contacts.integrity(db);if(action!=='health'&&!integrity.ok)throw new AppError('CONTACTS_INTEGRITY_ERROR','Contacts integrity check failed',{errors:integrity.errors},1);if(['health','list','search','resolve','get'].includes(action)){const p=validate(action,payload());ok(readAction(db,action,p));}
-  else if(['create','update','rename','alias_add','alias_remove','merge'].includes(action)){const p=validate(action,payload());ok(writeAction(db,action,p));}
-  else throw new AppError('USAGE','Usage: contactctl <init|health|list|search|resolve|get|create|update|rename|alias_add|alias_remove|merge>');}
+  else{
+    const integrity=contacts.integrity(db);if(action!=='health'&&!integrity.ok)throw new AppError('CONTACTS_INTEGRITY_ERROR','Contacts integrity check failed',{errors:integrity.errors},1);
+    if(['health','list','search','resolve','get','date_list','date_upcoming'].includes(action)){const p=validate(action,payload());ok(readAction(db,action,p));}
+    else if(['create','update','rename','alias_add','alias_remove','merge','date_create','date_update','date_reminders_set','date_delete'].includes(action)){const p=validate(action,payload());ok(writeAction(db,action,p));}
+    else if(['date_dispatch','date_render','date_settle'].includes(action)){const p=validate(action,payload());ok(internalAction(db,action,p));}
+    else throw new AppError('USAGE','Unsupported contactctl action');
+  }
 }catch(error){fail(error);}finally{try{db?.close();}catch{}}
