@@ -102,6 +102,7 @@ jobs:
           node --check shared/contacts/task-store.cjs
           node --check shared/contacts/contactctl
           timeout 180s bash shared/contacts/tests/shared-contacts.sh
+          timeout 180s bash shared/contacts/tests/important-dates.sh
           cd shared/contacts/plugin
           timeout 180s npm test
           timeout 180s npm run plugin:build
@@ -110,7 +111,8 @@ jobs:
           node shared/contacts/validate-release.mjs
           pack_dir="$(mktemp -d)"
           timeout 120s npm pack ./shared/contacts/plugin --pack-destination "$pack_dir" >/dev/null
-          cmp -s "$pack_dir/openclaw-plugin-contacts-0.1.2.tgz" shared/contacts/artifacts/openclaw-plugin-contacts-0.1.2.tgz
+          contacts_artifact="$(node -e 'const r=require("./shared/contacts/release.json");process.stdout.write(r.plugin.artifact)')"
+          cmp -s "$pack_dir/$(basename "$contacts_artifact")" "shared/contacts/$contacts_artifact"
           rm -rf "$pack_dir"
 
       - name: Install plugin dependencies
