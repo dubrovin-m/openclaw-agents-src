@@ -47,7 +47,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "1e5f557038795b124df613da6c0995404ee02b02903d9c573d3631e3a89f693d",
+    "release_sha256": "bb04abedcc40ea917825440b89c9ddc08091cea35c1605423f96c9dfe8108662",
     "implementation_version": "0.1.3",
     "sqlite_schema": 2,
     "predecessor_mode": "exact"

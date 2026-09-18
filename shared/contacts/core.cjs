@@ -443,17 +443,31 @@ function importantDateOccurrences(db,options={}){
   }
   return out.sort((a,b)=>a.occurrence_date.localeCompare(b.occurrence_date)||a.row.id-b.row.id);
 }
+function reminderSearchYearSpan(value,unit){
+  const days=unit==='MONTHS'?null:unit==='WEEKS'?value*7:value;
+  return (unit==='MONTHS'?Math.ceil(value/12):Math.ceil(days/365))+1;
+}
 function dueReminderCandidates(db,boundaryIso,options={}){
   const schema=options.schema??'main',today=dateInTimezone(boundaryIso),{year}=parseIsoDate(today),rows=db.prepare(`SELECT r.*,d.person_id,d.type,d.year,d.month,d.day,d.annual FROM ${table(schema,'important_date_reminders')} r JOIN ${table(schema,'important_dates')} d ON d.id=r.important_date_id ORDER BY r.id`).all(),out=[];
   for(const row of rows){
-    const years=row.annual?[year,year+1]:[row.year];
-    for(const y of years){if(y==null)continue;const occurrence=occurrenceFor(row,y);if(!occurrence)continue;const trigger=subtractOffset(occurrence,row.offset_value,row.offset_unit);if(trigger>today||occurrence<today)continue;
-      const delivery=db.prepare(`SELECT * FROM ${table(schema,'important_date_deliveries')} WHERE reminder_id=? AND occurrence_key=?`).get(row.id,occurrence);
-      if(delivery?.status==='DELIVERED')continue;
-      if(delivery?.status==='CLAIMED'&&delivery.claim_expires_at>boundaryIso)continue;
-      out.push({reminder:row,occurrence_date:occurrence,trigger_date:trigger,today});
-      break;
+    const maxYear=row.annual?Math.min(9999,year+reminderSearchYearSpan(row.offset_value,row.offset_unit)):row.year;
+    const years=row.annual?Array.from({length:maxYear-year+1},(_,i)=>year+i):[row.year];
+    let candidate=null;
+    for(const y of years){
+      if(y==null)continue;
+      const occurrence=occurrenceFor(row,y);
+      if(!occurrence||occurrence<today)continue;
+      const trigger=subtractOffset(occurrence,row.offset_value,row.offset_unit);
+      if(trigger>today)continue;
+      if(!candidate||trigger>candidate.trigger_date||(trigger===candidate.trigger_date&&occurrence>candidate.occurrence_date)){
+        candidate={reminder:row,occurrence_date:occurrence,trigger_date:trigger,today};
+      }
     }
+    if(!candidate)continue;
+    const delivery=db.prepare(`SELECT * FROM ${table(schema,'important_date_deliveries')} WHERE reminder_id=? AND occurrence_key=?`).get(row.id,candidate.occurrence_date);
+    if(delivery?.status==='DELIVERED')continue;
+    if(delivery?.status==='CLAIMED'&&delivery.claim_expires_at>boundaryIso)continue;
+    out.push(candidate);
   }
   return out.sort((a,b)=>a.trigger_date.localeCompare(b.trigger_date)||a.reminder.id-b.reminder.id);
 }
@@ -480,7 +494,7 @@ function reminderPolicyLabel(value,unit){if(value===0)return'в день соб�
 function renderImportantDateClaim(db,token,boundaryIso=null,options={}){
   const schema=options.schema??'main',rows=db.prepare(`SELECT x.occurrence_key,x.claimed_at,r.id reminder_id,r.offset_value,r.offset_unit,d.*,x.claim_token FROM ${table(schema,'important_date_deliveries')} x JOIN ${table(schema,'important_date_reminders')} r ON r.id=x.reminder_id JOIN ${table(schema,'important_dates')} d ON d.id=r.important_date_id WHERE x.status='CLAIMED' AND x.claim_token=? ORDER BY x.occurrence_key,r.id`).all(token);
   const reference=boundaryIso??rows[0]?.claimed_at??now(),today=dateInTimezone(reference),items=[];
-  for(const row of rows){const occurrence=occurrenceFor(row,parseIsoDate(row.occurrence_key).year);if(occurrence!==row.occurrence_key)continue;const trigger=subtractOffset(occurrence,row.offset_value,row.offset_unit);if(trigger>today||occurrence<today)continue;const person=canonicalPerson(db,row.person_id,schema);if(!person)continue;items.push({reminder_id:`IDR-${row.reminder_id}`,important_date_id:`DATE-${row.id}`,person:formatPerson(person),type:row.type,occurrence_date:occurrence,days_until:diffDays(today,occurrence),offset_value:row.offset_value,offset_unit:row.offset_unit});}
+  for(const row of rows){const occurrence=occurrenceFor(row,parseIsoDate(row.occurrence_key).year);if(occurrence!==row.occurrence_key||occurrence<today)continue;const trigger=subtractOffset(occurrence,row.offset_value,row.offset_unit);if(trigger>today)continue;const person=canonicalPerson(db,row.person_id,schema);if(!person)continue;items.push({reminder_id:`IDR-${row.reminder_id}`,important_date_id:`DATE-${row.id}`,person:formatPerson(person),type:row.type,occurrence_date:occurrence,days_until:diffDays(today,occurrence),offset_value:row.offset_value,offset_unit:row.offset_unit});}
   const typeLabel=t=>t==='BIRTHDAY'?'день рождения':t==='ANNIVERSARY'?'годовщина':'важная дата';
   const lines=items.map(x=>{const {month,day}=parseIsoDate(x.occurrence_date),when=x.days_until===0?'сегодня':`через ${x.days_until} ${pluralRu(x.days_until,'день','дня','дней')}`;return`• ${x.person.display_name} — ${typeLabel(x.type)} ${day} ${RU_MONTHS[month-1]} (${when}; ${reminderPolicyLabel(x.offset_value,x.offset_unit)})`;});
   return {ok:true,count:items.length,message:items.length?`Важные даты:

@@ -53,6 +53,17 @@ node -e 'const x=JSON.parse(process.argv[1]);if(x.count!==1||x.delivered!==true)
 a=$(run '{"claim_token":"job:2","boundary":"2026-09-18T06:01:00.000Z"}' date_dispatch)
 node -e 'const x=JSON.parse(process.argv[1]);if(x.count!==0)process.exit(1)' "$a"
 
+# Annual reminders may reach beyond the next occurrence. Pick the latest triggered
+# future occurrence rather than replaying stale nearer-year occurrences.
+run '{"operation_key":"long-annual","person":"Петров","type":"OTHER","month":9,"day":18,"annual":true,"reminders":[{"offset_value":24,"offset_unit":"MONTHS"}]}' date_create >/dev/null
+a=$(run '{"claim_token":"job:long","boundary":"2026-09-18T06:05:00.000Z"}' date_dispatch)
+node -e 'const x=JSON.parse(process.argv[1]);if(x.count!==1||x.items[0].occurrence_date!=="2028-09-18"||x.items[0].offset_value!==24||x.items[0].offset_unit!=="MONTHS")process.exit(1)' "$a"
+run '{"claim_token":"job:long","delivered":true}' date_settle >/dev/null
+
+# Expired one-shot dates are discarded before offset arithmetic, including the
+# lower supported year boundary where subtracting a reminder offset would underflow.
+run '{"operation_key":"expired-boundary","person":"Петров","type":"OTHER","year":1000,"month":1,"day":15,"annual":false,"reminders":[{"offset_value":1,"offset_unit":"MONTHS"}]}' date_create >/dev/null
+
 # Failed delivery releases the claim and permits deterministic retry.
 run '{"operation_key":"d3","person":"Петров","type":"OTHER","year":2026,"month":10,"day":18,"annual":false,"reminders":[{"offset_value":1,"offset_unit":"MONTHS"}]}' date_create >/dev/null
 a=$(run '{"claim_token":"job:3","boundary":"2026-09-18T07:00:00.000Z"}' date_dispatch)
