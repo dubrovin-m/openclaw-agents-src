@@ -29,7 +29,7 @@ function fixture() {
     schedule: { kind: "cron", expr: REMINDER_DISPATCH_CRON, tz: REMINDER_TIMEZONE, staggerMs: 0 },
     sessionTarget: "isolated",
     payload: { kind: "script", script: buildReminderDispatchScript(), toolsAllow: [TASK_REMINDER_DISPATCH_TOOL] },
-    delivery: { mode: "announce", channel: "telegram", accountId: "tasks", to: "test-owner", bestEffort: false },
+    delivery: { mode: "announce", channel: "telegram", accountId: "tasks", to: "test-owner" },
     state: { runningAtMs: Date.parse("2026-09-16T09:00:00.000Z") },
   };
   const service = { list: vi.fn(async () => [job]) };
@@ -75,6 +75,15 @@ describe("Reminder scheduler runtime", () => {
   it("fails closed when the persisted dispatcher delivery destination drifts", async () => {
     const { job } = fixture();
     job.delivery.to = "wrong-owner";
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "must not send" } as never);
+    await expect(executeReminderDispatch({ agentId: "tasks", sessionKey: "agent:tasks:cron:job-1:trigger" } as never))
+      .rejects.toThrow("delivery route drift");
+    expect(runInternal).not.toHaveBeenCalled();
+  });
+
+  it.each([true, null, 0, "true"])("fails closed for malformed or best-effort persisted delivery: %p", async (value) => {
+    const { job } = fixture();
+    (job.delivery as { bestEffort?: unknown }).bestEffort = value;
     runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "must not send" } as never);
     await expect(executeReminderDispatch({ agentId: "tasks", sessionKey: "agent:tasks:cron:job-1:trigger" } as never))
       .rejects.toThrow("delivery route drift");

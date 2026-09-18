@@ -95,7 +95,7 @@ const fs=require('fs'),p=process.argv[2],a=process.argv.slice(3),opt=n=>{const i
 const x=JSON.parse(fs.readFileSync(p,'utf8')),jobs=Array.isArray(x.jobs)?x.jobs:[],key=opt('--declaration-key');if(!key||jobs.some(j=>j.declarationKey===key))process.exit(2);
 let payload,delivery;
 if(opt('--command-argv')){payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};delivery={mode:a.includes('--no-deliver')?'none':'announce'};}
-else if(opt('--script')==='-'){payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};delivery={mode:a.includes('--announce')?'announce':'none',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account'),bestEffort:a.includes('--best-effort-deliver')};}
+else if(opt('--script')==='-'){payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};delivery={mode:a.includes('--announce')?'announce':'none',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account'),...(a.includes('--best-effort-deliver')?{bestEffort:true}:{})};}
 else process.exit(2);
 const job={id:`job-${jobs.length+1}`,declarationKey:key,name:opt('--name'),enabled:true,agentId:opt('--agent'),schedule:{kind:'cron',expr:opt('--cron'),tz:opt('--tz'),staggerMs:a.includes('--exact')?0:undefined},sessionTarget:opt('--session')||'isolated',wakeMode:'now',payload,delivery};
 jobs.push(job);fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');process.stdout.write(JSON.stringify({created:true,job})+'\n');
@@ -166,7 +166,7 @@ assert_target(){
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer changed"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "Reminder dispatcher missing"
   node - "$r/state/automations-test.json" "$REMINDER_KEY" "$REMINDER_SCRIPT" "$REMINDER_TOOL" <<'NODE' || fail "Reminder dispatcher shape mismatch"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]);if(!j||j.payload?.kind!=='script'||j.payload.script!==process.argv[4]||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify([process.argv[5]])||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner'||j.delivery?.bestEffort!==false)process.exit(1);
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]);if(!j||j.payload?.kind!=='script'||j.payload.script!==process.argv[4]||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify([process.argv[5]])||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner'||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false))process.exit(1);
 NODE
 }
 clone_runtime(){ cp -a "$1" "$2"; node - "$2/state/openclaw.json" "$1" "$2" <<'NODE'
@@ -182,6 +182,21 @@ CONTACTS_BEFORE=$(contacts_fingerprint "$BASE")
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "Reminder preflight failed"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Reminder deploy failed"
+assert_target "$R"
+
+# Persisted scheduler drift must fail closed: only omission or literal false is
+# a valid representation of required (non-best-effort) delivery.
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);j.delivery.bestEffort=null;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+set +e
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight >/dev/null 2>&1
+MALFORMED_CODE=$?
+set -e
+[ "$MALFORMED_CODE" -ne 0 ] || fail "Malformed Reminder bestEffort state passed preflight"
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);delete j.delivery.bestEffort;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
 assert_target "$R"
 [ "$(contacts_fingerprint "$R")" = "$CONTACTS_BEFORE" ] || fail "Reminder deploy mutated Contacts domain state"
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit); [ -n "$RECOVERY" ] || fail "recovery set missing"
