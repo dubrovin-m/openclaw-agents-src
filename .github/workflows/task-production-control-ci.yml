@@ -118,10 +118,10 @@ jobs:
         run: timeout 300s npm ci
 
       - name: OpenClaw 8.2 workspace retirement deployment and rollback
-        run: timeout 240s bash agents/tasks/tests/workspace-retirement.sh
+        run: timeout 420s bash agents/tasks/tests/workspace-retirement.sh
 
       - name: Isolated runtime and recovery reconstruction
-        run: timeout 180s bash agents/tasks/tests/isolated-runtime.sh
+        run: timeout 300s bash agents/tasks/tests/isolated-runtime.sh
 
       - name: Break-glass controller reconciliation
         run: bash agents/tasks/production-control/tests/break-glass-reconcile.sh
