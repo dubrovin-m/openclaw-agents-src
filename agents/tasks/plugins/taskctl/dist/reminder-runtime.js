@@ -69,7 +69,7 @@ function validateReminderJob(job, expectedRecipient) {
         job.delivery.channel !== REMINDER_CHANNEL_ID ||
         job.delivery.accountId !== REMINDER_ACCOUNT_ID ||
         job.delivery.to !== expectedRecipient ||
-        job.delivery.bestEffort !== false) {
+        (job.delivery.bestEffort !== undefined && job.delivery.bestEffort !== false)) {
         throw new Error("Reminder dispatcher delivery route drift detected");
     }
     return job;
