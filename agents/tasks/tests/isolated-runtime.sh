@@ -2,11 +2,10 @@
 set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 NODE_BIN=$(command -v node)
 NODE_BIN_DIR=$(dirname "$NODE_BIN")
-OPENCLAW_BIN=$(command -v openclaw || true)
-[ -n "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || { echo "Unable to locate OpenClaw executable" >&2; exit 2; }
+TARGET_OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 TARGET_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.generation.taskctl_version))' "$ROOT/release.json")
 TARGET_PLUGIN_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.plugin.version))' "$ROOT/release.json")
 TARGET_SQLITE_SCHEMA=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.generation.sqlite_schema))' "$ROOT/release.json")
@@ -15,13 +14,20 @@ CONTACTS_ROOT="$ROOT/../../shared/contacts"
 TARGET_CONTACTS_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.implementation_version))' "$CONTACTS_ROOT/release.json")
 TARGET_CONTACT_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$CONTACTS_ROOT/plugin/openclaw.plugin.json")
 TARGET_WORKSPACE_FILES=$(node "$ROOT/workspace-layout.mjs" target-files "$ROOT/release.json")
-ISOLATED_PATH="$NODE_BIN_DIR:/usr/bin:/bin"
 TEST_BASE=$(mktemp -d /tmp/task-agent-isolated-runtime.XXXXXX)
+trap 'rm -rf "$TEST_BASE"' EXIT
+TARGET_OPENCLAW_PREFIX="$TEST_BASE/openclaw-target"
+command -v npm >/dev/null 2>&1 || { echo "npm is required to qualify the exact OpenClaw target" >&2; exit 2; }
+npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$TARGET_OPENCLAW_VERSION" >/dev/null
+OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
+[ -x "$OPENCLAW_BIN" ] || { echo "Unable to install exact OpenClaw target $TARGET_OPENCLAW_VERSION" >&2; exit 2; }
+OPENCLAW_BIN_DIR=$(dirname "$OPENCLAW_BIN")
+export PATH="$OPENCLAW_BIN_DIR:$PATH"
+ISOLATED_PATH="$OPENCLAW_BIN_DIR:$NODE_BIN_DIR:/usr/bin:/bin"
 RUNTIME="$TEST_BASE/runtime"
 TRACE_DIR="$TEST_BASE/trace"
 BEFORE="$TEST_BASE/production.before"
 AFTER="$TEST_BASE/production.after"
-trap 'rm -rf "$TEST_BASE"' EXIT
 
 fail() {
   echo "$*" >&2
@@ -47,7 +53,7 @@ resolve_host_openclaw_root() {
       name=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.name||''))" "$pkg")
       version=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$pkg")
       if [ "$name" = "openclaw" ]; then
-        [ "$version" = "2026.8.2" ] || fail "Unexpected host OpenClaw package version: $version"
+        [ "$version" = "$TARGET_OPENCLAW_VERSION" ] || fail "Unexpected host OpenClaw package version: $version (expected $TARGET_OPENCLAW_VERSION)"
         realpath -e "$dir"
         return
       fi
