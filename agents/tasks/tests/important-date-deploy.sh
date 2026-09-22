@@ -25,10 +25,13 @@ const fs=require('fs'),path=require('path');let p=fs.realpathSync(process.argv[2
 NODE
 ) || fail "OpenClaw package root unavailable"
 export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
-export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$REPO_ROOT"
 
 PRED_SRC="$TMP/predecessor-source"; mkdir -p "$PRED_SRC"
 git -C "$REPO_ROOT" archive "$PRED" | tar -x -C "$PRED_SRC"
+# This is a frozen historical migration/recovery qualification. Keep its
+# OpenClaw contract bound to the predecessor generation rather than the
+# repository's current rollout target.
+export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$PRED_SRC"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 mkdir -p "$BASE/state/backups/tools-md-migration"
