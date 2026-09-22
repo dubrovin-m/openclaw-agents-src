@@ -114,6 +114,8 @@ for required_text in \
   'FAILED' \
   'BLOCKED' \
   'The v0 GitHub/implementation capability is read-only.' \
+  'Personal VPN work is limited to the registered Personal VPN hosted on the Personal VPS.' \
+  'Workstation/Arch Linux work, autonomous OS updates, general VPS administration outside the admitted scheduled-maintenance, OpenClaw, and Personal VPN cases' \
   'Do not automatically retry a failed material mutation.' \
   'A registered scheduled VPS maintenance run is read-only.' \
   'If a weekly exception review finds no material exception, return exactly `NO_REPLY`.'
