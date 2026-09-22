@@ -1,31 +1,9 @@
 {
-  "profile": "full",
-  "allow": [
-    "read",
+  "profile": "coding",
+  "alsoAllow": [
     "calendar_config_get",
     "calendar_review_window",
     "calendar_analyze"
-  ],
-  "deny": [
-    "write",
-    "edit",
-    "apply_patch",
-    "exec",
-    "process",
-    "browser",
-    "gateway",
-    "cron",
-    "web_search",
-    "web_fetch",
-    "sessions",
-    "sessions_list",
-    "sessions_history",
-    "sessions_send",
-    "sessions_spawn",
-    "subagents",
-    "nodes",
-    "computer",
-    "canvas"
   ],
   "fs": {
     "workspaceOnly": true
