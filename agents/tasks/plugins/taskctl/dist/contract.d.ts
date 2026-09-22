@@ -5,6 +5,7 @@ export type ActionDefinition = {
     allowed: readonly string[];
     required?: readonly string[];
     exactlyOneOf?: readonly (readonly string[])[];
+    modelVisibleExactlyOneOf?: boolean;
     label: string;
     description: string;
 };
@@ -110,6 +111,7 @@ export declare const ACTION_REGISTRY: Readonly<{
         readonly required: readonly ["operation_key", "trigger_date", "trigger_time"];
         readonly allowed: readonly ["operation_key", "task_id", "text", "trigger_date", "trigger_time"];
         readonly exactlyOneOf: readonly [readonly ["task_id", "text"]];
+        readonly modelVisibleExactlyOneOf: false;
         readonly label: "Reminder create";
         readonly description: "Create one one-shot Reminder, either linked to one existing OPEN Task or carrying standalone text, at one explicit Europe/Moscow date and time.";
     };

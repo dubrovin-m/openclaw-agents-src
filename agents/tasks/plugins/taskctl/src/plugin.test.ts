@@ -5,7 +5,7 @@ import { normalizeOpenAIToolSchemas } from "openclaw/plugin-sdk/provider-tools";
 import { getToolPluginMetadata } from "openclaw/plugin-sdk/tool-plugin";
 import { ACTION_REGISTRY, TASKCTL_ACTIONS, actionPayloadSchema, actionToolParameters, getActionDefinition } from "./contract.js";
 import { TASK_DAILY_REVIEW_TOOL } from "./daily-review.js";
-import { executeTaskctl } from "./index.js";
+import { executeTaskctl, validateAndSanitizePayload } from "./index.js";
 import { TASK_MANAGEMENT_REVIEW_TOOL } from "./management-review.js";
 import { TASK_REMINDER_DISPATCH_TOOL } from "./reminder-runtime.js";
 import { TASK_PRODUCTION_CONTROL_TOOL } from "./production-control.js";
@@ -60,7 +60,8 @@ describe("Task Agent model-visible per-action tool contracts", () => {
       expect(Object.keys(schemaProperties(schema)).sort(), action).toEqual([...definition.allowed].sort());
       expect([...schemaRequired(schema)].sort(), action).toEqual([...(definition.required ?? [])].sort());
       expect((schema as { additionalProperties?: boolean }).additionalProperties, action).toBe(false);
-      expect((schema as { allOf?: unknown[] }).allOf?.length ?? 0, action).toBe(definition.exactlyOneOf?.length ?? 0);
+      const expectedExactOneGroups = definition.modelVisibleExactlyOneOf === false ? 0 : (definition.exactlyOneOf?.length ?? 0);
+      expect((schema as { allOf?: unknown[] }).allOf?.length ?? 0, action).toBe(expectedExactOneGroups);
     }
   });
 
@@ -97,12 +98,36 @@ describe("Task Agent model-visible per-action tool contracts", () => {
     const reminderCreate = actionToolParameters("reminder_create");
     expect(Object.keys(schemaProperties(reminderCreate)).sort()).toEqual(["operation_key", "task_id", "text", "trigger_date", "trigger_time"]);
     expect([...schemaRequired(reminderCreate)].sort()).toEqual(["operation_key", "trigger_date", "trigger_time"]);
-    expect(Value.Check(reminderCreate, { operation_key: "r", task_id: "T-1", trigger_date: "2026-09-18", trigger_time: "12:00" })).toBe(true);
-    expect(Value.Check(reminderCreate, { operation_key: "r", text: "Позвонить маме", trigger_date: "2026-09-18", trigger_time: "18:00" })).toBe(true);
-    expect(Value.Check(reminderCreate, { operation_key: "r", task_id: "T-1", text: "bad", trigger_date: "2026-09-18", trigger_time: "12:00" })).toBe(false);
+    const linkedReminder = { operation_key: "r-linked", task_id: "T-1", trigger_date: "2026-09-18", trigger_time: "12:00" };
+    const standaloneReminder = { operation_key: "r-standalone", text: "Позвонить маме", trigger_date: "2026-09-18", trigger_time: "18:00" };
+    const ambiguousReminder = { operation_key: "r-both", task_id: "T-1", text: "bad", trigger_date: "2026-09-18", trigger_time: "12:00" };
+    const emptyReminder = { operation_key: "r-none", trigger_date: "2026-09-18", trigger_time: "12:00" };
+    expect((reminderCreate as { allOf?: unknown[] }).allOf).toBeUndefined();
+    expect(Value.Check(reminderCreate, linkedReminder)).toBe(true);
+    expect(Value.Check(reminderCreate, standaloneReminder)).toBe(true);
+    expect(Value.Check(reminderCreate, ambiguousReminder)).toBe(true);
+    expect(Value.Check(reminderCreate, emptyReminder)).toBe(true);
+    expect(validateAndSanitizePayload("reminder_create", linkedReminder).ok).toBe(true);
+    expect(validateAndSanitizePayload("reminder_create", standaloneReminder).ok).toBe(true);
+    expect(validateAndSanitizePayload("reminder_create", ambiguousReminder).ok).toBe(false);
+    expect(validateAndSanitizePayload("reminder_create", emptyReminder).ok).toBe(false);
     expect(Value.Check(actionToolParameters("reminder_reschedule"), { operation_key: "r2", id: "REM-1", trigger_date: "2026-09-19", trigger_time: "09:00" })).toBe(true);
     expect(Value.Check(actionToolParameters("reminder_cancel"), { operation_key: "r3", id: "REM-1" })).toBe(true);
     expect(Value.Check(actionToolParameters("reminder_cancel"), { operation_key: "r3", id: "R-1" })).toBe(false);
+  });
+
+
+  it("keeps reminder_create callable after OpenAI Responses schema normalization", () => {
+    const [normalizedReminder] = normalizeOpenAIToolSchemas({
+      tools: metadataTools().filter((tool) => tool.name === "reminder_create"),
+      provider: "openai",
+      modelApi: "openai-responses",
+      model: { provider: "openai", api: "openai-responses", baseUrl: "https://api.openai.com/v1", id: "gpt-5.6-luna" },
+    } as never);
+    const parameters = normalizedReminder.parameters as ReturnType<typeof actionToolParameters>;
+    expect((parameters as { allOf?: unknown[] }).allOf).toBeUndefined();
+    expect(Value.Check(parameters, { operation_key: "linked", task_id: "T-147", trigger_date: "2026-09-23", trigger_time: "11:00" })).toBe(true);
+    expect(Value.Check(parameters, { operation_key: "standalone", text: "Проверить", trigger_date: "2026-09-23", trigger_time: "11:00" })).toBe(true);
   });
 
   it("TA-PRJ-036..038 keeps Project schemas minimal and canonical-ID-only", () => {

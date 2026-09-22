@@ -238,8 +238,8 @@ const metadata=toolPlugin.getToolPluginMetadata(pluginModule.default);
 const tools=metadata?.tools??[];
 const names=tools.map((tool)=>tool.name);
 if(names.length!==expectedCount||new Set(names).size!==expectedCount||names.includes('taskctl')||!names.includes('task_production_control'))process.exit(2);
-for(const name of ['task_update','task_complete','task_cancel','task_get','inbox_add','ref_resolve','label_delete','project_create','project_get','task_project_set'])if(!names.includes(name))process.exit(2);
-const selected=tools.filter((tool)=>['task_get','inbox_add','ref_resolve','task_create','label_delete','project_create','project_get','task_project_set'].includes(tool.name));
+for(const name of ['task_update','task_complete','task_cancel','task_get','inbox_add','ref_resolve','label_delete','project_create','project_get','task_project_set','reminder_create'])if(!names.includes(name))process.exit(2);
+const selected=tools.filter((tool)=>['task_get','inbox_add','ref_resolve','task_create','label_delete','project_create','project_get','task_project_set','reminder_create'].includes(tool.name));
 const normalized=providerTools.normalizeOpenAIToolSchemas({
   tools:selected,
   provider:'openai',
@@ -252,11 +252,13 @@ const inboxAdd=byName.get('inbox_add');
 const refResolve=byName.get('ref_resolve');
 const taskCreate=byName.get('task_create');
 const labelDelete=byName.get('label_delete');
+const reminderCreate=byName.get('reminder_create');
 if(taskGet?.type!=='object'||JSON.stringify(Object.keys(taskGet?.properties??{}))!==JSON.stringify(['id'])||JSON.stringify(taskGet?.required)!==JSON.stringify(['id'])||taskGet?.additionalProperties!==false)process.exit(2);
 if(inboxAdd?.type!=='object'||JSON.stringify(Object.keys(inboxAdd?.properties??{}).sort())!==JSON.stringify(['capture_key','content','operation_key'])||JSON.stringify([...(inboxAdd?.required??[])].sort())!==JSON.stringify(['capture_key','content','operation_key'])||inboxAdd?.additionalProperties!==false)process.exit(2);
 if(refResolve?.type!=='object'||JSON.stringify(Object.keys(refResolve?.properties??{}).sort())!==JSON.stringify(['context','number'])||JSON.stringify(refResolve?.required)!==JSON.stringify(['number'])||refResolve?.additionalProperties!==false)process.exit(2);
 if(taskCreate?.type!=='object'||JSON.stringify(Object.keys(taskCreate?.properties??{}).sort())!==JSON.stringify(['assignee','create_assignee','due_date','due_time','labels','operation_key','project_id','status','title'])||JSON.stringify([...(taskCreate?.required??[])].sort())!==JSON.stringify(['assignee','operation_key','title'])||taskCreate?.additionalProperties!==false||taskCreate?.allOf!==undefined)process.exit(2);
 if(labelDelete?.type!=='object'||JSON.stringify(Object.keys(labelDelete?.properties??{}).sort())!==JSON.stringify(['id','operation_key'])||JSON.stringify([...(labelDelete?.required??[])].sort())!==JSON.stringify(['id','operation_key'])||labelDelete?.additionalProperties!==false)process.exit(2);
+if(reminderCreate?.type!=='object'||JSON.stringify(Object.keys(reminderCreate?.properties??{}).sort())!==JSON.stringify(['operation_key','task_id','text','trigger_date','trigger_time'])||JSON.stringify([...(reminderCreate?.required??[])].sort())!==JSON.stringify(['operation_key','trigger_date','trigger_time'])||reminderCreate?.additionalProperties!==false||reminderCreate?.allOf!==undefined)process.exit(2);
 console.log('ISOLATED_EFFECTIVE_PER_ACTION_SCHEMA_PASS');
 JS_SCHEMA
 
