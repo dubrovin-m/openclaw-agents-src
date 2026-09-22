@@ -82,7 +82,8 @@
     "delivery_channel": "telegram",
     "delivery_account": "default",
     "delivery_recipient_source": "commands.ownerAllowFrom-singleton",
-    "best_effort": false
+    "best_effort": false,
+    "predecessor_mode": "exact"
   },
   "task_governance": {
     "kind": "private-bootstrap-v1",
