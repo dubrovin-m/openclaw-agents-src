@@ -164,7 +164,7 @@ export const ACTION_REGISTRY = Object.freeze({
         label: "Task history", description: "Read the chronological Task mutation history; Project-association history is not recorded in this version.",
     },
     reminder_create: {
-        argv: ["reminder", "create"], required: ["operation_key", "trigger_date", "trigger_time"], allowed: ["operation_key", "task_id", "text", "trigger_date", "trigger_time"], exactlyOneOf: [["task_id", "text"]],
+        argv: ["reminder", "create"], required: ["operation_key", "trigger_date", "trigger_time"], allowed: ["operation_key", "task_id", "text", "trigger_date", "trigger_time"], exactlyOneOf: [["task_id", "text"]], modelVisibleExactlyOneOf: false,
         label: "Reminder create", description: "Create one one-shot Reminder, either linked to one existing OPEN Task or carrying standalone text, at one explicit Europe/Moscow date and time.",
     },
     reminder_list: {
@@ -401,7 +401,7 @@ export function actionPayloadSchema(action) {
         required: [...(definition.required ?? [])],
         additionalProperties: false,
     };
-    if (definition.exactlyOneOf?.length) {
+    if (definition.exactlyOneOf?.length && definition.modelVisibleExactlyOneOf !== false) {
         schema.allOf = definition.exactlyOneOf.map((group) => ({
             oneOf: group.map((field) => ({ required: [field] })),
         }));
