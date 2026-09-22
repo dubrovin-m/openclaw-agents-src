@@ -38,6 +38,21 @@ if grep -n -E 'nexus-sync|shared/nexus-sync' "$ROOT/install.sh"; then
   exit 1
 fi
 
+node - "$ROOT/config/tasks-agent.fragment.json" "$ROOT/workspace" <<'NODE'
+const fs=require('fs'),path=require('path');
+const cfg=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const workspace=process.argv[3];
+const perFile=cfg.bootstrapMaxChars,total=cfg.bootstrapTotalMaxChars;
+if(!Number.isSafeInteger(perFile)||perFile<1)throw new Error('Task Agent bootstrapMaxChars must be a positive integer');
+if(!Number.isSafeInteger(total)||total<perFile)throw new Error('Task Agent bootstrapTotalMaxChars must be an integer >= bootstrapMaxChars');
+const files=['AGENTS.md','SOUL.md','IDENTITY.md','USER.md','HEARTBEAT.md'];
+const sizes=files.map(name=>[name,fs.readFileSync(path.join(workspace,name),'utf8').length]);
+const oversized=sizes.filter(([,size])=>size>perFile);
+if(oversized.length)throw new Error('Task Agent bootstrap file exceeds per-file injection budget: '+oversized.map(([name,size])=>name+'='+size).join(', '));
+const aggregate=sizes.reduce((sum,[,size])=>sum+size,0);
+if(aggregate>total)throw new Error('Task Agent bootstrap files exceed total injection budget: '+aggregate+' > '+total);
+NODE
+
 node - "$ROOT/plugins/taskctl/package.json" "$ROOT/plugins/taskctl/package-lock.json" "$ROOT/release.json" "$REPO_ROOT/runtime-contract.json" <<'NODE'
 const fs=require('fs');
 const pkg=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
