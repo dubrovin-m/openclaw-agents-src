@@ -5,7 +5,6 @@
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
-    "additionalProperties": false,
     "required": [
       "designatedCalendar",
       "nativeTools",
@@ -21,83 +20,172 @@
       },
       "nativeTools": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["prefix", "read", "classificationWrite"],
+        "required": [
+          "prefix",
+          "read",
+          "classificationWrite"
+        ],
         "properties": {
-          "prefix": {"type": "string", "minLength": 1},
+          "prefix": {
+            "type": "string",
+            "minLength": 1
+          },
           "read": {
             "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
             "minItems": 1,
-            "uniqueItems": true,
-            "items": {"type": "string", "minLength": 1}
+            "uniqueItems": true
           },
-          "classificationWrite": {"type": "string", "minLength": 1}
-        }
+          "classificationWrite": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
       },
       "parents": {
         "type": "array",
-        "minItems": 1,
         "items": {
           "type": "object",
-          "additionalProperties": false,
-          "required": ["id", "name"],
+          "required": [
+            "id",
+            "name"
+          ],
           "properties": {
-            "id": {"type": "string", "minLength": 1},
-            "name": {"type": "string", "minLength": 1}
-          }
-        }
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "minItems": 1
       },
       "leaves": {
         "type": "array",
-        "minItems": 1,
         "items": {
           "type": "object",
-          "additionalProperties": false,
-          "required": ["id", "name", "kind", "providerLabel"],
+          "required": [
+            "id",
+            "name",
+            "kind",
+            "providerLabel"
+          ],
           "properties": {
-            "id": {"type": "string", "minLength": 1},
-            "name": {"type": "string", "minLength": 1},
-            "kind": {"type": "string", "enum": ["management", "service"]},
-            "parentId": {"type": "string", "minLength": 1},
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "management"
+                },
+                {
+                  "type": "string",
+                  "const": "service"
+                }
+              ]
+            },
+            "parentId": {
+              "type": "string",
+              "minLength": 1
+            },
             "providerLabel": {
               "type": "object",
-              "additionalProperties": false,
-              "required": ["id", "name", "backgroundColor"],
+              "required": [
+                "id",
+                "name",
+                "backgroundColor"
+              ],
               "properties": {
-                "id": {"type": "string", "minLength": 1},
-                "name": {"type": "string", "minLength": 1},
-                "backgroundColor": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}
-              }
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "backgroundColor": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                }
+              },
+              "additionalProperties": false
             }
-          }
-        }
+          },
+          "additionalProperties": false
+        },
+        "minItems": 1
       },
       "unclassifiedLabel": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["id", "name", "backgroundColor"],
+        "required": [
+          "id",
+          "name",
+          "backgroundColor"
+        ],
         "properties": {
-          "id": {"type": "string", "minLength": 1},
-          "name": {"type": "string", "minLength": 1},
-          "backgroundColor": {"type": "string", "pattern": "^#[0-9A-Fa-f]{6}$"}
-        }
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "backgroundColor": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          }
+        },
+        "additionalProperties": false
       },
       "targets": {
         "type": "object",
-        "additionalProperties": false,
-        "required": ["parents", "leaves"],
+        "required": [
+          "parents",
+          "leaves"
+        ],
         "properties": {
           "parents": {
             "type": "object",
-            "additionalProperties": {"type": "number", "minimum": 0, "maximum": 100}
+            "patternProperties": {
+              "^.*$": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
           },
           "leaves": {
             "type": "object",
-            "additionalProperties": {"type": "number", "minimum": 0, "maximum": 100}
+            "patternProperties": {
+              "^.*$": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
           }
-        }
+        },
+        "additionalProperties": false
       }
-    }
+    },
+    "additionalProperties": false
   },
   "activation": {
     "onStartup": true
@@ -110,8 +198,14 @@
     ]
   },
   "toolMetadata": {
-    "calendar_config_get": {"optional": true},
-    "calendar_review_window": {"optional": true},
-    "calendar_analyze": {"optional": true}
+    "calendar_config_get": {
+      "optional": true
+    },
+    "calendar_review_window": {
+      "optional": true
+    },
+    "calendar_analyze": {
+      "optional": true
+    }
   }
 }
