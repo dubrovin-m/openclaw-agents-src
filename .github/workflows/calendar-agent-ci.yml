@@ -82,4 +82,8 @@ jobs:
       - name: Verify generated Calendar metadata is frozen
         run: |
           set -euo pipefail
-          git diff --exit-code --             agents/calendar/plugin/package.json             agents/calendar/plugin/package-lock.json             agents/calendar/plugin/openclaw.plugin.json
+          git diff --exit-code -- \
+            agents/calendar/plugin/package.json \
+            agents/calendar/plugin/package-lock.json \
+            agents/calendar/plugin/openclaw.plugin.json \
+            agents/calendar/plugin/dist
