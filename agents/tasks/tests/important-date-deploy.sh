@@ -11,8 +11,8 @@ fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.from?.sqlite_schemas?.[0]!==8||!r?.important_date_dispatcher||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,TOOLS_SHA:r.from.workspace_sha256["TOOLS.md"],GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SCRIPT:r.reminder_dispatcher.script,REMINDER_TOOL:r.reminder_dispatcher.tool,REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,REMINDER_BUDGET:r.reminder_dispatcher.tool_budget,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool};
+if(r?.from?.sqlite_schemas?.[0]!==8||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,TOOLS_SHA:r.from.workspace_sha256["TOOLS.md"],GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SCRIPT:r.reminder_dispatcher.script,REMINDER_TOOL:r.reminder_dispatcher.tool,REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,REMINDER_BUDGET:r.reminder_dispatcher.tool_budget,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
@@ -109,12 +109,13 @@ SHIM
 chmod 755 "$TMP/shims/systemctl"
 export PATH="$TMP/shims:$ROOT/plugins/taskctl/node_modules/.bin:$(dirname "$(command -v node)"):/usr/bin:/bin"
 oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
-node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TZ" "$MATERIALIZER_TIMEOUT" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$REMINDER_SCRIPT" "$REMINDER_TOOL" "$REMINDER_TIMEOUT" "$REMINDER_BUDGET" <<'NODE'
+node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TZ" "$MATERIALIZER_TIMEOUT" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$REMINDER_SCRIPT" "$REMINDER_TOOL" "$REMINDER_TIMEOUT" "$REMINDER_BUDGET" "$IMPORTANT_KEY" "$IMPORTANT_NAME" "$IMPORTANT_CRON" "$IMPORTANT_TZ" "$IMPORTANT_SCRIPT" "$IMPORTANT_TOOL" "$IMPORTANT_TIMEOUT" "$IMPORTANT_BUDGET" <<'NODE'
 const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3];
-const [mk,mn,mc,mt,mto,rk,rn,rc,rt,rs,rtool,rtimeout,rbudget]=process.argv.slice(4);
+const [mk,mn,mc,mt,mto,rk,rn,rc,rt,rs,rtool,rtimeout,rbudget,ik,iname,ic,it,iscript,itool,itimeout,ibudget]=process.argv.slice(4);
 const jobs=[
 {id:'recurrence-predecessor',declarationKey:mk,name:mn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:mc,tz:mt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:Number(mto)},delivery:{mode:'none'}},
-{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:rs,toolsAllow:[rtool],timeoutSeconds:Number(rtimeout),toolBudget:Number(rbudget)},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'}}
+{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:rs,toolsAllow:[rtool],timeoutSeconds:Number(rtimeout),toolBudget:Number(rbudget)},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'}},
+{id:'important-date-predecessor',declarationKey:ik,name:iname,enabled:true,agentId:'main',schedule:{kind:'cron',expr:ic,tz:it,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:iscript,toolsAllow:[itool],timeoutSeconds:Number(itimeout),toolBudget:Number(ibudget)},delivery:{mode:'announce',channel:'telegram',to:'424242',accountId:'default'}}
 ];
 fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
@@ -156,7 +157,8 @@ assert_predecessor(){
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$PRED_CONTACTS_PLUGIN" ] || fail "predecessor Contacts plugin drift"
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "predecessor materializer missing"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "predecessor Reminder dispatcher missing"
-  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 0 ] || fail "Important Dates dispatcher unexpectedly present"
+  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "predecessor Important Dates dispatcher missing"
+  assert_important_shape "$r"
 }
 assert_target(){
   local r=$1 th ch
@@ -217,7 +219,7 @@ RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -pri
 node - "$RECOVERY/contacts-state.json" "$PRED_CONTACTS_SCHEMA" <<'NODE' || fail "Contacts recovery snapshot does not preserve declared predecessor"
 const x=require(process.argv[2]),schema=Number(process.argv[3]);if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.schema_version!==schema)process.exit(1);
 NODE
-test -f "$RECOVERY/important-date-dispatcher.before.json" || fail "Important Dates dispatcher recovery snapshot missing"
+test ! -f "$RECOVERY/important-date-dispatcher.before.json" || fail "preexisting exact Important Dates dispatcher must not be captured as an absent-predecessor recovery artifact"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual Important Dates recovery failed"
 assert_predecessor "$R"
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "manual recovery changed Contacts predecessor data"

@@ -67,7 +67,7 @@ if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declar
 const rem=r?.reminder_dispatcher??null;
 if(rem!==null&&(rem?.kind!=='openclaw-script-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||typeof rem?.script!=='string'||!rem.script.trim()||rem?.tool!=='task_reminder_dispatch'||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||!Number.isSafeInteger(rem?.tool_budget)||rem.tool_budget<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.best_effort!==false))bad();
 const idr=r?.important_date_dispatcher??null;
-if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false))bad();
+if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false||!['absent','exact'].includes(idr?.predecessor_mode??'absent')))bad();
 if(!r?.from||!Array.isArray(r.from.plugin_versions)||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(r.from.plugin_versions).size!==r.from.plugin_versions.length)bad();
 const fromSchemas=r.from.sqlite_schemas;
 if(!Array.isArray(fromSchemas)||fromSchemas.length===0||!fromSchemas.every(v=>Number.isSafeInteger(v)&&v>=1)||new Set(fromSchemas).size!==fromSchemas.length)bad();
@@ -117,6 +117,7 @@ console.log(`REMINDER_TOOL_BUDGET=${q(rem?.tool_budget||'')}`);
 console.log(`REMINDER_CHANNEL=${q(rem?.delivery_channel||'')}`);
 console.log(`REMINDER_ACCOUNT=${q(rem?.delivery_account||'')}`);
 console.log(`IMPORTANT_DATE_ENABLED=${q(idr?'1':'0')}`);
+console.log(`IMPORTANT_DATE_PREDECESSOR_MODE=${q(idr?.predecessor_mode??'absent')}`);
 console.log(`IMPORTANT_DATE_DECLARATION=${q(idr?.declaration_key||'')}`);
 console.log(`IMPORTANT_DATE_NAME=${q(idr?.name||'')}`);
 console.log(`IMPORTANT_DATE_CRON=${q(idr?.cron||'')}`);
@@ -356,6 +357,7 @@ NODE
 }
 install_important_date_dispatcher(){
   [ "$IMPORTANT_DATE_ENABLED" = "1" ] || return 0
+  if important_date_dispatcher_exact; then return 0; fi
   important_date_dispatcher_absent || return 1
   local result destination; destination=$IMPORTANT_DATE_DELIVERY_TO; [ -n "$destination" ] || destination=$(resolve_important_date_delivery_to) || return 1
   result=$(printf '%s\n' "$IMPORTANT_DATE_SCRIPT" | oc automations add --name "$IMPORTANT_DATE_NAME" --declaration-key "$IMPORTANT_DATE_DECLARATION" --cron "$IMPORTANT_DATE_CRON" --tz "$IMPORTANT_DATE_TIMEZONE" --exact --agent main --session isolated --script - --tools "$IMPORTANT_DATE_TOOL" --script-timeout-seconds "$IMPORTANT_DATE_TIMEOUT" --script-tool-budget "$IMPORTANT_DATE_TOOL_BUDGET" --announce --channel "$IMPORTANT_DATE_CHANNEL" --account "$IMPORTANT_DATE_ACCOUNT" --to "$destination" --json) || return 1
@@ -641,7 +643,15 @@ NODE
     elif reminder_dispatcher_absent; then START_REMINDER_EXACT=0
     else abort_deploy "PREFLIGHT" "declared predecessor has Reminder dispatcher drift or duplicate Automation"; fi
   fi
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then important_date_dispatcher_absent || abort_deploy "PREFLIGHT" "declared predecessor must not already contain an Important Dates dispatcher Automation"; START_IMPORTANT_DATE_EXACT=0; fi
+  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
+    if [ "$IMPORTANT_DATE_PREDECESSOR_MODE" = "exact" ]; then
+      important_date_dispatcher_exact || abort_deploy "PREFLIGHT" "declared predecessor Important Dates dispatcher is missing or drifted"
+      START_IMPORTANT_DATE_EXACT=1
+    else
+      important_date_dispatcher_absent || abort_deploy "PREFLIGHT" "declared predecessor must not already contain an Important Dates dispatcher Automation"
+      START_IMPORTANT_DATE_EXACT=0
+    fi
+  fi
   oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target Task Agent tool policy is not accepted by OpenClaw"
   if [ "$CONTACTS_ENABLED" = "1" ] && [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ]; then oc config set "agents.entries.main.tools" "$TARGET_MAIN_CONTACTS_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target main Contacts tool policy is not accepted by OpenClaw"; fi
 }
@@ -739,7 +749,10 @@ main(){
     if [ "$START_REMINDER_EXACT" -eq 1 ]; then reminder_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Reminder dispatcher changed after preflight"
     else reminder_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Reminder dispatcher appeared or drifted after preflight"; fi
   fi
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ] && [ "$START_IMPORTANT_DATE_EXACT" -eq 0 ]; then important_date_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Important Dates dispatcher appeared or drifted after preflight"; fi
+  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
+    if [ "$START_IMPORTANT_DATE_EXACT" -eq 1 ]; then important_date_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Important Dates dispatcher changed after preflight"
+    else important_date_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Important Dates dispatcher appeared or drifted after preflight"; fi
+  fi
   if [ "$GOVERNANCE_ENABLED" = "1" ]; then governance_bootstrap_validate || abort_deploy "PREFLIGHT_OUTAGE" "Task governance bootstrap changed after preflight"; fi
   systemctl_user stop openclaw-gateway.service || abort_deploy "OUTAGE" "failed to stop Gateway"; GATEWAY_STOPPED=1; maybe_fault "after-stop"
   starting_runtime_eligible || abort_deploy "PREFLIGHT_OFFLINE" "starting runtime changed after preflight"
