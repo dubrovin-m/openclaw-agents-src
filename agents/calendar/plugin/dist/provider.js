@@ -11,6 +11,54 @@ function bounded(value, field, max = 4096) {
         throw new Error(`${field} is missing or too long.`);
     return trimmed;
 }
+function record(value) {
+    return value !== null && typeof value === "object" && !Array.isArray(value)
+        ? value
+        : null;
+}
+function eventTime(value) {
+    const object = record(value);
+    if (!object)
+        return { value: undefined, allDay: false };
+    if (typeof object.dateTime === "string" && object.dateTime.trim()) {
+        return { value: object.dateTime, allDay: false };
+    }
+    if (typeof object.date === "string" && object.date.trim()) {
+        return { value: object.date, allDay: true };
+    }
+    return { value: undefined, allDay: false };
+}
+function normalizeProviderEvent(event) {
+    const start = eventTime(event.start);
+    const end = eventTime(event.end);
+    const originalStart = eventTime(event.originalStartTime);
+    const selfAttendee = event.attendees
+        ?.map((value) => record(value))
+        .find((value) => value?.self === true);
+    const responseStatus = typeof selfAttendee?.responseStatus === "string"
+        ? selfAttendee.responseStatus
+        : undefined;
+    return {
+        id: event.id,
+        etag: event.etag,
+        status: event.status,
+        summary: event.summary,
+        description: event.description,
+        location: event.location,
+        start: start.value,
+        end: end.value,
+        allDay: start.allDay && end.allDay,
+        organizer: event.organizer,
+        creator: event.creator,
+        attendees: event.attendees,
+        myResponseStatus: responseStatus,
+        transparency: event.transparency,
+        recurringEventId: event.recurringEventId,
+        originalStartTime: originalStart.value,
+        eventType: event.eventType,
+        eventLabelId: event.eventLabelId,
+    };
+}
 function apiUrl(path, params = {}) {
     const url = new URL(`${CALENDAR_API_ROOT}${path}`);
     for (const [key, value] of Object.entries(params)) {
@@ -81,12 +129,16 @@ export function createGoogleCalendarProvider(deps = {}) {
                 items.push(...(page.items ?? []));
                 pageToken = page.nextPageToken;
             } while (pageToken);
-            return { calendarId: config.designatedCalendar, events: items };
+            return {
+                calendarId: config.designatedCalendar,
+                events: items.map(normalizeProviderEvent),
+            };
         },
         async getEvent(configValue, params) {
             const config = parseCalendarConfig(configValue);
             const url = apiUrl(eventPath(config, params.event_id));
-            return await requestJson(deps, url);
+            const event = await requestJson(deps, url);
+            return normalizeProviderEvent(event);
         },
         async getLabels(configValue) {
             const config = parseCalendarConfig(configValue);

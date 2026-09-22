@@ -41,6 +41,7 @@ const eventParameters = Type.Object({
     id: Type.String({ minLength: 1 }),
     start: Type.String({ minLength: 1 }),
     end: Type.String({ minLength: 1 }),
+    allDay: Type.Optional(Type.Boolean()),
     classification: Type.Optional(Type.Union([Type.String({ minLength: 1 }), Type.Null()])),
 }, { additionalProperties: false });
 const analyzeParameters = Type.Object({

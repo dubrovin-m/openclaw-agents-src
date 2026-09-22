@@ -18,6 +18,26 @@ export type ProviderEvent = {
     eventLabelId?: string;
     extendedProperties?: unknown;
 };
+export type CalendarEventView = {
+    id: string;
+    etag?: string;
+    status?: string;
+    summary?: string;
+    description?: string;
+    location?: string;
+    start?: string;
+    end?: string;
+    allDay: boolean;
+    organizer?: unknown;
+    creator?: unknown;
+    attendees?: unknown[];
+    myResponseStatus?: string;
+    transparency?: string;
+    recurringEventId?: string;
+    originalStartTime?: string;
+    eventType?: string;
+    eventLabelId?: string;
+};
 export type CalendarLabels = {
     calendarId: string;
     labels: Array<{
@@ -38,11 +58,11 @@ export declare function createGoogleCalendarProvider(deps?: GoogleCalendarProvid
         time_max: string;
     }): Promise<{
         calendarId: string;
-        events: ProviderEvent[];
+        events: CalendarEventView[];
     }>;
     getEvent(configValue: unknown, params: {
         event_id: string;
-    }): Promise<ProviderEvent>;
+    }): Promise<CalendarEventView>;
     getLabels(configValue: unknown): Promise<{
         calendarId: string;
         labels: {

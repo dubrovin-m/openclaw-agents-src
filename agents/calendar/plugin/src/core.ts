@@ -266,6 +266,7 @@ export type AnalyticalEvent = {
   id: string;
   start: string;
   end: string;
+  allDay?: boolean;
   classification?: string | null;
 };
 
@@ -281,20 +282,26 @@ export function analyzeCalendar(configValue: unknown, kind: ReviewKind, boundary
   const window = reviewWindow(kind, boundaryIso);
   if (!Array.isArray(eventsValue)) throw new Error("events must be an array");
   const leafMap = new Map(config.leaves.map((leaf) => [leaf.id, leaf]));
-  const events: Array<{id: string; start: number; end: number; classification: string | null}> = eventsValue.map((item, index) => {
+  let excludedAllDayEvents = 0;
+  const events: Array<{id: string; start: number; end: number; classification: string | null}> = eventsValue.flatMap((item, index) => {
     const object = asRecord(item);
     if (!object || !nonEmpty(object.id) || !nonEmpty(object.start) || !nonEmpty(object.end)
-      || Object.keys(object).some((key) => !["id", "start", "end", "classification"].includes(key))) {
+      || (object.allDay !== undefined && typeof object.allDay !== "boolean")
+      || Object.keys(object).some((key) => !["id", "start", "end", "allDay", "classification"].includes(key))) {
       throw new Error(`events[${index}] is invalid`);
     }
-    const start = Date.parse(object.start);
-    const end = Date.parse(object.end);
-    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new Error(`events[${index}] has an invalid interval`);
     const classification = object.classification === undefined || object.classification === null
       ? null
       : (nonEmpty(object.classification) ? object.classification.trim() : null);
     if (classification !== null && !leafMap.has(classification)) throw new Error(`events[${index}] references an unknown classification`);
-    return { id: object.id.trim(), start, end, classification };
+    if (object.allDay === true) {
+      excludedAllDayEvents += 1;
+      return [];
+    }
+    const start = Date.parse(object.start);
+    const end = Date.parse(object.end);
+    if (!Number.isFinite(start) || !Number.isFinite(end) || end <= start) throw new Error(`events[${index}] has an invalid interval`);
+    return [{ id: object.id.trim(), start, end, classification }];
   });
 
   const byLeafMs: Record<string, number> = Object.fromEntries(config.leaves.map((leaf) => [leaf.id, 0]));
@@ -351,7 +358,8 @@ export function analyzeCalendar(configValue: unknown, kind: ReviewKind, boundary
   const serviceLeaves = config.leaves.filter((leaf) => leaf.kind === "service");
   const managementMs = managementLeaves.reduce((sum, leaf) => sum + byLeafMs[leaf.id], 0);
   const serviceMs = serviceLeaves.reduce((sum, leaf) => sum + byLeafMs[leaf.id], 0);
-  const coverageBasisMs = managementMs + unclassifiedMs + overlapUnattributedMs;
+  const classifiedMs = managementMs + serviceMs;
+  const coverageBasisMs = classifiedMs + unclassifiedMs + overlapUnattributedMs;
   const byParentMs: Record<string, number> = Object.fromEntries(config.parents.map((parent) => [parent.id, 0]));
   for (const leaf of managementLeaves) byParentMs[leaf.parentId as string] += byLeafMs[leaf.id];
 
@@ -387,8 +395,9 @@ export function analyzeCalendar(configValue: unknown, kind: ReviewKind, boundary
       outsideBaselineLoad: hours(outsideBaselineMs),
     },
     coverage: {
-      classificationPct: coverageBasisMs > 0 ? Number((managementMs * 100 / coverageBasisMs).toFixed(2)) : null,
+      classificationPct: coverageBasisMs > 0 ? Number((classifiedMs * 100 / coverageBasisMs).toFixed(2)) : null,
       basisHours: hours(coverageBasisMs),
+      excludedAllDayEvents,
     },
     parentAllocation,
     leafAllocation,

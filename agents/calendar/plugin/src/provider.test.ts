@@ -13,11 +13,22 @@ describe("Google Calendar provider", () => {
   it("lists events only from the designated calendar and paginates", async () => {
     const fetchImpl = vi.fn()
       .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: "a", summary: "A" }],
+        items: [{
+          id: "a",
+          summary: "A",
+          start: { dateTime: "2026-09-22T10:00:00+03:00" },
+          end: { dateTime: "2026-09-22T11:00:00+03:00" },
+          attendees: [{ self: true, responseStatus: "accepted" }],
+        }],
         nextPageToken: "next",
       }))
       .mockResolvedValueOnce(jsonResponse({
-        items: [{ id: "b", summary: "B" }],
+        items: [{
+          id: "b",
+          summary: "B",
+          start: { date: "2026-09-22" },
+          end: { date: "2026-09-23" },
+        }],
       }));
     const provider = createGoogleCalendarProvider({
       getAccessToken: async () => "token",
@@ -30,6 +41,17 @@ describe("Google Calendar provider", () => {
     });
 
     expect(result.events.map((event) => event.id)).toEqual(["a", "b"]);
+    expect(result.events[0]).toMatchObject({
+      start: "2026-09-22T10:00:00+03:00",
+      end: "2026-09-22T11:00:00+03:00",
+      allDay: false,
+      myResponseStatus: "accepted",
+    });
+    expect(result.events[1]).toMatchObject({
+      start: "2026-09-22",
+      end: "2026-09-23",
+      allDay: true,
+    });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const firstUrl = new URL(String(fetchImpl.mock.calls[0][0]));
     expect(firstUrl.pathname).toBe("/calendar/v3/calendars/primary/events");

@@ -53,6 +53,7 @@ export type AnalyticalEvent = {
     id: string;
     start: string;
     end: string;
+    allDay?: boolean;
     classification?: string | null;
 };
 export declare function analyzeCalendar(configValue: unknown, kind: ReviewKind, boundaryIso: string | undefined, eventsValue: unknown): {
@@ -79,6 +80,7 @@ export declare function analyzeCalendar(configValue: unknown, kind: ReviewKind, 
     coverage: {
         classificationPct: number | null;
         basisHours: number;
+        excludedAllDayEvents: number;
     };
     parentAllocation: {
         [k: string]: {

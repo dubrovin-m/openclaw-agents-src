@@ -27,6 +27,27 @@ export type ProviderEvent = {
   extendedProperties?: unknown;
 };
 
+export type CalendarEventView = {
+  id: string;
+  etag?: string;
+  status?: string;
+  summary?: string;
+  description?: string;
+  location?: string;
+  start?: string;
+  end?: string;
+  allDay: boolean;
+  organizer?: unknown;
+  creator?: unknown;
+  attendees?: unknown[];
+  myResponseStatus?: string;
+  transparency?: string;
+  recurringEventId?: string;
+  originalStartTime?: string;
+  eventType?: string;
+  eventLabelId?: string;
+};
+
 export type CalendarLabels = {
   calendarId: string;
   labels: Array<{ id: string; name?: string; backgroundColor: string }>;
@@ -44,6 +65,56 @@ function bounded(value: string, field: string, max = 4096) {
   const trimmed = value.trim();
   if (!trimmed || trimmed.length > max) throw new Error(`${field} is missing or too long.`);
   return trimmed;
+}
+
+function record(value: unknown): Record<string, unknown> | null {
+  return value !== null && typeof value === "object" && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function eventTime(value: unknown) {
+  const object = record(value);
+  if (!object) return { value: undefined, allDay: false };
+  if (typeof object.dateTime === "string" && object.dateTime.trim()) {
+    return { value: object.dateTime, allDay: false };
+  }
+  if (typeof object.date === "string" && object.date.trim()) {
+    return { value: object.date, allDay: true };
+  }
+  return { value: undefined, allDay: false };
+}
+
+function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
+  const start = eventTime(event.start);
+  const end = eventTime(event.end);
+  const originalStart = eventTime(event.originalStartTime);
+  const selfAttendee = event.attendees
+    ?.map((value) => record(value))
+    .find((value) => value?.self === true);
+  const responseStatus = typeof selfAttendee?.responseStatus === "string"
+    ? selfAttendee.responseStatus
+    : undefined;
+  return {
+    id: event.id,
+    etag: event.etag,
+    status: event.status,
+    summary: event.summary,
+    description: event.description,
+    location: event.location,
+    start: start.value,
+    end: end.value,
+    allDay: start.allDay && end.allDay,
+    organizer: event.organizer,
+    creator: event.creator,
+    attendees: event.attendees,
+    myResponseStatus: responseStatus,
+    transparency: event.transparency,
+    recurringEventId: event.recurringEventId,
+    originalStartTime: originalStart.value,
+    eventType: event.eventType,
+    eventLabelId: event.eventLabelId,
+  };
 }
 
 function apiUrl(path: string, params: Record<string, string | number | boolean | undefined> = {}) {
@@ -125,13 +196,17 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
         items.push(...(page.items ?? []));
         pageToken = page.nextPageToken;
       } while (pageToken);
-      return { calendarId: config.designatedCalendar, events: items };
+      return {
+        calendarId: config.designatedCalendar,
+        events: items.map(normalizeProviderEvent),
+      };
     },
 
     async getEvent(configValue: unknown, params: { event_id: string }) {
       const config = parseCalendarConfig(configValue);
       const url = apiUrl(eventPath(config, params.event_id));
-      return await requestJson<ProviderEvent>(deps, url);
+      const event = await requestJson<ProviderEvent>(deps, url);
+      return normalizeProviderEvent(event);
     },
 
     async getLabels(configValue: unknown) {

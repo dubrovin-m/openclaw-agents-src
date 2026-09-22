@@ -62,11 +62,23 @@ describe("Deterministic allocation", () => {
       freeWithinBaseline: 3,
       outsideBaselineLoad: 1,
     });
-    expect(result.coverage.classificationPct).toBe(66.67);
+    expect(result.coverage.classificationPct).toBe(71.43);
+    expect(result.coverage.excludedAllDayEvents).toBe(0);
     expect(result.leafAllocation.strategy.actualPct).toBe(75);
     expect(result.leafAllocation.strategy.deltaPct).toBe(15);
     expect(result.leafAllocation.delivery.actualPct).toBe(25);
     expect(result.parentAllocation.direction.actualPct).toBe(75);
+  });
+
+  it("excludes all-day events from timed workload arithmetic", () => {
+    const result = analyzeCalendar(VALID_CONFIG, "daily", "2026-09-21T07:30:00.000Z", [
+      { id: "all-day", start: "2026-09-21", end: "2026-09-22", allDay: true, classification: "service" },
+      { id: "timed", start: "2026-09-21T10:00:00+03:00", end: "2026-09-21T11:00:00+03:00", classification: "service" },
+    ]);
+    expect(result.hours.scheduledLoad).toBe(1);
+    expect(result.hours.service).toBe(1);
+    expect(result.coverage.classificationPct).toBe(100);
+    expect(result.coverage.excludedAllDayEvents).toBe(1);
   });
 
   it("excludes weekend events from recurring analytics", () => {

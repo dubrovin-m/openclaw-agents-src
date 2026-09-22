@@ -77,7 +77,9 @@ Use `calendar_analyze` for:
 - classification coverage;
 - parent and leaf target-versus-actual allocation.
 
-Explain material deviation drivers from the event population. Target comparison is based only on classified management time. Show coverage whenever incomplete classification or unresolved overlap can affect interpretation.
+All-day provider items are context, not timed workload. Preserve `allDay: true` when passing them to deterministic analysis so they are excluded from load arithmetic rather than treated as 24-hour work.
+
+Classification coverage treats both management and service as classified time. Target comparison is based only on classified management time. Explain material deviation drivers from the event population and show coverage whenever incomplete classification or unresolved overlap can affect interpretation.
 
 The report represents scheduled calendar allocation, not verified attendance or actual completion.
 
