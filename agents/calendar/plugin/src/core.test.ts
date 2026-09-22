@@ -14,11 +14,11 @@ describe("Calendar config", () => {
     })).toThrow(/equal its parent target/u);
   });
 
-  it("rejects native tool identities outside the configured prefix", () => {
+  it("rejects provider tool identities outside the configured prefix", () => {
     expect(() => parseCalendarConfig({
       ...VALID_CONFIG,
-      nativeTools: { ...VALID_CONFIG.nativeTools, classificationWrite: "update_event" },
-    })).toThrow(/must start with nativeTools.prefix/u);
+      providerTools: { ...VALID_CONFIG.providerTools, classificationWrite: "update_event" },
+    })).toThrow(/must start with providerTools.prefix/u);
   });
 });
 

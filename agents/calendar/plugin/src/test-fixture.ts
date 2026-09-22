@@ -2,14 +2,14 @@ import type { CalendarConfig } from "./core.js";
 
 export const VALID_CONFIG: CalendarConfig = {
   designatedCalendar: "primary",
-  nativeTools: {
-    prefix: "mcp__codex_apps__google_calendar_",
+  providerTools: {
+    prefix: "calendar_provider_",
     read: [
-      "mcp__codex_apps__google_calendar_search",
-      "mcp__codex_apps__google_calendar_read_event",
-      "mcp__codex_apps__google_calendar_list_event_labels"
+      "calendar_provider_list_events",
+      "calendar_provider_get_event",
+      "calendar_provider_get_labels"
     ],
-    classificationWrite: "mcp__codex_apps__google_calendar_set_event_label_silently"
+    classificationWrite: "calendar_provider_set_label"
   },
   parents: [
     { id: "direction", name: "Direction" },

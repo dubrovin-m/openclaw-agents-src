@@ -19,7 +19,7 @@ export type LeafCategory = {
 };
 export type CalendarConfig = {
     designatedCalendar: string;
-    nativeTools: {
+    providerTools: {
         prefix: string;
         read: string[];
         classificationWrite: string;

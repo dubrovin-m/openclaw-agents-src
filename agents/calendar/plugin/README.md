@@ -1,7 +1,7 @@
 # Calendar Analytics plugin
 
-OpenClaw-owned deterministic layer for Calendar Agent.
+OpenClaw-owned deterministic and provider layer for Calendar Agent.
 
-It intentionally does not call Google Calendar. Native Google Calendar access remains owned by the Codex app path. This plugin validates operational analytical configuration, computes review windows and time allocation, and gates the Calendar Agent tool surface fail-closed.
+The plugin validates operational analytical configuration, computes review windows and time allocation, exposes a narrow Google Calendar API adapter, and gates the Calendar Agent tool surface fail-closed.
 
-The production configuration must use exact native tool identities observed through a fresh Calendar Agent Codex session. The classification write is admitted only when its payload contains exactly `event_id` and `label_id`, and the label is one of the configured leaf labels or the configured technical Unclassified label.
+The provider uses Google Application Default Credentials supplied by live runtime state. It exposes only bounded reads plus one classification write. The classification write is admitted only when its payload contains exactly `event_id` and `label_id`, the label is part of the effective analytical configuration, and the adapter can apply it through the Calendar API custom-label field without sending guest updates.

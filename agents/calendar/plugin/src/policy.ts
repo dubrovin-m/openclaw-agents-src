@@ -2,7 +2,6 @@ import { parseCalendarConfig, type CalendarConfig } from "./core.js";
 
 export const CALENDAR_AGENT_ID = "calendar";
 const OWNED_TOOLS = new Set([
-  "read",
   "calendar_config_get",
   "calendar_review_window",
   "calendar_analyze",
@@ -41,7 +40,7 @@ export function calendarToolPolicy(
 ) {
   const config = parseCalendarConfig(configValue);
   const toolName = event.toolName ?? "";
-  const isNativeCalendarTool = toolName.startsWith(config.nativeTools.prefix);
+  const isNativeCalendarTool = toolName.startsWith(config.providerTools.prefix);
 
   if (context.agentId !== CALENDAR_AGENT_ID) {
     return isNativeCalendarTool
@@ -50,8 +49,8 @@ export function calendarToolPolicy(
   }
 
   if (OWNED_TOOLS.has(toolName)) return undefined;
-  if (config.nativeTools.read.includes(toolName)) return undefined;
-  if (toolName === config.nativeTools.classificationWrite) return writeAllowed(config, event.params);
+  if (config.providerTools.read.includes(toolName)) return undefined;
+  if (toolName === config.providerTools.classificationWrite) return writeAllowed(config, event.params);
 
   return block("Tool is outside the Calendar Agent authority boundary.");
 }

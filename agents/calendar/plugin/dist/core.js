@@ -42,29 +42,29 @@ export function parseCalendarConfig(value) {
     const root = asRecord(value);
     if (!root)
         throw new Error("Calendar configuration must be an object");
-    const allowedRoot = ["designatedCalendar", "nativeTools", "parents", "leaves", "unclassifiedLabel", "targets"];
+    const allowedRoot = ["designatedCalendar", "providerTools", "parents", "leaves", "unclassifiedLabel", "targets"];
     if (Object.keys(root).some((key) => !allowedRoot.includes(key)))
         throw new Error("Calendar configuration contains unsupported fields");
     if (!nonEmpty(root.designatedCalendar))
         throw new Error("designatedCalendar is required");
-    const native = asRecord(root.nativeTools);
-    if (!native || !nonEmpty(native.prefix) || !Array.isArray(native.read) || !nonEmpty(native.classificationWrite)) {
-        throw new Error("nativeTools requires prefix, read, and classificationWrite");
+    const provider = asRecord(root.providerTools);
+    if (!provider || !nonEmpty(provider.prefix) || !Array.isArray(provider.read) || !nonEmpty(provider.classificationWrite)) {
+        throw new Error("providerTools requires prefix, read, and classificationWrite");
     }
-    if (Object.keys(native).some((key) => !["prefix", "read", "classificationWrite"].includes(key))) {
-        throw new Error("nativeTools contains unsupported fields");
+    if (Object.keys(provider).some((key) => !["prefix", "read", "classificationWrite"].includes(key))) {
+        throw new Error("providerTools contains unsupported fields");
     }
-    const prefix = native.prefix.trim();
-    const read = native.read.map((item) => {
+    const prefix = provider.prefix.trim();
+    const read = provider.read.map((item) => {
         if (!nonEmpty(item))
-            throw new Error("nativeTools.read must contain non-empty tool names");
+            throw new Error("providerTools.read must contain non-empty tool names");
         return item.trim();
     });
     if (read.length < 1 || new Set(read).size !== read.length)
-        throw new Error("nativeTools.read must contain unique tool names");
-    const classificationWrite = native.classificationWrite.trim();
+        throw new Error("providerTools.read must contain unique tool names");
+    const classificationWrite = provider.classificationWrite.trim();
     if (!read.every((tool) => tool.startsWith(prefix)) || !classificationWrite.startsWith(prefix)) {
-        throw new Error("Every configured native Calendar tool must start with nativeTools.prefix");
+        throw new Error("Every configured Calendar provider tool must start with providerTools.prefix");
     }
     if (read.includes(classificationWrite))
         throw new Error("classificationWrite cannot also be a read tool");
@@ -139,7 +139,7 @@ export function parseCalendarConfig(value) {
     }
     return {
         designatedCalendar: root.designatedCalendar.trim(),
-        nativeTools: { prefix, read, classificationWrite },
+        providerTools: { prefix, read, classificationWrite },
         parents,
         leaves,
         unclassifiedLabel,

@@ -1,9 +1,35 @@
 {
-  "profile": "coding",
-  "alsoAllow": [
+  "profile": "full",
+  "allow": [
     "calendar_config_get",
     "calendar_review_window",
-    "calendar_analyze"
+    "calendar_analyze",
+    "calendar_provider_list_events",
+    "calendar_provider_get_event",
+    "calendar_provider_get_labels",
+    "calendar_provider_set_label"
+  ],
+  "deny": [
+    "read",
+    "write",
+    "edit",
+    "apply_patch",
+    "exec",
+    "process",
+    "browser",
+    "gateway",
+    "cron",
+    "web_search",
+    "web_fetch",
+    "sessions",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "sessions_spawn",
+    "subagents",
+    "nodes",
+    "computer",
+    "canvas"
   ],
   "fs": {
     "workspaceOnly": true
