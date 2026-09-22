@@ -391,36 +391,64 @@ describe("Daily Review deterministic presentation", () => {
     ).toBe(1);
   });
 
-  it("renders overdue before today with hidden label clustering and compact emoji lines", () => {
+  it("renders the approved overdue / Office CEO / Team / Personal mask", () => {
     const rows = [
       task(3, {
-        title: "Today",
+        title: "Team today",
+        assignee: "Иванов И.",
         dueDate: "2026-09-05",
         dueTime: "08:00",
         labels: [{ id: "L-2", displayName: "Work", emoji: "💼" }],
+        officeCeo: false,
+        personal: false,
+        pendingDeadlineChangeRequest: null,
+      }),
+      task(4, {
+        title: "Office today",
+        dueDate: "2026-09-05",
+        labels: [],
+        officeCeo: true,
+        personal: false,
+        pendingDeadlineChangeRequest: null,
+      }),
+      task(5, {
+        title: "Personal today",
+        dueDate: "2026-09-05",
+        dueTime: "19:00",
+        labels: [{ id: "L-1", displayName: "Home", emoji: "🏠" }],
+        officeCeo: true,
+        personal: true,
+        pendingDeadlineChangeRequest: null,
       }),
       task(2, {
         title: "Overdue B",
+        assignee: "Иванов И.",
         dueDate: "2026-09-04",
-        labels: [{ id: "L-1", displayName: "Home", emoji: "🏠" }],
+        labels: [],
+        officeCeo: false,
+        personal: false,
+        pendingDeadlineChangeRequest: { requestedDueDate: "2026-09-10", requestedDueTime: null },
       }),
       task(1, {
         title: "Overdue A",
+        assignee: "Дубровин М.",
         dueDate: "2026-09-03",
-        labels: [{ id: "L-1", displayName: "Home", emoji: "🏠" }],
+        labels: [],
+        officeCeo: true,
+        personal: false,
+        pendingDeadlineChangeRequest: null,
       }),
     ];
     const rendered = dailyReviewInternals.renderReview(rows as never, [], MORNING_MS);
-    expect(rendered.indexOf("🔴 ПРОСРОЧЕНО 2")).toBeLessThan(
-      rendered.indexOf("📅 СЕГОДНЯ 1"),
-    );
-    expect(rendered.indexOf("T-1 🏠 Overdue A")).toBeLessThan(
-      rendered.indexOf("T-2 🏠 Overdue B"),
-    );
-    expect(rendered).not.toContain("Home\n");
-    expect(rendered).toContain(
-      "T-3 💼 Today\nДубровин М. · сегодня · 08:00",
-    );
+    expect(rendered).toContain("🔴 ПРОСРОЧЕНО 2");
+    expect(rendered).toContain("💼 СЕГОДНЯ · ОФИС CEO 1");
+    expect(rendered).toContain("📌 СЕГОДНЯ · КОМАНДА 1");
+    expect(rendered).toContain("🏠 СЕГОДНЯ · ЛИЧНОЕ 1");
+    expect(rendered).toContain("T-2 Overdue B\nИванов И. · 4 сен · ↪ 10 сен на согласовании");
+    expect(rendered).toContain("T-3 💼 Team today\nИванов И. · 08:00");
+    expect(rendered).toContain("T-4 Office today\nДубровин М.");
+    expect(rendered).toContain("T-5 🏠 Personal today\n19:00");
+    expect(rendered).not.toContain("сегодня ·");
   });
 
   it("adds duplicate warnings without mutating or rewriting Task titles", () => {

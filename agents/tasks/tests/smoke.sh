@@ -2,12 +2,15 @@
 set -euo pipefail
 umask 077
 TASKCTL=${1:-./taskctl}
+TASK_ROOT=$(cd "$(dirname "$TASKCTL")" && pwd)
+CONTACTCTL="$TASK_ROOT/../../shared/contacts/contactctl"
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 DB="$TMP/tasks.sqlite3"
 run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD="$1" node "$TASKCTL" "$2" "$3"; }
 plain(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" node "$TASKCTL" "$@"; }
 run_at(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$1" TASKCTL_PAYLOAD="$2" node "$TASKCTL" "$3" "$4"; }
+crun(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/contacts.sqlite3" CONTACTCTL_PAYLOAD="$1" node "$CONTACTCTL" "$2"; }
 contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exit 1; }; }
 expect_fail(){ local payload=$1 scope=$2 action=$3 needle=$4 output code; set +e; output=$(run "$payload" "$scope" "$action" 2>&1); code=$?; set -e; [ "$code" -ne 0 ] || { echo "expected failure: $scope $action" >&2; exit 1; }; contains "$output" "$needle"; }
 
@@ -22,11 +25,18 @@ run '{"operation_key":"p-alias","id":"P-2","alias":"Дмитрий"}' person ali
 a=$(run '{"operation_key":"p-reuse","display_name":"дмитрий"}' person create); contains "$a" '"id":"P-2"'; contains "$a" '"created":false'
 a=$(run '{"reference":"Дмитрий"}' person resolve); contains "$a" '"display_name":"Дима"'
 
+# Explicit reusable Person Group fixture for direct-deadline smoke coverage.
+crun '{"operation_key":"office-group","display_name":"Office CEO"}' group_create >/dev/null
+crun '{"operation_key":"office-self","group_id":"PG-1","person":"P-1"}' group_member_add >/dev/null
+crun '{"operation_key":"office-dima","group_id":"PG-1","person":"P-2"}' group_member_add >/dev/null
+run '{"operation_key":"bind-office","key":"OFFICE_CEO_GROUP","entity_id":"PG-1"}' config set >/dev/null
+
 # Canonical labels and explicit-only terminology:
 # TA-LBL-001..006, TA-TERM-001, TA-TERM-002, TA-TERM-004.
 a=$(run '{"operation_key":"l-create","display_name":"Совет директоров"}' label create); contains "$a" '"id":"L-1"'; contains "$a" '"created":true'
 run '{"operation_key":"l-alias","id":"L-1","alias":"СД"}' label alias_add >/dev/null
 a=$(run '{"operation_key":"l-reuse","display_name":"сд"}' label create); contains "$a" '"id":"L-1"'; contains "$a" '"created":false'
+run '{"operation_key":"bind-personal","key":"PERSONAL_LABEL","entity_id":"L-1"}' config set >/dev/null
 run '{"operation_key":"term-set","alias":"РГ","expansion":"рабочая группа по новому продукту"}' term set >/dev/null
 a=$(run '{"alias":"РГ"}' term resolve); contains "$a" '"рабочая группа по новому продукту"'
 run '{"operation_key":"term-correct","alias":"РГ","expansion":"рабочая группа"}' term set >/dev/null
@@ -114,7 +124,7 @@ set -e
 [ "$legacy_rc" -ne 0 ] || { echo "legacy schema unexpectedly migrated" >&2; exit 1; }
 contains "$legacy_out" 'UNSUPPORTED_SCHEMA'
 
-a=$(plain health); contains "$a" '"schema_version":8'
+a=$(plain health); contains "$a" '"schema_version":9'
 node - "$DB" <<'JS'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});if(db.prepare('pragma integrity_check').get().integrity_check!=='ok'||db.prepare('pragma foreign_key_check').all().length)process.exit(1);db.close();
 JS

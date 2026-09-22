@@ -56,7 +56,7 @@ const entry = defineToolPlugin({
       description: "Build one fail-closed scheduler-only weekday management report without Task mutations.",
       parameters: managementReviewParameters,
       optional: true,
-      factory: ({ toolContext }) => createManagementReviewTool(toolContext),
+      factory: ({ api, toolContext }) => createManagementReviewTool(api, toolContext),
     }),
     tool({
       name: TASK_REMINDER_DISPATCH_TOOL,

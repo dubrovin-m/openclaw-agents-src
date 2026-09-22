@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CONTACTCTL="$ROOT/../../shared/contacts/contactctl"
 TMP=$(mktemp -d /tmp/task-agent-batch5.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 DB="$TMP/tasks.sqlite3"
@@ -11,10 +12,14 @@ run() {
   local scope=$1 action=$2 payload=${3:-'{}'}
   TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$payload" "$ROOT/taskctl" "$scope" "$action"
 }
+crun() { CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/contacts.sqlite3" CONTACTCTL_PAYLOAD="$2" "$CONTACTCTL" "$1"; }
 
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$NOW" "$ROOT/taskctl" init >/dev/null
 SELF=$(run person resolve '{"reference":"Дубровин М."}')
 SELF_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).matches[0].id)' "$SELF")
+crun group_create '{"operation_key":"b5:office-group","display_name":"Office CEO"}' >/dev/null
+crun group_member_add "{\"operation_key\":\"b5:office-self\",\"group_id\":\"PG-1\",\"person\":\"$SELF_ID\"}" >/dev/null
+run config set '{"operation_key":"b5:bind-office","key":"OFFICE_CEO_GROUP","entity_id":"PG-1"}' >/dev/null
 
 create_task() {
   local key=$1 title=$2 due=$3 label=${4:-}
@@ -32,6 +37,7 @@ create_task() {
 # BL-018: natural today view is OPEN due_date <= local today; due_on remains exact-date.
 TODAY_LABEL=$(run label create '{"operation_key":"b5:today-label","display_name":"Today fixture","emoji":"🗓"}')
 TODAY_LABEL_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).label.id)' "$TODAY_LABEL")
+run config set "{\"operation_key\":\"b5:bind-personal\",\"key\":\"PERSONAL_LABEL\",\"entity_id\":\"$TODAY_LABEL_ID\"}" >/dev/null
 OVERDUE=$(create_task 'b5:t-overdue' 'Overdue' '2026-08-28' "$TODAY_LABEL_ID")
 YESTERDAY=$(create_task 'b5:t-yesterday' 'Yesterday' '2026-08-29' "$TODAY_LABEL_ID")
 TODAY=$(create_task 'b5:t-today' 'Today' '2026-08-30' "$TODAY_LABEL_ID")
@@ -161,7 +167,7 @@ NODE
 
 # Batch 5 behavior remains valid on the current schema generation.
 node - "$DB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(Number(d.prepare('PRAGMA user_version').get().user_version)!==8)process.exit(1);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')process.exit(1);if(d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(1);d.close();
+const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(Number(d.prepare('PRAGMA user_version').get().user_version)!==9)process.exit(1);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok')process.exit(1);if(d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(1);d.close();
 NODE
 
 printf 'BATCH5_DETERMINISTIC_PASS\n'

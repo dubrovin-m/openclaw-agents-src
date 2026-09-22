@@ -22,7 +22,7 @@ const MODEL_INPUT_TARGET_BYTES = 48 * 1024;
 const MODEL_MAX_CALLS = 400;
 const MODEL_TIMEOUT_MS = 90_000;
 const GATEWAY_READ_TIMEOUT_MS = 12_000;
-const TASKCTL_SCHEMA_VERSION = 8;
+const TASKCTL_SCHEMA_VERSION = 9;
 
 export const dailyReviewParameters = Type.Object(
   {
@@ -48,6 +48,11 @@ type DailyReviewDependencies = {
   runSemanticModel?: (prompt: string, jobId: string, signal?: AbortSignal) => Promise<string>;
 };
 
+type PendingDeadlineChangeRequest = {
+  requestedDueDate: string | null;
+  requestedDueTime: string | null;
+};
+
 type ReviewTask = {
   id: string;
   numericId: number;
@@ -60,6 +65,9 @@ type ReviewTask = {
   projectStatus: string | null;
   createdAt: string;
   labels: Array<{ id: string; displayName: string; emoji: string | null }>;
+  officeCeo: boolean;
+  personal: boolean;
+  pendingDeadlineChangeRequest: PendingDeadlineChangeRequest | null;
 };
 
 type ReviewSnapshot = {
@@ -382,6 +390,18 @@ function parseSnapshotTask(value: unknown): ReviewTask {
   });
   const projectId = nullableSnapshotString(row.project_id, "project_id");
   if (projectId !== null && !/^PRJ-[1-9]\d*$/.test(projectId)) throw new Error(`Daily Review snapshot ${taskId} contains an invalid Project id`);
+  if (typeof row.office_ceo !== "boolean" || typeof row.personal !== "boolean") {
+    throw new Error(`Daily Review snapshot ${taskId} has invalid review classification flags`);
+  }
+  let pendingDeadlineChangeRequest: PendingDeadlineChangeRequest | null = null;
+  if (row.pending_deadline_change_request !== null) {
+    const request = assertRecord(row.pending_deadline_change_request, `Daily Review snapshot ${taskId} pending deadline request`);
+    if (request.status !== "PENDING") throw new Error(`Daily Review snapshot ${taskId} contains a non-pending deadline request`);
+    pendingDeadlineChangeRequest = {
+      requestedDueDate: nullableSnapshotString(request.requested_due_date, "requested_due_date"),
+      requestedDueTime: nullableSnapshotString(request.requested_due_time, "requested_due_time"),
+    };
+  }
   return {
     id: taskId,
     numericId: Number(taskMatch[1]),
@@ -394,6 +414,9 @@ function parseSnapshotTask(value: unknown): ReviewTask {
     projectStatus: nullableSnapshotString(row.project_status, "project_status"),
     createdAt: row.created_at,
     labels,
+    officeCeo: row.office_ceo,
+    personal: row.personal,
+    pendingDeadlineChangeRequest,
   };
 }
 
@@ -685,59 +708,40 @@ async function findDuplicatePairs(params: {
   };
 }
 
-function compareBinary(a: string, b: string): number {
-  return a < b ? -1 : a > b ? 1 : 0;
-}
-
-function firstLabel(task: ReviewTask) {
-  return task.labels[0] ?? null;
-}
-
 function primaryBucket(task: ReviewTask, localDate: string, _localTime: string): 0 | 1 | 2 {
-  if (task.dueDate && task.dueDate < localDate) {
-    return 0;
-  }
-  if (task.dueDate === localDate) {
-    return 1;
-  }
+  if (task.dueDate && task.dueDate < localDate) return 0;
+  if (task.dueDate === localDate) return 1;
   return 2;
 }
 
-function comparePrimary(
-  a: ReviewTask,
-  b: ReviewTask,
-  localDate: string,
-  localTime: string,
-): number {
-  const bucket = primaryBucket(a, localDate, localTime) - primaryBucket(b, localDate, localTime);
-  if (bucket !== 0) return bucket;
-  const aLabel = firstLabel(a);
-  const bLabel = firstLabel(b);
-  if (Boolean(aLabel) !== Boolean(bLabel)) return aLabel ? -1 : 1;
-  if (aLabel && bLabel) {
-    const byName = compareBinary(aLabel.displayName, bLabel.displayName);
-    if (byName !== 0) return byName;
-    const byLabelId = numericLabelId(aLabel.id) - numericLabelId(bLabel.id);
-    if (byLabelId !== 0) return byLabelId;
-  }
-  const byDate = compareBinary(a.dueDate ?? "", b.dueDate ?? "");
-  if (byDate !== 0) return byDate;
-  const byTime = compareBinary(a.dueTime ?? "", b.dueTime ?? "");
-  if (byTime !== 0) return byTime;
-  return a.numericId - b.numericId;
+type TodaySection = "OVERDUE" | "OFFICE_CEO" | "TEAM" | "PERSONAL";
+
+function todaySection(task: ReviewTask, localDate: string): TodaySection | null {
+  const bucket = primaryBucket(task, localDate, "");
+  if (bucket === 0) return "OVERDUE";
+  if (bucket !== 1) return null;
+  if (task.personal) return "PERSONAL";
+  return task.officeCeo ? "OFFICE_CEO" : "TEAM";
 }
 
-function numericLabelId(id: string): number {
-  const match = /^L-([1-9]\d*)$/.exec(id);
-  return match ? Number(match[1]) : Number.MAX_SAFE_INTEGER;
+function compareTodayTasks(a: ReviewTask, b: ReviewTask, section: TodaySection): number {
+  if (section === "PERSONAL") {
+    return (a.dueTime ?? "99:99").localeCompare(b.dueTime ?? "99:99") || a.numericId - b.numericId;
+  }
+  const byAssignee = a.assignee.localeCompare(b.assignee, "ru-RU");
+  if (byAssignee !== 0) return byAssignee;
+  if (section === "OVERDUE") {
+    return (a.dueDate ?? "").localeCompare(b.dueDate ?? "") ||
+      (a.dueTime ?? "").localeCompare(b.dueTime ?? "") ||
+      a.numericId - b.numericId;
+  }
+  return (a.dueTime ?? "99:99").localeCompare(b.dueTime ?? "99:99") || a.numericId - b.numericId;
 }
 
 function emojiPrefix(task: ReviewTask) {
   const emoji: string[] = [];
   for (const label of task.labels) {
-    if (label.emoji && !emoji.includes(label.emoji)) {
-      emoji.push(label.emoji);
-    }
+    if (label.emoji && !emoji.includes(label.emoji)) emoji.push(label.emoji);
     if (emoji.length === 3) break;
   }
   return emoji.length ? `${emoji.join(" ")} ` : "";
@@ -745,40 +749,59 @@ function emojiPrefix(task: ReviewTask) {
 
 const RU_MONTHS = ["янв", "фев", "мар", "апр", "май", "июн", "июл", "авг", "сен", "окт", "ноя", "дек"];
 
-function renderDeadline(task: ReviewTask, localDate: string) {
-  if (!task.dueDate) return "—";
-  if (task.dueDate === localDate) {
-    return task.dueTime ? `сегодня · ${task.dueTime}` : "сегодня";
-  }
-  const [year, month, day] = task.dueDate.split("-").map(Number);
+function compactDate(value: string, localDate: string) {
+  const [year, month, day] = value.split("-").map(Number);
   const currentYear = Number(localDate.slice(0, 4));
-  const dateText = `${day} ${RU_MONTHS[month - 1]}${year !== currentYear ? ` ${year}` : ""}`;
-  return task.dueTime ? `${dateText} · ${task.dueTime}` : dateText;
+  return `${day} ${RU_MONTHS[month - 1]}${year !== currentYear ? ` ${year}` : ""}`;
 }
 
-function renderTask(task: ReviewTask, localDate: string) {
-  return `${task.id} ${emojiPrefix(task)}${task.title}\n${task.assignee} · ${renderDeadline(task, localDate)}`;
+function pendingMarker(task: ReviewTask, localDate: string) {
+  const request = task.pendingDeadlineChangeRequest;
+  if (!request?.requestedDueDate) return "";
+  const dateText = compactDate(request.requestedDueDate, localDate);
+  const requested = request.requestedDueTime ? `${dateText} ${request.requestedDueTime}` : dateText;
+  return ` · ↪ ${requested} на согласовании`;
+}
+
+function renderTaskForSection(task: ReviewTask, section: TodaySection, localDate: string) {
+  const first = `${task.id} ${emojiPrefix(task)}${task.title}`;
+  if (section === "OVERDUE") {
+    if (!task.dueDate) throw new Error(`Overdue Daily Review Task ${task.id} has no due date`);
+    const deadline = `${compactDate(task.dueDate, localDate)}${task.dueTime ? ` · ${task.dueTime}` : ""}`;
+    return `${first}\n${task.assignee} · ${deadline}${pendingMarker(task, localDate)}`;
+  }
+  if (section === "PERSONAL") {
+    return task.dueTime ? `${first}\n${task.dueTime}` : first;
+  }
+  return `${first}\n${task.assignee}${task.dueTime ? ` · ${task.dueTime}` : ""}`;
 }
 
 function renderPrimary(tasks: ReviewTask[], boundaryMs: number) {
   const local = moscowParts(boundaryMs);
-  const sorted = tasks
-    .filter((task) => primaryBucket(task, local.date, local.time) < 2)
-    .sort((a, b) => comparePrimary(a, b, local.date, local.time));
-  const overdue = sorted.filter(
-    (task) => primaryBucket(task, local.date, local.time) === 0,
-  );
-  const today = sorted.filter((task) => primaryBucket(task, local.date, local.time) === 1);
-  const sections: string[] = [];
-  if (overdue.length) {
-    sections.push(
-      `🔴 ПРОСРОЧЕНО ${overdue.length}\n\n${overdue.map((task) => renderTask(task, local.date)).join("\n\n")}`,
-    );
+  const groups: Record<TodaySection, ReviewTask[]> = {
+    OVERDUE: [],
+    OFFICE_CEO: [],
+    TEAM: [],
+    PERSONAL: [],
+  };
+  for (const task of tasks) {
+    const section = todaySection(task, local.date);
+    if (section) groups[section].push(task);
   }
-  if (today.length) {
-    sections.push(
-      `📅 СЕГОДНЯ ${today.length}\n\n${today.map((task) => renderTask(task, local.date)).join("\n\n")}`,
-    );
+  for (const section of Object.keys(groups) as TodaySection[]) {
+    groups[section].sort((a, b) => compareTodayTasks(a, b, section));
+  }
+  const sections: string[] = [];
+  const specs: Array<[TodaySection, string]> = [
+    ["OVERDUE", "🔴 ПРОСРОЧЕНО"],
+    ["OFFICE_CEO", "💼 СЕГОДНЯ · ОФИС CEO"],
+    ["TEAM", "📌 СЕГОДНЯ · КОМАНДА"],
+    ["PERSONAL", "🏠 СЕГОДНЯ · ЛИЧНОЕ"],
+  ];
+  for (const [section, header] of specs) {
+    const rows = groups[section];
+    if (!rows.length) continue;
+    sections.push(`${header} ${rows.length}\n\n${rows.map((task) => renderTaskForSection(task, section, local.date)).join("\n\n")}`);
   }
   return sections.join("\n\n");
 }

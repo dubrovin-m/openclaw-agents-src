@@ -35,8 +35,8 @@ set -e
 [ "$lost_health_rc" -ne 0 ]
 [ ! -e "$LOST_CDB" ]
 rm -rf "$TMP/lost"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==8||x.implementation_version!=="0.4.11")process.exit(1)})'
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==2||x.implementation_version!=="0.1.3")process.exit(1)})'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.implementation_version!=="0.4.12")process.exit(1)})'
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.4")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.
 crun '{"operation_key":"c1","display_name":"Побединская Н.","organization":"Компания","title":"Директор"}' create >/dev/null
 trun '{"reference":"Побединская"}' person resolve | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.outcome!=="MATCH"||x.matches[0].id!=="P-2")process.exit(1)})'
@@ -89,7 +89,7 @@ const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.arg
 NODE
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_CONTACTS_DB="$MCDB" "$TASKCTL" health >/dev/null
 node - "$MDB" "$MCDB" "$TMP/before.json" <<'NODE'
-const fs=require('node:fs');const {DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[4]));const t=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});const after={people:c.prepare('select id,display_name,created_at from people order by id').all(),aliases:c.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:t.prepare('select id,assignee_id from tasks order by id').all(),recurrences:t.prepare('select id,assignee_id from recurrences order by id').all()};if(t.prepare('pragma user_version').get().user_version!==8||c.prepare('pragma user_version').get().user_version!==2)process.exit(1);if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(t.prepare("select count(*) n from sqlite_master where type='table' and name in ('people','person_aliases')").get().n!==0)process.exit(3);if(c.prepare("select count(*) n from people where is_self=1 and status='ACTIVE'").get().n!==1)process.exit(4);if(t.prepare('pragma foreign_key_check').all().length||c.prepare('pragma foreign_key_check').all().length)process.exit(5);t.close();c.close();
+const fs=require('node:fs');const {DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[4]));const t=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});const after={people:c.prepare('select id,display_name,created_at from people order by id').all(),aliases:c.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:t.prepare('select id,assignee_id from tasks order by id').all(),recurrences:t.prepare('select id,assignee_id from recurrences order by id').all()};if(t.prepare('pragma user_version').get().user_version!==9||c.prepare('pragma user_version').get().user_version!==3)process.exit(1);if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(t.prepare("select count(*) n from sqlite_master where type='table' and name in ('people','person_aliases')").get().n!==0)process.exit(3);if(c.prepare("select count(*) n from people where is_self=1 and status='ACTIVE'").get().n!==1)process.exit(4);if(t.prepare('pragma foreign_key_check').all().length||c.prepare('pragma foreign_key_check').all().length)process.exit(5);t.close();c.close();
 NODE
 
 # Preparation-owned migration failure restores schema 6 and removes a newly-created Contacts file.
@@ -103,6 +103,18 @@ set -e
 node - "$FDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==6)process.exit(1);if(d.prepare("select count(*) n from sqlite_master where type='table' and name='people'").get().n!==1)process.exit(2);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length)process.exit(3);d.close();
 NODE
+
+
+# Person Groups have stable identity, reusable membership, and canonical Person merge semantics.
+crun '{"operation_key":"pg1","display_name":"Office CEO"}' group_create | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.group.id!=="PG-1"||x.group.members.length!==0)process.exit(1)})'
+crun '{"operation_key":"pgm1","group_id":"PG-1","person":"Побединская Н.В."}' group_member_add >/dev/null
+crun '{"operation_key":"pgm2","group_id":"PG-1","person":"Побединская Н.В."}' group_member_add | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.changed!==false||x.group.members.length!==1||x.group.members[0].id!=="P-6")process.exit(1)})'
+crun '{"operation_key":"pg2","id":"PG-1","display_name":"Executive Office"}' group_rename | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.group.id!=="PG-1"||x.group.display_name!=="Executive Office")process.exit(1)})'
+crun '{"id":"PG-1"}' group_get | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.group.id!=="PG-1"||x.group.members.length!==1||x.group.members[0].id!=="P-6")process.exit(1)})'
+crun '{"operation_key":"c7","display_name":"Побединская Каноническая"}' create >/dev/null
+crun '{"operation_key":"m3","from_id":"P-6","into_id":"P-7"}' merge >/dev/null
+crun '{"id":"PG-1"}' group_get | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.group.members.length!==1||x.group.members[0].id!=="P-7")process.exit(1)})'
+crun '{"operation_key":"pgr1","group_id":"PG-1","person":"Побединская Каноническая"}' group_member_remove | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.changed!==true||x.group.members.length!==0)process.exit(1)})'
 
 [ "$(stat -c %a "$CDB")" = 600 ]
 [ "$(stat -c %a "$(dirname "$CDB")")" = 700 ]

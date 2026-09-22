@@ -12,6 +12,12 @@ export declare const ACTIONS: {
     readonly contact_alias_add: "alias_add";
     readonly contact_alias_remove: "alias_remove";
     readonly contact_merge: "merge";
+    readonly contact_group_list: "group_list";
+    readonly contact_group_get: "group_get";
+    readonly contact_group_create: "group_create";
+    readonly contact_group_rename: "group_rename";
+    readonly contact_group_member_add: "group_member_add";
+    readonly contact_group_member_remove: "group_member_remove";
     readonly contact_date_create: "date_create";
     readonly contact_date_list: "date_list";
     readonly contact_date_update: "date_update";

@@ -77,7 +77,7 @@ expect_fail '{"operation_key":"stale-move","id":"REM-7","trigger_date":"2026-09-
 expect_fail '{"operation_key":"stale-cancel","id":"REM-7"}' reminder cancel REMINDER_IN_FLIGHT
 
 # Store remains healthy.
-a=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" node "$TASKCTL" health); contains "$a" '"schema_version":8'; contains "$a" '"reminders":7'
+a=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" node "$TASKCTL" health); contains "$a" '"schema_version":9'; contains "$a" '"reminders":7'
 node - "$DB" <<'JS'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});
 if(db.prepare('pragma integrity_check').get().integrity_check!=='ok')process.exit(1);
@@ -85,7 +85,7 @@ if(db.prepare('pragma foreign_key_check').all().length)process.exit(1);
 db.close();
 JS
 # TA-REM activation migration gate: exercise the immutable schema-7 historical
-# Reminder predecessor. Current deployment predecessor may already be schema 8.
+# Reminder predecessor. Current deployment predecessor may already be schema 9.
 REPO=$(cd "$ROOT/../.." && pwd)
 CONTACTCTL="$REPO/shared/contacts/contactctl"
 PRED=eb4d5b60ba0e17d9db8205885ed401d873e7687d
@@ -114,7 +114,7 @@ cp "$PDB" "$TMP/fault-predecessor.sqlite3"; cp "$PCDB" "$TMP/fault-predecessor-c
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$PCDB" "$CONTACTCTL" init >/dev/null
 MIG=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$TASKCTL" health)
 node - "$BEFORE" "$MIG" "$PDB" "$PCDB" <<'JS'
-const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==8||health.implementation_version!=='0.4.11'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
+const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==9||health.implementation_version!=='0.4.12'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
 JS
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/fault-predecessor-contacts.sqlite3" "$CONTACTCTL" init >/dev/null
 set +e

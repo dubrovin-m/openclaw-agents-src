@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CONTACTCTL="$ROOT/../../shared/contacts/contactctl"
 TMP=$(mktemp -d /tmp/task-agent-batch4.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 DB="$TMP/tasks.sqlite3"
@@ -10,6 +11,7 @@ run() {
   local scope=$1 action=$2 payload=${3:-'{}'}
   TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="2026-08-25T09:00:00Z" TASKCTL_PAYLOAD="$payload" "$ROOT/taskctl" "$scope" "$action"
 }
+crun() { CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/contacts.sqlite3" CONTACTCTL_PAYLOAD="$2" "$CONTACTCTL" "$1"; }
 
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="2026-08-25T09:00:00Z" "$ROOT/taskctl" init >/dev/null
 
@@ -18,6 +20,10 @@ node -e 'const x=JSON.parse(process.argv[1]);if(!x.ok||x.count!==1)process.exit(
 SELF_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).matches[0].id)' "$SELF")
 OTHER=$(run person create '{"operation_key":"b4:person","display_name":"Иванов И."}')
 OTHER_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).person.id)' "$OTHER")
+crun group_create '{"operation_key":"b4:office-group","display_name":"Office CEO"}' >/dev/null
+crun group_member_add "{\"operation_key\":\"b4:office-self\",\"group_id\":\"PG-1\",\"person\":\"$SELF_ID\"}" >/dev/null
+crun group_member_add "{\"operation_key\":\"b4:office-other\",\"group_id\":\"PG-1\",\"person\":\"$OTHER_ID\"}" >/dev/null
+run config set '{"operation_key":"b4:bind-office","key":"OFFICE_CEO_GROUP","entity_id":"PG-1"}' >/dev/null
 
 # Label emoji CRUD.
 L1=$(run label create '{"operation_key":"b4:l1","display_name":"Совет директоров","emoji":"🏛"}')

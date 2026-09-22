@@ -2,7 +2,7 @@
   "id": "taskctl",
   "name": "Taskctl",
   "description": "Typed Task Agent data access plus bounded Task production-control operations.",
-  "version": "0.4.22",
+  "version": "0.4.23",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -13,6 +13,10 @@
   },
   "contracts": {
     "tools": [
+      "deadline_request_get",
+      "deadline_request_create",
+      "deadline_request_approve",
+      "deadline_request_reject",
       "task_update",
       "task_complete",
       "task_cancel",
@@ -79,6 +83,18 @@
     ]
   },
   "toolMetadata": {
+    "deadline_request_get": {
+      "optional": true
+    },
+    "deadline_request_create": {
+      "optional": true
+    },
+    "deadline_request_approve": {
+      "optional": true
+    },
+    "deadline_request_reject": {
+      "optional": true
+    },
     "task_update": {
       "optional": true
     },

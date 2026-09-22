@@ -21,6 +21,7 @@ bash -n "$ROOT/tests/batch9.sh"
 bash -n "$ROOT/tests/recurrence-qualification.sh"
 bash -n "$ROOT/tests/recurrence-gateway-e2e.sh"
 bash -n "$ROOT/tests/reminders.sh"
+bash -n "$ROOT/tests/deadline-governance.sh"
 test -x "$ROOT/deploy.sh"
 test -x "$ROOT/recover.sh"
 test -x "$ROOT/install.sh"
@@ -86,6 +87,7 @@ bash "$ROOT/tests/batch8.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/batch9.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/recurrence-qualification.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/reminders.sh" "$ROOT/taskctl"
+bash "$ROOT/tests/deadline-governance.sh"
 
 PACK_DIR=$(mktemp -d /tmp/task-agent-plugin-pack.XXXXXX)
 trap 'rm -rf "$PACK_DIR"' EXIT INT TERM

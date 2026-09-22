@@ -9,6 +9,34 @@ export type ActionDefinition = {
     description: string;
 };
 export declare const ACTION_REGISTRY: Readonly<{
+    readonly deadline_request_get: {
+        readonly argv: readonly ["deadline-request", "get"];
+        readonly required: readonly ["task_id"];
+        readonly allowed: readonly ["task_id"];
+        readonly label: "Deadline request inspect";
+        readonly description: "Read the pending Deadline Change Request and request history for one Task.";
+    };
+    readonly deadline_request_create: {
+        readonly argv: readonly ["deadline-request", "create"];
+        readonly required: readonly ["operation_key", "task_id", "reason"];
+        readonly allowed: readonly ["operation_key", "task_id", "due_date", "due_time", "reason"];
+        readonly label: "Deadline request create";
+        readonly description: "Create or supersede a reason-backed pending deadline proposal for one OPEN Task outside Office CEO without changing its effective deadline.";
+    };
+    readonly deadline_request_approve: {
+        readonly argv: readonly ["deadline-request", "approve"];
+        readonly required: readonly ["operation_key", "task_id"];
+        readonly allowed: readonly ["operation_key", "task_id", "due_date", "due_time"];
+        readonly label: "Deadline request approve";
+        readonly description: "Approve the pending deadline proposal for one Task, optionally with a different explicit approved deadline.";
+    };
+    readonly deadline_request_reject: {
+        readonly argv: readonly ["deadline-request", "reject"];
+        readonly required: readonly ["operation_key", "task_id"];
+        readonly allowed: readonly ["operation_key", "task_id"];
+        readonly label: "Deadline request reject";
+        readonly description: "Reject the pending deadline proposal for one Task without changing its effective deadline.";
+    };
     readonly task_update: {
         readonly argv: readonly ["task", "update"];
         readonly required: readonly ["operation_key", "id"];
@@ -417,7 +445,7 @@ export declare const ACTION_REGISTRY: Readonly<{
     };
 }>;
 export type TaskctlAction = keyof typeof ACTION_REGISTRY;
-export declare const TASKCTL_ACTIONS: readonly ("task_update" | "task_complete" | "task_cancel" | "inbox_add" | "inbox_list" | "inbox_get" | "inbox_discard" | "inbox_commit" | "task_create" | "task_list" | "task_search" | "task_get" | "task_detail" | "task_history" | "reminder_create" | "reminder_list" | "reminder_reschedule" | "reminder_cancel" | "recurrence_create" | "recurrence_list" | "recurrence_get" | "recurrence_detail" | "recurrence_history" | "recurrence_update" | "recurrence_pause" | "recurrence_resume" | "recurrence_cancel" | "project_create" | "project_list" | "project_get" | "project_rename" | "project_complete" | "project_cancel" | "task_project_set" | "person_list" | "person_resolve" | "person_create" | "person_rename" | "person_alias_add" | "person_alias_remove" | "person_merge" | "label_list" | "label_resolve" | "label_create" | "label_rename" | "label_set_emoji" | "label_alias_add" | "label_alias_remove" | "label_delete" | "label_merge" | "term_list" | "term_resolve" | "term_set" | "term_remove" | "task_label_add" | "task_label_remove" | "comment_add" | "comment_list" | "ref_resolve")[];
+export declare const TASKCTL_ACTIONS: readonly ("deadline_request_get" | "deadline_request_create" | "deadline_request_approve" | "deadline_request_reject" | "task_update" | "task_complete" | "task_cancel" | "inbox_add" | "inbox_list" | "inbox_get" | "inbox_discard" | "inbox_commit" | "task_create" | "task_list" | "task_search" | "task_get" | "task_detail" | "task_history" | "reminder_create" | "reminder_list" | "reminder_reschedule" | "reminder_cancel" | "recurrence_create" | "recurrence_list" | "recurrence_get" | "recurrence_detail" | "recurrence_history" | "recurrence_update" | "recurrence_pause" | "recurrence_resume" | "recurrence_cancel" | "project_create" | "project_list" | "project_get" | "project_rename" | "project_complete" | "project_cancel" | "task_project_set" | "person_list" | "person_resolve" | "person_create" | "person_rename" | "person_alias_add" | "person_alias_remove" | "person_merge" | "label_list" | "label_resolve" | "label_create" | "label_rename" | "label_set_emoji" | "label_alias_add" | "label_alias_remove" | "label_delete" | "label_merge" | "term_list" | "term_resolve" | "term_set" | "term_remove" | "task_label_add" | "task_label_remove" | "comment_add" | "comment_list" | "ref_resolve")[];
 export declare function getActionDefinition(action: TaskctlAction): ActionDefinition;
 export declare function actionPayloadSchema(action: TaskctlAction): JsonSchema;
 export declare function actionToolParameters(action: TaskctlAction): Type.TUnsafe<Record<string, unknown>>;
