@@ -10,9 +10,9 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.22",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.22.tgz",
-    "sha256": "2662c0bd52b892f897abefc62cb050be9d74a56f7f60c59734830f29af7f4a04"
+    "version": "0.4.24",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.24.tgz",
+    "sha256": "fc4d3ad7fab9cf43b5ea32c28c23de2e62f9966387e4f3db2021ab9eaef05f9e"
   },
   "from": {
     "source_revision": "ade06f111c20ac485e9185ed322424ac59fd31e9",
