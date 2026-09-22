@@ -12,7 +12,7 @@
     "name": "openclaw-plugin-taskctl",
     "version": "0.4.23",
     "artifact": "artifacts/openclaw-plugin-taskctl-0.4.23.tgz",
-    "sha256": "f9f8453fe8f91ff33004507a7d7688ffd032d7c388197679c730db281ce894e6"
+    "sha256": "ab85d3abbd66209b4afe9ef01e71b942a2a43ff598d795a86526d9db36f2742e"
   },
   "from": {
     "source_revision": "ed2103380d144d8001e91388cc7b16674c46b92e",
@@ -83,5 +83,12 @@
     "delivery_account": "default",
     "delivery_recipient_source": "commands.ownerAllowFrom-singleton",
     "best_effort": false
+  },
+  "task_governance": {
+    "kind": "private-bootstrap-v1",
+    "bootstrap_path": "data/tasks/task-governance-bootstrap.json",
+    "office_ceo_group_display_name": "Office CEO",
+    "office_ceo_binding_key": "OFFICE_CEO_GROUP",
+    "personal_label_binding_key": "PERSONAL_LABEL"
   }
 }

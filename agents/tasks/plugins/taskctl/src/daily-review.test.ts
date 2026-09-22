@@ -438,13 +438,23 @@ describe("Daily Review deterministic presentation", () => {
         personal: false,
         pendingDeadlineChangeRequest: null,
       }),
+      task(6, {
+        title: "Overdue remove deadline",
+        assignee: "Сидоров С.",
+        dueDate: "2026-09-02",
+        labels: [],
+        officeCeo: false,
+        personal: false,
+        pendingDeadlineChangeRequest: { requestedDueDate: null, requestedDueTime: null },
+      }),
     ];
     const rendered = dailyReviewInternals.renderReview(rows as never, [], MORNING_MS);
-    expect(rendered).toContain("🔴 ПРОСРОЧЕНО 2");
+    expect(rendered).toContain("🔴 ПРОСРОЧЕНО 3");
     expect(rendered).toContain("💼 СЕГОДНЯ · ОФИС CEO 1");
     expect(rendered).toContain("📌 СЕГОДНЯ · КОМАНДА 1");
     expect(rendered).toContain("🏠 СЕГОДНЯ · ЛИЧНОЕ 1");
     expect(rendered).toContain("T-2 Overdue B\nИванов И. · 4 сен · ↪ 10 сен на согласовании");
+    expect(rendered).toContain("T-6 Overdue remove deadline\nСидоров С. · 2 сен · ↪ без срока на согласовании");
     expect(rendered).toContain("T-3 💼 Team today\nИванов И. · 08:00");
     expect(rendered).toContain("T-4 Office today\nДубровин М.");
     expect(rendered).toContain("T-5 🏠 Personal today\n19:00");

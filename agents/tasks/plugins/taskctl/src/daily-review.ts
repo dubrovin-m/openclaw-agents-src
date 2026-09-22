@@ -757,7 +757,8 @@ function compactDate(value: string, localDate: string) {
 
 function pendingMarker(task: ReviewTask, localDate: string) {
   const request = task.pendingDeadlineChangeRequest;
-  if (!request?.requestedDueDate) return "";
+  if (!request) return "";
+  if (!request.requestedDueDate) return " · ↪ без срока на согласовании";
   const dateText = compactDate(request.requestedDueDate, localDate);
   const requested = request.requestedDueTime ? `${dateText} ${request.requestedDueTime}` : dateText;
   return ` · ↪ ${requested} на согласовании`;

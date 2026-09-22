@@ -11,8 +11,8 @@ fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.from?.sqlite_schemas?.[0]!==8||!r?.important_date_dispatcher||r?.shared_contacts?.predecessor_mode!=='exact'||!c?.from)process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,TOOLS_SHA:r.from.workspace_sha256["TOOLS.md"],MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SCRIPT:r.reminder_dispatcher.script,REMINDER_TOOL:r.reminder_dispatcher.tool,REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,REMINDER_BUDGET:r.reminder_dispatcher.tool_budget,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool};
+if(r?.from?.sqlite_schemas?.[0]!==8||!r?.important_date_dispatcher||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,TOOLS_SHA:r.from.workspace_sha256["TOOLS.md"],GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SCRIPT:r.reminder_dispatcher.script,REMINDER_TOOL:r.reminder_dispatcher.tool,REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,REMINDER_BUDGET:r.reminder_dispatcher.tool_budget,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
@@ -27,8 +27,9 @@ NODE
 export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
 export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$REPO_ROOT"
 
-PRED_SRC="$TMP/predecessor-source"; mkdir -p "$PRED_SRC"
-git -C "$REPO_ROOT" archive "$PRED" | tar -x -C "$PRED_SRC"
+PRED_SRC="$TMP/predecessor-source"
+git clone -q --shared --no-checkout "$REPO_ROOT" "$PRED_SRC"
+git -C "$PRED_SRC" checkout -q --detach "$PRED"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 mkdir -p "$BASE/state/backups/tools-md-migration"
@@ -122,6 +123,19 @@ oc "$BASE" plugins registry --refresh --json >/dev/null
 node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" 2026.8.2 "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
+SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{const p=db.prepare("select id from people where is_self=1 and status='ACTIVE' and merged_into is null").all();if(p.length!==1)process.exit(2);process.stdout.write('P-'+p[0].id);}finally{db.close();}
+NODE
+) || fail "predecessor self identity unavailable"
+PERSONAL_RESULT=$(HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{"operation_key":"governance-personal-fixture","display_name":"Bootstrap Personal","emoji":"🏠"}' "$BASE/bin/taskctl" label create) || fail "unable to create predecessor personal Label fixture"
+PERSONAL_LABEL=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.label?.id;if(!/^L-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$PERSONAL_RESULT") || fail "invalid personal Label fixture"
+BOOTSTRAP="$BASE/state/$GOV_BOOTSTRAP"
+mkdir -p "$(dirname "$BOOTSTRAP")"
+node - "$BOOTSTRAP" "$SELF_PERSON" "$PERSONAL_LABEL" <<'NODE'
+const fs=require('fs'),out={format:'task-governance-bootstrap-v1',office_ceo_members:[process.argv[3]],personal_label_id:process.argv[4]};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
+NODE
+chmod 600 "$BOOTSTRAP"
+
 automation_count(){ node - "$1/state/automations-test.json" "$2" <<'NODE'
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),key=process.argv[3];process.stdout.write(String((x.jobs||[]).filter(j=>j.declarationKey===key).length));
 NODE
@@ -129,7 +143,7 @@ NODE
 contacts_state(){ node - "$1/state/data/contacts/contacts.sqlite3" <<'NODE'
 const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
 try{const table=n=>db.prepare("select count(*) n from sqlite_master where type='table' and name=?").get(n).n>0;
-const out={uv:Number(db.prepare('pragma user_version').get().user_version),people:db.prepare('select id,display_name,organization,title,is_self,status,merged_into,created_at,updated_at from people order by id').all(),aliases:db.prepare('select person_id,alias,created_at from person_aliases order by person_id,alias').all(),important:table('important_dates')?Number(db.prepare('select count(*) n from important_dates').get().n):null,reminders:table('important_date_reminders')?Number(db.prepare('select count(*) n from important_date_reminders').get().n):null,integrity:db.prepare('pragma integrity_check').get().integrity_check,fk:db.prepare('pragma foreign_key_check').all().length};process.stdout.write(JSON.stringify(out));}
+const out={uv:Number(db.prepare('pragma user_version').get().user_version),people:db.prepare('select id,display_name,organization,title,is_self,status,merged_into,created_at,updated_at from people order by id').all(),aliases:db.prepare('select person_id,alias,created_at from person_aliases order by person_id,alias').all(),important:table('important_dates')?Number(db.prepare('select count(*) n from important_dates').get().n):null,reminders:table('important_date_reminders')?Number(db.prepare('select count(*) n from important_date_reminders').get().n):null,groups:table('person_groups')?Number(db.prepare('select count(*) n from person_groups').get().n):null,group_members:table('person_group_members')?Number(db.prepare('select count(*) n from person_group_members').get().n):null,integrity:db.prepare('pragma integrity_check').get().integrity_check,fk:db.prepare('pragma foreign_key_check').all().length};process.stdout.write(JSON.stringify(out));}
 finally{db.close();}
 NODE
 }
@@ -152,6 +166,11 @@ assert_target(){
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3])||x.integrity?.ok!==true)process.exit(1)' "$ch" "$TARGET_CONTACTS" "$TARGET_CONTACTS_SCHEMA" || fail "target Contacts generation mismatch"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN" ] || fail "target Task plugin mismatch"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$TARGET_CONTACTS" ] || fail "target Contacts plugin mismatch"
+  local gov; gov=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{}' "$r/bin/taskctl" config validate) || fail "target governance bindings invalid"
+  node -e 'const x=JSON.parse(process.argv[1]);if(x.office_ceo_group_id!=="PG-1"||x.personal_label_id!==process.argv[2])process.exit(1)' "$gov" "$PERSONAL_LABEL" || fail "target governance binding mismatch"
+  node - "$r/state/data/contacts/contacts.sqlite3" "$SELF_PERSON" <<'NODE' || fail "target Office CEO membership mismatch"
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{const g=db.prepare("select id from person_groups where display_name='Office CEO'").all();if(g.length!==1)process.exit(1);const m=db.prepare('select person_id from person_group_members where group_id=? order by person_id').all(g[0].id).map(x=>'P-'+x.person_id);if(JSON.stringify(m)!==JSON.stringify([process.argv[3]]))process.exit(2);}finally{db.close();}
+NODE
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer changed"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "Task Reminder dispatcher changed"
   [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "Important Dates dispatcher missing"
@@ -176,22 +195,43 @@ NODE
 
 assert_predecessor "$BASE"
 CONTACTS_BEFORE=$(contacts_state "$BASE")
+
+MISSING="$TMP/missing-governance-bootstrap"; clone_runtime "$BASE" "$MISSING"; echo active > "$MISSING/gateway.state"
+rm -f "$MISSING/state/$GOV_BOOTSTRAP"
+set +e
+HOME="$MISSING/home" bash "$ROOT/deploy.sh" --test-root "$MISSING" --preflight >/dev/null 2>&1
+MISSING_CODE=$?
+set -e
+[ "$MISSING_CODE" -eq 2 ] || fail "missing governance bootstrap did not block preflight"
+assert_predecessor "$MISSING"
+
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "Important Dates preflight failed"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Important Dates deploy failed"
 assert_target "$R"; assert_important_shape "$R"
-node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "Contacts migration changed predecessor identity data"
-const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a.people)!==JSON.stringify(b.people)||JSON.stringify(a.aliases)!==JSON.stringify(b.aliases)||b.uv!==2||b.important!==0||b.reminders!==0||b.integrity!=='ok'||b.fk!==0)process.exit(1);
+node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || fail "Contacts migration changed predecessor identity data beyond approved Person Group activation"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]),schema=Number(process.argv[4]);if(JSON.stringify(a.people)!==JSON.stringify(b.people)||JSON.stringify(a.aliases)!==JSON.stringify(b.aliases)||b.uv!==schema||b.important!==0||b.reminders!==0||b.groups!==1||b.group_members!==1||b.integrity!=='ok'||b.fk!==0)process.exit(1);
 NODE
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
 [ -n "$RECOVERY" ] || fail "recovery set missing"
-node - "$RECOVERY/contacts-state.json" <<'NODE' || fail "Contacts recovery snapshot does not preserve schema-1 predecessor"
-const x=require(process.argv[2]);if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.schema_version!==1)process.exit(1);
+node - "$RECOVERY/contacts-state.json" "$PRED_CONTACTS_SCHEMA" <<'NODE' || fail "Contacts recovery snapshot does not preserve declared predecessor"
+const x=require(process.argv[2]),schema=Number(process.argv[3]);if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.schema_version!==schema)process.exit(1);
 NODE
 test -f "$RECOVERY/important-date-dispatcher.before.json" || fail "Important Dates dispatcher recovery snapshot missing"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual Important Dates recovery failed"
 assert_predecessor "$R"
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "manual recovery changed Contacts predecessor data"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
+NODE
+
+rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
+set +e
+TASK_AGENT_DEPLOY_FAULT=after-governance-activation HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
+CODE=$?
+set -e
+[ "$CODE" -eq 1 ] || fail "post-governance activation fault did not roll back"
+assert_predecessor "$R"
+node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "post-governance rollback changed Contacts predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
 

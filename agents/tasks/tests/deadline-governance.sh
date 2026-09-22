@@ -70,6 +70,20 @@ t '{"operation_key":"partial","task_id":"T-4","due_date":"2026-09-27"}' deadline
 t '{"task_id":"T-4"}' deadline-request get |
   node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.pending!==null||x.history.length!==1||x.history[0].status!=="APPROVED")process.exit(1)})'
 
+# PERSONAL_LABEL is a durable binding: direct deletion is forbidden and merge repoints it.
+set +e
+bound_delete=$(t '{"operation_key":"bound-delete","id":"L-1"}' label delete); bound_delete_rc=$?
+set -e
+[ "$bound_delete_rc" -ne 0 ]
+node -e 'const x=JSON.parse(process.argv[1]);if(x.error?.code!=="BOUND_LABEL_DELETE_FORBIDDEN")process.exit(1)' "$bound_delete"
+t '{"operation_key":"replacement-label","display_name":"Личное новое"}' label create >/dev/null
+t '{"operation_key":"merge-personal","from_id":"L-1","into_id":"L-3"}' label merge |
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.personal_label_rebound!==true||x.label.id!=="L-3")process.exit(1)})'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TDB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD='{}' "$TASKCTL" config validate |
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.personal_label_id!=="L-3"||x.office_ceo_group_id!=="PG-1")process.exit(1)})'
+t '{"view":"today"}' task list |
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s),p=x.tasks.find(t=>t.title==="Personal today");if(p?.today_section!=="PERSONAL")process.exit(1)})'
+
 t '{"operation_key":"terminal-task","title":"Terminal pending","assignee":"P-2","due_date":"2026-09-22"}' task create >/dev/null
 t '{"operation_key":"terminal-request","task_id":"T-6","due_date":"2026-09-30","reason":"Ждет решение"}' deadline-request create >/dev/null
 t '{"operation_key":"terminal-complete","id":"T-6"}' task complete |
