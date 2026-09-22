@@ -23,7 +23,8 @@ The runtime contract does not replace Nexus authority over intended runtime stat
 ## Packages
 
 - `agents/tasks/` — Task Agent implementation.
-- `agents/engineer/` — Engineer Agent implementation.\n- `agents/calendar/` — Calendar Agent implementation.
+- `agents/engineer/` — Engineer Agent implementation.
+- `agents/calendar/` — Calendar Agent implementation.
 
 ## Shared infrastructure
 
