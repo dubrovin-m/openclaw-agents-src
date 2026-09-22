@@ -32,11 +32,11 @@ if(agent.agentDir!=='/home/dubrovin/.openclaw/agents/calendar/agent')fail('unexp
 if(!Array.isArray(agent.skills)||agent.skills.length!==0)fail('Calendar v1 must not inherit skills');
 if('model' in agent||'auth' in agent||'bindings' in agent)fail('model/auth/bindings are runtime state, not package defaults');
 
-const expectedAllow=['read','calendar_config_get','calendar_review_window','calendar_analyze'];
-if(JSON.stringify(tools.allow)!==JSON.stringify(expectedAllow))fail('unexpected Calendar allow surface');
-for(const denied of ['write','edit','apply_patch','exec','process','browser','gateway','cron','web_search','web_fetch','sessions','sessions_spawn','subagents','nodes','computer','canvas']){
-  if(!(tools.deny||[]).includes(denied))fail('required denied tool missing: '+denied);
-}
+if(tools.profile!=='coding')fail('Calendar must use the coding profile so native Codex app/code mode remains available');
+const expectedAlsoAllow=['calendar_config_get','calendar_review_window','calendar_analyze'];
+if(JSON.stringify(tools.alsoAllow)!==JSON.stringify(expectedAlsoAllow))fail('unexpected Calendar additive tool surface');
+if('allow' in tools)fail('Calendar must not use a finite tools.allow list because it disables the native Codex app surface');
+if('deny' in tools)fail('Calendar runtime authority is enforced fail-closed by the Calendar hook; package deny lists can force Codex restricted mode');
 if(tools.fs?.workspaceOnly!==true)fail('Calendar filesystem reads must remain workspace-only');
 
 const version=runtime?.openclaw?.version;
