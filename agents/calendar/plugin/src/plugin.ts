@@ -3,6 +3,37 @@ import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
 import { analyzeCalendar, parseCalendarConfig, reviewWindow } from "./core.js";
 import { calendarToolPolicy } from "./policy.js";
 
+const providerLabelSchema = Type.Object({
+  id: Type.String({ minLength: 1 }),
+  name: Type.String({ minLength: 1 }),
+  backgroundColor: Type.String({ pattern: "^#[0-9A-Fa-f]{6}$" }),
+}, { additionalProperties: false });
+
+const calendarConfigSchema = Type.Object({
+  designatedCalendar: Type.String({ minLength: 1 }),
+  nativeTools: Type.Object({
+    prefix: Type.String({ minLength: 1 }),
+    read: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
+    classificationWrite: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }),
+  parents: Type.Array(Type.Object({
+    id: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+  }, { additionalProperties: false }), { minItems: 1 }),
+  leaves: Type.Array(Type.Object({
+    id: Type.String({ minLength: 1 }),
+    name: Type.String({ minLength: 1 }),
+    kind: Type.Union([Type.Literal("management"), Type.Literal("service")]),
+    parentId: Type.Optional(Type.String({ minLength: 1 })),
+    providerLabel: providerLabelSchema,
+  }, { additionalProperties: false }), { minItems: 1 }),
+  unclassifiedLabel: providerLabelSchema,
+  targets: Type.Object({
+    parents: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
+    leaves: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
+  }, { additionalProperties: false }),
+}, { additionalProperties: false });
+
 const configGetParameters = Type.Object({}, { additionalProperties: false });
 const reviewWindowParameters = Type.Object({
   kind: Type.Union([Type.Literal("daily"), Type.Literal("biweekly")]),
@@ -24,6 +55,7 @@ const entry = defineToolPlugin({
   id: "calendar-analytics",
   name: "Calendar Analytics",
   description: "Stateless Calendar Agent configuration, deterministic analytics, and fail-closed tool policy.",
+  configSchema: calendarConfigSchema,
   tools: (tool) => [
     tool({
       name: "calendar_config_get",
