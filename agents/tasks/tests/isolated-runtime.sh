@@ -215,9 +215,9 @@ import {pathToFileURL} from 'node:url';
 const [configPath,hostRoot,countText]=process.argv.slice(2);const expectedCount=Number(countText);
 const cfg=JSON.parse(fs.readFileSync(configPath,'utf8'));
 if(cfg?.tools?.profile!=='coding'||JSON.stringify(cfg?.agents?.entries?.main?.tools)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(2);
-const inventoryFiles=fs.readdirSync(`${hostRoot}/dist`).filter((name)=>/^tools-effective-inventory-.*\.js$/.test(name));
+const inventoryFiles=fs.readdirSync(`${hostRoot}/dist`).filter((name)=>/^tools-effective-inventory-.*\.(?:js|mjs)$/.test(name));
 const resolvers=[];
-for(const name of inventoryFiles){const module=await import(pathToFileURL(`${hostRoot}/dist/${name}`).href);if(module.n?.name==='resolveEffectiveToolInventory')resolvers.push(module.n);}
+for(const name of inventoryFiles){const module=await import(pathToFileURL(`${hostRoot}/dist/${name}`).href);for(const value of Object.values(module))if(typeof value==='function'&&value.name==='resolveEffectiveToolInventory')resolvers.push(value);}
 if(resolvers.length!==1)process.exit(2);
 const [resolve]=resolvers;
 const inventory=(config,agentId)=>resolve({cfg:config,agentId,sessionKey:`agent:${agentId}:contacts-policy-test`,modelProvider:'openai-codex',modelId:'gpt-5.3-codex',modelApi:'openai-responses'});
