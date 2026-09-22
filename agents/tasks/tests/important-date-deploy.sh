@@ -237,10 +237,10 @@ NODE
 
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
 set +e
-CONTACTCTL_TEST_MIGRATION_FAULT=after-important-date-ddl HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
+CONTACTCTL_TEST_MIGRATION_FAULT=after-person-group-ddl HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
 CODE=$?
 set -e
-[ "$CODE" -eq 1 ] || fail "faulted Contacts migration did not roll back"
+[ "$CODE" -eq 1 ] || fail "faulted Contacts Person Group migration did not roll back"
 assert_predecessor "$R"
 
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
