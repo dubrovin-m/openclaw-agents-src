@@ -7,6 +7,8 @@ RELEASE="$ROOT/release.json"
 CONTACTS_RELEASE="$REPO_ROOT/shared/contacts/release.json"
 TMP=$(mktemp -d /tmp/task-agent-important-date-deploy.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
+export npm_config_cache="$TMP/npm-cache"
+mkdir -p "$npm_config_cache"
 fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
@@ -184,7 +186,9 @@ if(!j||j.agentId!=='main'||j.payload?.kind!=='script'||j.payload.script!==proces
 NODE
 }
 clone_runtime(){
-  cp -a "$1" "$2"
+  mkdir -p "$2"
+  (cd "$1" && tar --exclude='./home/.npm' -cf - .) | (cd "$2" && tar -xf -)
+  mkdir -p "$2/home/.npm"
   node - "$2/state/openclaw.json" "$1" "$2" <<'NODE'
 const fs=require('fs'),p=process.argv[2],from=process.argv[3],to=process.argv[4],rewrite=v=>typeof v==='string'&&v.startsWith(from)?to+v.slice(from.length):Array.isArray(v)?v.map(rewrite):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,rewrite(x)])):v;
 fs.writeFileSync(p,JSON.stringify(rewrite(JSON.parse(fs.readFileSync(p,'utf8'))),null,2)+'\n',{mode:0o600});
