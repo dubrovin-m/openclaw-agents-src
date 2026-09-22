@@ -20,6 +20,10 @@ type DailyReviewDependencies = {
     loadSnapshot?: (boundaryIso: string) => ReviewSnapshot | Promise<ReviewSnapshot>;
     runSemanticModel?: (prompt: string, jobId: string, signal?: AbortSignal) => Promise<string>;
 };
+type PendingDeadlineChangeRequest = {
+    requestedDueDate: string | null;
+    requestedDueTime: string | null;
+};
 type ReviewTask = {
     id: string;
     numericId: number;
@@ -36,6 +40,9 @@ type ReviewTask = {
         displayName: string;
         emoji: string | null;
     }>;
+    officeCeo: boolean;
+    personal: boolean;
+    pendingDeadlineChangeRequest: PendingDeadlineChangeRequest | null;
 };
 type ReviewSnapshot = {
     inboxCount: number;

@@ -106,6 +106,22 @@ const FIELD_SCHEMAS: Record<string, TSchema> = {
 };
 
 export const ACTION_REGISTRY = Object.freeze({
+  deadline_request_get: {
+    argv: ["deadline-request", "get"], required: ["task_id"], allowed: ["task_id"],
+    label: "Deadline request inspect", description: "Read the pending Deadline Change Request and request history for one Task.",
+  },
+  deadline_request_create: {
+    argv: ["deadline-request", "create"], required: ["operation_key", "task_id", "reason"], allowed: ["operation_key", "task_id", "due_date", "due_time", "reason"],
+    label: "Deadline request create", description: "Create or supersede a reason-backed pending deadline proposal for one OPEN Task outside Office CEO without changing its effective deadline.",
+  },
+  deadline_request_approve: {
+    argv: ["deadline-request", "approve"], required: ["operation_key", "task_id"], allowed: ["operation_key", "task_id", "due_date", "due_time"],
+    label: "Deadline request approve", description: "Approve the pending deadline proposal for one Task, optionally with a different explicit approved deadline.",
+  },
+  deadline_request_reject: {
+    argv: ["deadline-request", "reject"], required: ["operation_key", "task_id"], allowed: ["operation_key", "task_id"],
+    label: "Deadline request reject", description: "Reject the pending deadline proposal for one Task without changing its effective deadline.",
+  },
   task_update: {
     argv: ["task", "update"], required: ["operation_key", "id"], allowed: ["operation_key", "id", "title", "assignee", "assignee_id", "create_assignee", "due_date", "due_time", "reason"],
     label: "Task update", description: "Apply a reversible field update to one existing OPEN Task; status transitions and Project association are not accepted.",
@@ -372,6 +388,7 @@ function fieldSchema(action: TaskctlAction, field: string): TSchema {
     return filterStatus;
   }
   if (field === "project_id") return action === "task_project_set" ? nullableProjectId : projectId;
+  if (field === "reason" && action === "deadline_request_create") return Type.String({ minLength: 1, maxLength: 2000 });
   if (field === "task_id" && action === "reminder_create") return canonicalTaskId;
   if (field === "assignee_id" && action.startsWith("recurrence_")) return canonicalPersonId;
   const schema = FIELD_SCHEMAS[field];

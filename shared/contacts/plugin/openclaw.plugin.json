@@ -1,8 +1,8 @@
 {
   "id": "contacts",
   "name": "Contacts",
-  "description": "Bounded shared Person identity and Important Dates operations.",
-  "version": "0.1.3",
+  "description": "Bounded shared Person identity, Person Group, and Important Dates operations.",
+  "version": "0.1.4",
   "configSchema": {
     "type": "object",
     "properties": {},
@@ -22,6 +22,12 @@
       "contact_alias_add",
       "contact_alias_remove",
       "contact_merge",
+      "contact_group_list",
+      "contact_group_get",
+      "contact_group_create",
+      "contact_group_rename",
+      "contact_group_member_add",
+      "contact_group_member_remove",
       "contact_date_create",
       "contact_date_list",
       "contact_date_update",

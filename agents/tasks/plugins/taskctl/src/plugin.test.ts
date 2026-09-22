@@ -23,11 +23,11 @@ const projectAssociationFields = ["operation_key", "project_id", "task_id"];
 describe("Task Agent model-visible per-action tool contracts", () => {
   it("registers all deterministic task actions plus production control and the scheduler-only Daily Review factory", () => {
     const names = metadataTools().map((tool) => tool.name);
-    expect(TASKCTL_ACTIONS).toHaveLength(59);
+    expect(TASKCTL_ACTIONS).toHaveLength(63);
     expect(names).toEqual(allToolNames());
     expect(names).not.toContain("taskctl");
-    expect(new Set(names).size).toBe(63);
-    expect(ordinaryToolNames()).toHaveLength(60);
+    expect(new Set(names).size).toBe(67);
+    expect(ordinaryToolNames()).toHaveLength(64);
   });
 
   it("keeps the static OpenClaw manifest aligned with the tool registry", () => {
@@ -179,7 +179,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
     }
   });
 
-  it("TA-REC-035 and TA-REM-020 keep all 60 ordinary contracts through pinned OpenAI Responses normalization", () => {
+  it("keeps all 64 ordinary contracts through pinned OpenAI Responses normalization", () => {
     const tools = metadataTools().filter((tool) => !schedulerToolNames().includes(tool.name));
     const normalized = normalizeOpenAIToolSchemas({
       tools,
@@ -192,7 +192,7 @@ describe("Task Agent model-visible per-action tool contracts", () => {
         id: "gpt-5.6-luna",
       },
     } as never);
-    expect(normalized).toHaveLength(60);
+    expect(normalized).toHaveLength(64);
     const byName = new Map(normalized.map((tool) => [tool.name, tool.parameters]));
     for (const action of TASKCTL_ACTIONS) {
       const normalizedSchema = byName.get(action);

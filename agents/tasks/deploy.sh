@@ -61,6 +61,7 @@ if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema
 if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
 if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
 const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||!['absent','exact'].includes(sc.predecessor_mode??'absent')))bad();
+const gov=r?.task_governance??null;if(gov&&(gov.kind!=='private-bootstrap-v1'||gov.bootstrap_path!=='data/tasks/task-governance-bootstrap.json'||gov.office_ceo_group_display_name!=='Office CEO'||gov.office_ceo_binding_key!=='OFFICE_CEO_GROUP'||gov.personal_label_binding_key!=='PERSONAL_LABEL'))bad();
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 const rem=r?.reminder_dispatcher??null;
@@ -91,6 +92,11 @@ console.log(`TARGET_CONTACTS_VERSION=${q(sc?.implementation_version||'')}`);
 console.log(`TARGET_CONTACTS_SCHEMA=${q(sc?.sqlite_schema||'')}`);
 console.log(`CONTACTS_RELEASE_REL=${q(sc?.release_path||'')}`);
 console.log(`EXPECTED_CONTACTS_RELEASE_SHA=${q(sc?.release_sha256||'')}`);
+console.log(`GOVERNANCE_ENABLED=${q(gov?'1':'0')}`);
+console.log(`GOVERNANCE_BOOTSTRAP_REL=${q(gov?.bootstrap_path||'')}`);
+console.log(`GOVERNANCE_GROUP_NAME=${q(gov?.office_ceo_group_display_name||'')}`);
+console.log(`GOVERNANCE_GROUP_BINDING=${q(gov?.office_ceo_binding_key||'')}`);
+console.log(`GOVERNANCE_PERSONAL_BINDING=${q(gov?.personal_label_binding_key||'')}`);
 console.log(`ARTIFACT_REL=${q(r.plugin.artifact)}`);
 console.log(`EXPECTED_ARTIFACT_SHA=${q(r.plugin.sha256)}`);
 console.log(`MATERIALIZER_ENABLED=${q(mat?'1':'0')}`);
@@ -190,6 +196,9 @@ else
   LOCK_FILE="$STATE_DIR/task-agent-deploy.lock"
 fi
 TASKCTL_TARGET="$BIN_DIR/taskctl"
+GOVERNANCE_BOOTSTRAP=""
+if [ "$GOVERNANCE_ENABLED" = "1" ]; then GOVERNANCE_BOOTSTRAP="$STATE_DIR/$GOVERNANCE_BOOTSTRAP_REL"; fi
+GOVERNANCE_BOOTSTRAP_SHA=""
 STATE_DB="$STATE_DIR/state/openclaw.sqlite"
 MATERIALIZER_COMMAND_JSON=$(node -e 'process.stdout.write(JSON.stringify([process.argv[1],"recurrence","materialize"]))' "$TASKCTL_TARGET")
 
@@ -358,6 +367,59 @@ NODE
 taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
 contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; else CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; fi; }
 contactctl_migrate(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" "$CONTACTCTL_TARGET" init; else "$CONTACTCTL_TARGET" init; fi; }
+taskctl_payload(){ local payload=$1 scope=$2 action=$3; if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" TASKCTL_PAYLOAD="$payload" "$TASKCTL_TARGET" "$scope" "$action"; else TASKCTL_PAYLOAD="$payload" "$TASKCTL_TARGET" "$scope" "$action"; fi; }
+contactctl_payload(){ local payload=$1 action=$2; if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" CONTACTCTL_PAYLOAD="$payload" "$CONTACTCTL_TARGET" "$action"; else CONTACTCTL_PAYLOAD="$payload" "$CONTACTCTL_TARGET" "$action"; fi; }
+governance_bootstrap_validate(){
+  [ "$GOVERNANCE_ENABLED" = "1" ] || return 0
+  [ -f "$GOVERNANCE_BOOTSTRAP" ] && [ ! -L "$GOVERNANCE_BOOTSTRAP" ] || return 1
+  [ "$(stat -c %a "$GOVERNANCE_BOOTSTRAP")" = 600 ] || return 1
+  node - "$GOVERNANCE_BOOTSTRAP" "$CONTACTS_DB" "$DB" <<'NODE' || return 1
+const fs=require('fs'),{DatabaseSync}=require('node:sqlite'),boot=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(boot?.format!=='task-governance-bootstrap-v1'||!Array.isArray(boot.office_ceo_members)||boot.office_ceo_members.length<1||!/^L-[1-9]\d*$/.test(boot.personal_label_id||''))process.exit(2);
+if(new Set(boot.office_ceo_members).size!==boot.office_ceo_members.length||boot.office_ceo_members.some(x=>!/^P-[1-9]\d*$/.test(x)))process.exit(2);
+const c=new DatabaseSync(process.argv[3],{readOnly:true}),t=new DatabaseSync(process.argv[4],{readOnly:true});
+try{
+  for(const ref of boot.office_ceo_members){const id=Number(ref.slice(2)),p=c.prepare('SELECT status,merged_into FROM people WHERE id=?').get(id);if(!p||p.status!=='ACTIVE'||p.merged_into!==null)process.exit(3);}
+  const labelId=Number(boot.personal_label_id.slice(2));if(!t.prepare('SELECT 1 ok FROM labels WHERE id=?').get(labelId))process.exit(4);
+}finally{c.close();t.close();}
+NODE
+  local bootstrap_sha; bootstrap_sha=$(sha256sum "$GOVERNANCE_BOOTSTRAP"|awk '{print $1}')
+  [ -n "$bootstrap_sha" ] || return 1
+  if [ -n "$GOVERNANCE_BOOTSTRAP_SHA" ]; then [ "$bootstrap_sha" = "$GOVERNANCE_BOOTSTRAP_SHA" ] || return 1; else GOVERNANCE_BOOTSTRAP_SHA="$bootstrap_sha"; fi
+}
+governance_bindings_exact(){
+  [ "$GOVERNANCE_ENABLED" = "1" ] || return 0
+  local out; out=$(taskctl_payload '{}' config validate 2>/dev/null) || return 1
+  node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||!/^PG-[1-9]\d*$/.test(x.office_ceo_group_id||"")||!/^L-[1-9]\d*$/.test(x.personal_label_id||""))process.exit(1)' "$out"
+}
+activate_governance(){
+  [ "$GOVERNANCE_ENABLED" = "1" ] || return 0
+  [ -n "$GOVERNANCE_BOOTSTRAP_SHA" ] || return 1
+  governance_bootstrap_validate || return 1
+  local listed group_id created member payload details desired actual
+  listed=$(contactctl_payload '{}' group_list) || return 1
+  group_id=$(node -e 'const x=JSON.parse(process.argv[1]),name=process.argv[2],m=(x.groups||[]).filter(g=>g.display_name===name);if(m.length>1)process.exit(2);if(m.length===1)process.stdout.write(m[0].id)' "$listed" "$GOVERNANCE_GROUP_NAME") || return 1
+  if [ -z "$group_id" ]; then
+    payload=$(node -e 'process.stdout.write(JSON.stringify({operation_key:"governance-group-"+process.argv[1],display_name:process.argv[2]}))' "$SOURCE_REVISION" "$GOVERNANCE_GROUP_NAME")
+    created=$(contactctl_payload "$payload" group_create) || return 1
+    group_id=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.group?.id;if(!/^PG-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$created") || return 1
+  fi
+  while IFS= read -r member; do
+    [ -n "$member" ] || continue
+    payload=$(node -e 'process.stdout.write(JSON.stringify({operation_key:"governance-member-"+process.argv[1]+"-"+process.argv[2],group_id:process.argv[3],person:process.argv[2]}))' "$SOURCE_REVISION" "$member" "$group_id")
+    contactctl_payload "$payload" group_member_add >/dev/null || return 1
+  done < <(node -e 'const x=require(process.argv[1]);for(const p of x.office_ceo_members)console.log(p)' "$GOVERNANCE_BOOTSTRAP")
+  details=$(contactctl_payload "$(node -e 'process.stdout.write(JSON.stringify({id:process.argv[1]}))' "$group_id")" group_get) || return 1
+  desired=$(node -e 'const x=require(process.argv[1]);process.stdout.write(JSON.stringify([...x.office_ceo_members].sort()))' "$GOVERNANCE_BOOTSTRAP")
+  actual=$(node -e 'const x=JSON.parse(process.argv[1]);process.stdout.write(JSON.stringify((x.group?.members||[]).map(p=>p.id).sort()))' "$details")
+  [ "$actual" = "$desired" ] || return 1
+  payload=$(node -e 'process.stdout.write(JSON.stringify({operation_key:"governance-bind-group-"+process.argv[1],key:process.argv[2],entity_id:process.argv[3]}))' "$SOURCE_REVISION" "$GOVERNANCE_GROUP_BINDING" "$group_id")
+  taskctl_payload "$payload" config set >/dev/null || return 1
+  local personal_label; personal_label=$(node -e 'process.stdout.write(require(process.argv[1]).personal_label_id)' "$GOVERNANCE_BOOTSTRAP") || return 1
+  payload=$(node -e 'process.stdout.write(JSON.stringify({operation_key:"governance-bind-personal-"+process.argv[1],key:process.argv[2],entity_id:process.argv[3]}))' "$SOURCE_REVISION" "$GOVERNANCE_PERSONAL_BINDING" "$personal_label")
+  taskctl_payload "$payload" config set >/dev/null || return 1
+  governance_bindings_exact
+}
 start_gateway_best_effort(){ systemctl_user start openclaw-gateway.service >/dev/null 2>&1 || true; GATEWAY_STOPPED=0; }
 
 abort_deploy(){
@@ -391,7 +453,10 @@ try{
   const physical_v7=physical_v5&&recurrenceShape&&people.length===0&&aliases.length===0;
   const reminders=cols('reminders'),reminderShape=['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>reminders.includes(x));
   const physical_v8=physical_v7&&reminderShape;
-  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_v4,physical_v5,physical_v6,physical_v7,physical_v8}));
+  const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests');
+  const governanceShape=['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))&&['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x));
+  const physical_v9=physical_v8&&governanceShape;
+  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_v4,physical_v5,physical_v6,physical_v7,physical_v8,physical_v9}));
 }finally{db.close();}
 NODE
 }
@@ -492,9 +557,9 @@ contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || { [ "$CONTACTS_P
 
 taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
 taskctl_starting_eligible(){ local identity current schema found_v=0 found_s=0 v; identity=$(taskctl_runtime_identity) || return 1; current=${identity%% *}; schema=${identity##* }; for v in $FROM_TASKCTL_VERSIONS; do [ "$current" = "$v" ] && found_v=1; done; for v in $FROM_SQLITE_SCHEMAS; do [ "$schema" = "$v" ] && found_s=1; done; [ "$found_v" -eq 1 ] && [ "$found_s" -eq 1 ]; }
-db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6)||(want===7&&!s.physical_v7)||(want===8&&!s.physical_v8))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
+db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6)||(want===7&&!s.physical_v7)||(want===8&&!s.physical_v8)||(want===9&&!s.physical_v9))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
 db_starting_eligible(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),allowed=process.argv[2].split(/ +/).filter(Boolean).map(Number);if(!allowed.includes(s.user_version)||s.integrity!=="ok"||s.fk!==0||(s.user_version===4&&!s.physical_v4)||(s.user_version===5&&!s.physical_v5)||(s.user_version===6&&!s.physical_v6)||(s.user_version===7&&!s.physical_v7))process.exit(1)' "$state" "$FROM_SQLITE_SCHEMAS"; }
-target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && main_contacts_policy_target_exact && oc config validate >/dev/null 2>&1; }
+target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && governance_bindings_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && main_contacts_policy_target_exact && oc config validate >/dev/null 2>&1; }
 starting_runtime_eligible(){
   db_starting_eligible || return 1; taskctl_starting_eligible || return 1; contacts_starting_eligible || return 1; main_contacts_policy_starting_eligible || return 1
   local pv found=0 v; pv=$(plugin_version) || return 1; for v in $FROM_PLUGIN_VERSIONS; do [ "$pv" = "$v" ] && found=1; done; [ "$found" -eq 1 ] || return 1
@@ -561,6 +626,7 @@ NODE
   fi
   [ -n "$FROM_PLUGIN_VERSIONS" ] || abort_deploy "PREFLIGHT" "runtime is not exact target and release declares no eligible starting generation"
   starting_runtime_eligible || abort_deploy "PREFLIGHT" "runtime does not match declared starting fingerprint"
+  if [ "$GOVERNANCE_ENABLED" = "1" ]; then governance_bootstrap_validate || abort_deploy "PREFLIGHT" "Task governance bootstrap is missing, unsafe, or does not resolve to canonical predecessor Persons/Label"; fi
   if [ "$MATERIALIZER_ENABLED" = "1" ]; then
     if calendar_materializer_exact; then
       START_MATERIALIZER_EXACT=1
@@ -674,6 +740,7 @@ main(){
     else reminder_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Reminder dispatcher appeared or drifted after preflight"; fi
   fi
   if [ "$IMPORTANT_DATE_ENABLED" = "1" ] && [ "$START_IMPORTANT_DATE_EXACT" -eq 0 ]; then important_date_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Important Dates dispatcher appeared or drifted after preflight"; fi
+  if [ "$GOVERNANCE_ENABLED" = "1" ]; then governance_bootstrap_validate || abort_deploy "PREFLIGHT_OUTAGE" "Task governance bootstrap changed after preflight"; fi
   systemctl_user stop openclaw-gateway.service || abort_deploy "OUTAGE" "failed to stop Gateway"; GATEWAY_STOPPED=1; maybe_fault "after-stop"
   starting_runtime_eligible || abort_deploy "PREFLIGHT_OFFLINE" "starting runtime changed after preflight"
 
@@ -701,6 +768,8 @@ main(){
   node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2],s=Number(process.argv[3]);if(h.implementation_version!==v||h.schema_version!==s)process.exit(1)' "$migrated_health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA" || abort_deploy "SCHEMA_MIGRATION" "target taskctl/schema identity validation failed"
   db_generation_exact || abort_deploy "SCHEMA_MIGRATION" "target database generation validation failed"
   maybe_fault "after-migration"
+  if [ "$GOVERNANCE_ENABLED" = "1" ]; then activate_governance || abort_deploy "GOVERNANCE_ACTIVATION" "failed to create or validate Office CEO Person Group and Task governance bindings"; fi
+  maybe_fault "after-governance-activation"
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then rm -f "$WORKSPACE/TOOLS.md" || abort_deploy "WORKSPACE_INSTALL" "failed to remove retired TOOLS.md"; fi
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do install -m 644 "$ROOT/workspace/$f" "$WORKSPACE/$f" || abort_deploy "WORKSPACE_INSTALL" "workspace install failed: $f"; done
   oc plugins install "$ARTIFACT" --force --accept-capabilities || abort_deploy "PLUGIN_INSTALL" "plugin install failed"

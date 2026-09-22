@@ -10,7 +10,7 @@ DB="$TMP/contacts.sqlite3"
 run(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
 fail_action(){ local payload=$1 action=$2 code=$3 out rc; set +e; out=$(run "$payload" "$action"); rc=$?; set -e; [ "$rc" -ne 0 ]; node -e 'const x=JSON.parse(process.argv[1]);if(x?.error?.code!==process.argv[2])process.exit(1)' "$out" "$code"; }
 
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==2||x.implementation_version!=="0.1.3")process.exit(1)})'
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.4")process.exit(1)})'
 run '{"operation_key":"p1","display_name":"Иванов И."}' create >/dev/null
 
 # Birthday creation requires an explicit reminders array; zero means intentionally no reminder.
@@ -117,7 +117,7 @@ set -e
 node -e 'const x=JSON.parse(process.argv[1]);if(x?.error?.code!=="INTERNAL_ERROR"||!String(x?.error?.message||"").includes("Unsupported Contacts schema version 1"))process.exit(1)' "$pre_migrate"
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" "$CONTACTCTL" init >/dev/null
 node - "$MDB" "$TMP/before.json" <<'NODE'
-const fs=require('node:fs'),{DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[3])),d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==2)process.exit(1);const after={people:d.prepare('select id,display_name,is_self,status from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all()};if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(d.prepare('pragma foreign_key_check').all().length)process.exit(3);d.close();
+const fs=require('node:fs'),{DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[3])),d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==3)process.exit(1);const after={people:d.prepare('select id,display_name,is_self,status from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all()};if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(d.prepare('pragma foreign_key_check').all().length)process.exit(3);d.close();
 NODE
 FDB="$TMP/fault.sqlite3"
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$FDB" "$OLD/contactctl" init >/dev/null

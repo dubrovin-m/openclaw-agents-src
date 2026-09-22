@@ -37,6 +37,13 @@ describe("Contacts bounded tool surface",()=>{
     expect(manifest.toolMetadata?.[CONTACT_DATE_REMINDER_DISPATCH_TOOL]?.optional).toBe(true);
     for(const action of actions)expect(manifest.toolMetadata?.[action]?.optional).not.toBe(true);
   });
+  it("exposes bounded Person Group schemas",()=>{
+    expect(Value.Check(CONTACT_SCHEMAS.contact_group_create,{operation_key:"g1",display_name:"Office CEO"})).toBe(true);
+    expect(Value.Check(CONTACT_SCHEMAS.contact_group_get,{id:"PG-1"})).toBe(true);
+    expect(Value.Check(CONTACT_SCHEMAS.contact_group_member_add,{operation_key:"gm1",group_id:"PG-1",person:"P-2"})).toBe(true);
+    expect(Value.Check(CONTACT_SCHEMAS.contact_group_member_add,{operation_key:"gm1",group_id:"P-1",person:"P-2"})).toBe(false);
+  });
+
   it("requires an explicit reminder decision to create an ImportantDate",()=>{
     const base={operation_key:"x",person:"Иванов",type:"BIRTHDAY",month:10,day:17};
     expect(Value.Check(CONTACT_SCHEMAS.contact_date_create,{...base,reminders:[]})).toBe(true);

@@ -2,14 +2,17 @@
 set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
+CONTACTCTL="$ROOT/../../shared/contacts/contactctl"
 TASKCTL=${1:-$ROOT/taskctl}
 RELEASE_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 DB="$TMP/tasks.sqlite3"
 NOW="2026-09-03T07:00:00Z"
-run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$1" node "$TASKCTL" "$2" "$3"; }
-plain(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" "$@"; }
+CDB="$TMP/contacts.sqlite3"
+run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$1" node "$TASKCTL" "$2" "$3"; }
+crun(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" CONTACTCTL_PAYLOAD="$1" node "$CONTACTCTL" "$2"; }
+plain(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" "$@"; }
 ids(){ node -e 'const x=JSON.parse(process.argv[1]); process.stdout.write(x.tasks.map(t=>t.id).join(","))' "$1"; }
 contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exit 1; }; }
 expect_ids(){ local payload=$1 expected=$2 actual; actual=$(ids "$(run "$payload" task list)"); [ "$actual" = "$expected" ] || { echo "unexpected task order" >&2; echo "expected=$expected" >&2; echo "actual=$actual" >&2; exit 1; }; }
@@ -18,9 +21,14 @@ expect_ids(){ local payload=$1 expected=$2 actual; actual=$(ids "$(run "$payload
 # multi-Label first-canonical grouping, unlabeled-last behavior, due_time ordering,
 # stable replay, and no list-side mutation.
 a=$(plain init)
-node -e 'const x=JSON.parse(process.argv[1]); if(x.implementation_version!==process.argv[2] || x.schema_version!==8) process.exit(1)' "$a" "$RELEASE_TASKCTL_VERSION"
+node -e 'const x=JSON.parse(process.argv[1]); if(x.implementation_version!==process.argv[2] || x.schema_version!==9) process.exit(1)' "$a" "$RELEASE_TASKCTL_VERSION"
 run '{"operation_key":"la","display_name":"А"}' label create >/dev/null
 run '{"operation_key":"lb","display_name":"Б"}' label create >/dev/null
+crun '{"operation_key":"b6:office-group","display_name":"Office CEO"}' group_create >/dev/null
+crun '{"operation_key":"b6:office-self","group_id":"PG-1","person":"P-1"}' group_member_add >/dev/null
+run '{"operation_key":"b6:bind-office","key":"OFFICE_CEO_GROUP","entity_id":"PG-1"}' config set >/dev/null
+run '{"operation_key":"personal-label","display_name":"Personal fixture"}' label create >/dev/null
+run '{"operation_key":"b6:bind-personal","key":"PERSONAL_LABEL","entity_id":"L-3"}' config set >/dev/null
 
 run '{"operation_key":"t1","title":"Future B","assignee":"Дубровин М.","due_date":"2026-09-05","labels":["Б"]}' task create >/dev/null
 run '{"operation_key":"t2","title":"Overdue B","assignee":"Дубровин М.","due_date":"2026-09-01","labels":["Б"]}' task create >/dev/null
@@ -40,7 +48,7 @@ run '{"operation_key":"t14","title":"Tomorrow unlabeled","assignee":"Дубро�
 before=$(plain health)
 expect_ids '{}' 'T-4,T-2,T-9,T-3,T-10,T-11,T-13,T-5,T-12,T-14,T-7,T-1,T-6,T-8'
 expect_ids '{}' 'T-4,T-2,T-9,T-3,T-10,T-11,T-13,T-5,T-12,T-14,T-7,T-1,T-6,T-8'
-expect_ids '{"view":"today"}' 'T-4,T-2,T-9,T-3,T-10'
+expect_ids '{"view":"today"}' 'T-2,T-4,T-9,T-10,T-3'
 expect_ids '{"due_on":"2026-09-03"}' 'T-9,T-3,T-10'
 after=$(plain health)
 [ "$before" = "$after" ] || { echo "task_list mutated operational state" >&2; exit 1; }

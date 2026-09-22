@@ -13,8 +13,8 @@ const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_CONTACTS_LIB, 'core.cjs')) ?
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 const contactStore = require(path.join(CONTACTS_LIB, 'task-store.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.4.11';
-const SCHEMA_VERSION = 8;
+const IMPLEMENTATION_VERSION = '0.4.12';
+const SCHEMA_VERSION = 9;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = contacts.SELF_NAME;
 const PROD_DB = path.join(os.homedir(), '.openclaw', 'data', 'tasks', 'tasks.sqlite3');
@@ -144,6 +144,14 @@ const CREATE_V8 = [CREATE_V7,
 ].join('\n');
 
 
+const CREATE_V9 = [CREATE_V8,
+  "CREATE TABLE IF NOT EXISTS task_domain_bindings(binding_key TEXT PRIMARY KEY CHECK(binding_key IN ('OFFICE_CEO_GROUP','PERSONAL_LABEL')), entity_id INTEGER NOT NULL CHECK(entity_id>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;",
+  "CREATE TABLE IF NOT EXISTS deadline_change_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT, base_due_date TEXT, base_due_time TEXT, requested_due_date TEXT, requested_due_time TEXT, reason TEXT NOT NULL CHECK(length(trim(reason))>0), status TEXT NOT NULL CHECK(status IN ('PENDING','APPROVED','REJECTED','SUPERSEDED')), approved_due_date TEXT, approved_due_time TEXT, created_at TEXT NOT NULL, resolved_at TEXT) STRICT;",
+  "CREATE UNIQUE INDEX IF NOT EXISTS idx_deadline_change_requests_pending_task ON deadline_change_requests(task_id) WHERE status='PENDING';",
+  "CREATE INDEX IF NOT EXISTS idx_deadline_change_requests_task ON deadline_change_requests(task_id,id);",
+].join('\n');
+
+
 function ensureLegacySelf(db, at=now()) {
   const rows=db.prepare('SELECT id FROM people WHERE display_name=? ORDER BY id').all(SELF_NAME);
   if(rows.length>1) throw new AppError('INTEGRITY_ERROR','Multiple canonical self Person rows exist');
@@ -169,7 +177,7 @@ function migrate(db){
   let version=Number(db.prepare('PRAGMA main.user_version').get().user_version);
   if(version===0){
     contactStore.attachContacts(db,contactStore.contactsDbPath(),{create:true});contactStore.configureJournals(db);db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
-    try{contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts',SELF_NAME);db.exec(CREATE_V8);db.exec('PRAGMA main.user_version=8; COMMIT;');}
+    try{contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts',SELF_NAME);db.exec(CREATE_V9);db.exec('PRAGMA main.user_version=9; COMMIT;');}
     catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}
     return;
   }
@@ -185,8 +193,9 @@ function migrate(db){
   }
   if(version===6){contactStore.migrateV6ToV7(db);version=7;}
   if(version===7){db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');try{db.exec(CREATE_V8);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_REMINDER_MIGRATION_FAULT==='after-reminder-ddl')throw new AppError('TEST_REMINDER_MIGRATION_FAULT','Synthetic Reminder migration fault after Reminder DDL');db.exec('PRAGMA main.user_version=8; COMMIT;');}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=8;}
+  if(version===8){db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');try{db.exec(CREATE_V9);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_DEADLINE_REQUEST_MIGRATION_FAULT==='after-deadline-request-ddl')throw new AppError('TEST_DEADLINE_REQUEST_MIGRATION_FAULT','Synthetic Deadline Change Request migration fault');db.exec('PRAGMA main.user_version=9; COMMIT;');}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=9;}
   if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Unsupported schema version ${version}; target schema is ${SCHEMA_VERSION}`);
-  db.exec(CREATE_V8);contactStore.prepareV7(db);
+  db.exec(CREATE_V9);contactStore.prepareV7(db);
 }
 function openDb(){const dir=path.dirname(DB_PATH);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}const db=new DatabaseSync(DB_PATH,{timeout:5000});db.function('task_ci',{deterministic:true},ci);migrate(db);db.exec('PRAGMA foreign_keys=ON;');contactStore.prepareV7(db);try{fs.chmodSync(DB_PATH,0o600);}catch{}return db;}
 function openReadDb(){const db=new DatabaseSync(DB_PATH,{readOnly:true,timeout:5000});db.function('task_ci',{deterministic:true},ci);db.exec('PRAGMA foreign_keys=ON;');return db;}
@@ -197,21 +206,32 @@ function reviewSnapshot(p){
   try{
     const version=Number(db.prepare('PRAGMA user_version').get().user_version);
     if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Daily Review requires schema ${SCHEMA_VERSION}; found ${version}`);
-    const contactsPath=contactStore.contactsDbPath();if(!fs.existsSync(contactsPath))throw new AppError('CONTACTS_NOT_FOUND','Contacts database is missing');contactStore.attachContacts(db,contactsPath);db.exec('PRAGMA query_only=ON;');
+    const contactsPath=contactStore.contactsDbPath();if(!fs.existsSync(contactsPath))throw new AppError('CONTACTS_NOT_FOUND','Contacts database is missing');
+    contactStore.attachContacts(db,contactsPath);
+    const contactsVersion=Number(db.prepare('PRAGMA contacts.user_version').get().user_version);
+    if(contactsVersion!==contacts.CONTACT_SCHEMA_VERSION)throw new AppError('UNSUPPORTED_CONTACTS_SCHEMA',`Daily Review requires Contacts schema ${contacts.CONTACT_SCHEMA_VERSION}; found ${contactsVersion}`);
+    db.exec('PRAGMA query_only=ON;');
     db.exec('BEGIN;'); inTx=true;
+    const officeGroup=requireOfficeCeoGroup(db),personalLabel=requirePersonalLabel(db);
     const inboxCount=Number(db.prepare('SELECT count(*) n FROM inbox_items WHERE received_at<=?').get(boundary).n);
-    const rows=db.prepare(`SELECT t.id,t.title,p.display_name assignee,t.due_date,t.due_time,t.project_id,pr.title project_title,pr.status project_status,t.created_at FROM tasks t JOIN contacts.people ps ON ps.id=t.assignee_id JOIN contacts.people p ON p.id=CASE WHEN ps.status='MERGED' THEN ps.merged_into ELSE ps.id END LEFT JOIN projects pr ON pr.id=t.project_id WHERE t.status='OPEN' AND t.created_at<=? ORDER BY t.id`).all(boundary);
+    const rows=db.prepare(`SELECT t.id,t.title,p.id assignee_canonical_id,p.display_name assignee,t.due_date,t.due_time,t.project_id,pr.title project_title,pr.status project_status,t.created_at FROM tasks t JOIN contacts.people ps ON ps.id=t.assignee_id JOIN contacts.people p ON p.id=CASE WHEN ps.status='MERGED' THEN ps.merged_into ELSE ps.id END LEFT JOIN projects pr ON pr.id=t.project_id WHERE t.status='OPEN' AND t.created_at<=? ORDER BY t.id`).all(boundary);
     const labelRows=db.prepare(`SELECT tl.task_id,l.id,l.display_name,l.emoji FROM task_labels tl JOIN labels l ON l.id=tl.label_id JOIN tasks t ON t.id=tl.task_id WHERE t.status='OPEN' AND t.created_at<=? ORDER BY tl.task_id,l.display_name,l.id`).all(boundary);
     const labels=new Map();
     for(const row of labelRows){const list=labels.get(row.task_id)??[];list.push({id:`L-${row.id}`,display_name:row.display_name,emoji:row.emoji??null});labels.set(row.task_id,list);}
-    const tasks=rows.map(row=>({id:`T-${row.id}`,title:row.title,assignee:row.assignee,due_date:row.due_date??null,due_time:row.due_time??null,project_id:row.project_id===null?null:`PRJ-${row.project_id}`,project_title:row.project_title??null,project_status:row.project_status??null,created_at:row.created_at,labels:labels.get(row.id)??[]}));
+    const pendingRows=db.prepare("SELECT * FROM deadline_change_requests WHERE status='PENDING' ORDER BY task_id,id").all(),pending=new Map(pendingRows.map(row=>[row.task_id,row]));
+    const tasks=rows.map(row=>({
+      id:`T-${row.id}`,title:row.title,assignee:row.assignee,due_date:row.due_date??null,due_time:row.due_time??null,
+      project_id:row.project_id===null?null:`PRJ-${row.project_id}`,project_title:row.project_title??null,project_status:row.project_status??null,
+      created_at:row.created_at,labels:labels.get(row.id)??[],
+      office_ceo:contacts.personInGroup(db,officeGroup.id,row.assignee_canonical_id,'contacts'),
+      personal:Boolean((labels.get(row.id)??[]).some(label=>label.id===`L-${personalLabel.id}`)),
+      pending_deadline_change_request:pending.has(row.id)?fmtDeadlineChangeRequest(pending.get(row.id)):null,
+    }));
     db.exec('COMMIT;'); inTx=false;
     return{ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,boundary,inbox_count:inboxCount,tasks};
   }catch(e){if(inTx){try{db.exec('ROLLBACK;');}catch{}}throw e;}finally{db.close();}
 }
 
-const MANAGEMENT_REVIEW_EXCLUSIONS=['Савельев','Дубровин','Воронин','Митин','Побединская','Колесникова'];
-const RU_MONTHS_FULL=['января','февраля','марта','апреля','мая','июня','июля','августа','сентября','октября','ноября','декабря'];
 function localMidnightIso(value){
   const [year,month,day]=value.split('-').map(Number),target=Date.UTC(year,month-1,day,0,0,0);let guess=target;
   for(let i=0;i<4;i+=1){const parts=Object.fromEntries(new Intl.DateTimeFormat('en-CA',{timeZone:TZ,year:'numeric',month:'2-digit',day:'2-digit',hour:'2-digit',minute:'2-digit',second:'2-digit',hourCycle:'h23'}).formatToParts(new Date(guess)).filter(x=>x.type!=='literal').map(x=>[x.type,x.value]));const represented=Date.UTC(Number(parts.year),Number(parts.month)-1,Number(parts.day),Number(parts.hour),Number(parts.minute),Number(parts.second));const delta=target-represented;if(delta===0)break;guess+=delta;}
@@ -219,21 +239,33 @@ function localMidnightIso(value){
   if(`${parts.year}-${parts.month}-${parts.day}`!==value||parts.hour!=='00'||parts.minute!=='00')throw new AppError('TIMEZONE_ERROR',`Cannot resolve ${value} midnight in ${TZ}`);return iso;
 }
 function managementReviewSnapshot(p){
-  const raw=required(p,'boundary',40),instant=new Date(raw);if(Number.isNaN(instant.getTime()))throw new AppError('INVALID_BOUNDARY','boundary must be a valid ISO timestamp');
+  const raw=required(p,'boundary',40),instant=new Date(raw);
+  if(Number.isNaN(instant.getTime()))throw new AppError('INVALID_BOUNDARY','boundary must be a valid ISO timestamp');
   const boundary=instant.toISOString(),reportDate=localDateAt(boundary),nextDate=addLocalDays(reportDate,1),dayStart=localMidnightIso(reportDate),dayEnd=localMidnightIso(nextDate),db=openReadDb();let inTx=false;
   try{
-    const version=Number(db.prepare('PRAGMA user_version').get().user_version);if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Management Review requires schema ${SCHEMA_VERSION}; found ${version}`);
-    const contactsPath=contactStore.contactsDbPath();if(!fs.existsSync(contactsPath))throw new AppError('CONTACTS_NOT_FOUND','Contacts database is missing');contactStore.attachContacts(db,contactsPath);db.exec('PRAGMA query_only=ON;');
+    const version=Number(db.prepare('PRAGMA user_version').get().user_version);
+    if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Management Review requires schema ${SCHEMA_VERSION}; found ${version}`);
+    const contactsPath=contactStore.contactsDbPath();if(!fs.existsSync(contactsPath))throw new AppError('CONTACTS_NOT_FOUND','Contacts database is missing');
+    contactStore.attachContacts(db,contactsPath);
+    const contactsVersion=Number(db.prepare('PRAGMA contacts.user_version').get().user_version);
+    if(contactsVersion!==contacts.CONTACT_SCHEMA_VERSION)throw new AppError('UNSUPPORTED_CONTACTS_SCHEMA',`Management Review requires Contacts schema ${contacts.CONTACT_SCHEMA_VERSION}; found ${contactsVersion}`);
+    db.exec('PRAGMA query_only=ON;');
     db.exec('BEGIN;');inTx=true;
-    const excluded=[];for(const reference of MANAGEMENT_REVIEW_EXCLUSIONS){const matches=peopleMatching(db,reference);if(matches.length>1)throw new AppError('AMBIGUOUS_PERSON',`Management Review exclusion is ambiguous: ${reference}`,{reference,candidates:matches.map(fmtPerson)});if(matches.length===1)excluded.push({reference,id:matches[0].id,display_name:matches[0].display_name});}
-    const ids=[...new Set(excluded.map(x=>x.id))],notIn=ids.length?` AND p.id NOT IN (${ids.map(()=>'?').join(',')})`:'';
+    const officeGroup=requireOfficeCeoGroup(db);
     const personJoin=" JOIN contacts.people ps ON ps.id=t.assignee_id JOIN contacts.people p ON p.id=CASE WHEN ps.status='MERGED' THEN ps.merged_into ELSE ps.id END";
-    const overdue=db.prepare(`SELECT t.title,p.id assignee_canonical_id,p.display_name assignee,t.due_date,t.due_time FROM tasks t${personJoin} WHERE t.status='OPEN' AND t.created_at<=? AND t.due_date IS NOT NULL AND t.due_date<?${notIn}`).all(boundary,reportDate,...ids).map(r=>({title:r.title,assignee_id:`P-${r.assignee_canonical_id}`,assignee:r.assignee,due_date:r.due_date,due_time:r.due_time??null}));
-    const completed=db.prepare(`SELECT t.title,p.id assignee_canonical_id,p.display_name assignee,t.completed_at FROM tasks t${personJoin} WHERE t.status='DONE' AND t.completed_at>=? AND t.completed_at<? AND t.completed_at<=?${notIn}`).all(dayStart,dayEnd,boundary,...ids).map(r=>({title:r.title,assignee_id:`P-${r.assignee_canonical_id}`,assignee:r.assignee,completed_at:r.completed_at}));
-    overdue.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.due_date.localeCompare(b.due_date)||(a.due_time??'').localeCompare(b.due_time??'')||a.title.localeCompare(b.title,'ru-RU'));completed.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.completed_at.localeCompare(b.completed_at)||a.title.localeCompare(b.title,'ru-RU'));
-    const dateText=(()=>{const [y,m,d]=reportDate.split('-').map(Number);return `${d} ${RU_MONTHS_FULL[m-1]} ${y}`;})(),group=(rows,render)=>{const blocks=[];let current=null,items=[];const flush=()=>{if(current!==null)blocks.push(`${current}\n${items.map((x,i)=>`${i+1}. ${render(x)}`).join('\n')}`);};for(const row of rows){if(row.assignee!==current){flush();current=row.assignee;items=[];}items.push(row);}flush();return blocks.join('\n\n');};
-    const overdueBody=group(overdue,row=>`${row.title} — срок ${row.due_date.slice(8,10)}.${row.due_date.slice(5,7)}`),completedBody=group(completed,row=>row.title),sections=[`ПРОСРОЧЕННЫЕ ПОРУЧЕНИЯ — ${overdue.length}${overdueBody?`\n\n${overdueBody}`:''}`,`ВЫПОЛНЕНО СЕГОДНЯ — ${completed.length}${completedBody?`\n\n${completedBody}`:''}`];
-    db.exec('COMMIT;');inTx=false;return{ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,boundary,local_date:reportDate,timezone:TZ,excluded_people:excluded.map(x=>({reference:x.reference,id:`P-${x.id}`,display_name:x.display_name})),overdue_count:overdue.length,completed_today_count:completed.length,message:`${dateText}\n\n${sections.join('\n\n')}`};
+    const completedRaw=db.prepare(`SELECT t.id,t.title,p.id assignee_canonical_id,p.display_name assignee,t.completed_at FROM tasks t${personJoin} WHERE t.status='DONE' AND t.completed_at>=? AND t.completed_at<? AND t.completed_at<=? ORDER BY t.id`).all(dayStart,dayEnd,boundary);
+    const dueRaw=db.prepare(`SELECT t.id,t.title,p.id assignee_canonical_id,p.display_name assignee,t.due_date,t.due_time FROM tasks t${personJoin} WHERE t.status='OPEN' AND t.created_at<=? AND t.due_date IS NOT NULL AND t.due_date<=? ORDER BY t.id`).all(boundary,reportDate);
+    const outsideOffice=row=>!contacts.personInGroup(db,officeGroup.id,row.assignee_canonical_id,'contacts');
+    const completed=completedRaw.filter(outsideOffice).map(row=>({id:`T-${row.id}`,title:row.title,assignee_id:`P-${row.assignee_canonical_id}`,assignee:row.assignee,completed_at:row.completed_at}));
+    const notCompleted=dueRaw.filter(outsideOffice).map(row=>{
+      const pending=db.prepare("SELECT * FROM deadline_change_requests WHERE task_id=? AND status='PENDING' AND created_at<=? ORDER BY id DESC LIMIT 1").get(row.id,boundary);
+      const comments=db.prepare('SELECT * FROM task_comments WHERE task_id=? AND created_at<=? ORDER BY id DESC LIMIT 5').all(row.id,boundary).reverse().map(fmtComment);
+      return{id:`T-${row.id}`,title:row.title,assignee_id:`P-${row.assignee_canonical_id}`,assignee:row.assignee,due_date:row.due_date,due_time:row.due_time??null,pending_deadline_change_request:pending?fmtDeadlineChangeRequest(pending):null,comments};
+    });
+    completed.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.completed_at.localeCompare(b.completed_at)||a.id.localeCompare(b.id));
+    notCompleted.sort((a,b)=>a.assignee.localeCompare(b.assignee,'ru-RU')||a.due_date.localeCompare(b.due_date)||(a.due_time??'').localeCompare(b.due_time??'')||a.id.localeCompare(b.id));
+    db.exec('COMMIT;');inTx=false;
+    return{ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,boundary,local_date:reportDate,timezone:TZ,office_ceo_group_id:`PG-${officeGroup.id}`,completed_count:completed.length,not_completed_count:notCompleted.length,completed,not_completed:notCompleted};
   }catch(e){if(inTx){try{db.exec('ROLLBACK;');}catch{}}throw e;}finally{db.close();}
 }
 
@@ -263,6 +295,124 @@ function resolveProject(db,ref){const n=projectId(ref),r=db.prepare('SELECT * FR
 function requireActiveProject(db,ref){const r=resolveProject(db,ref);if(r.status!=='ACTIVE')throw new AppError('INVALID_STATE',`Project PRJ-${r.id} is ${r.status} and cannot accept a new Task association`,{project:fmtProject(r)});return r;}
 function projectCounts(db,n){const rows=db.prepare('SELECT status,count(*) n FROM tasks WHERE project_id=? GROUP BY status').all(n),counts={total:0,OPEN:0,DONE:0,CANCELLED:0};for(const r of rows){counts[r.status]=Number(r.n);counts.total+=Number(r.n);}return counts;}
 function projectPresented(db,r){return{...fmtProject(r),task_counts:projectCounts(db,r.id)};}
+
+
+
+const TASK_BINDINGS=new Set(['OFFICE_CEO_GROUP','PERSONAL_LABEL']);
+function bindingRow(db,key){
+  if(!TASK_BINDINGS.has(key))throw new AppError('INVALID_FIELD','Unsupported Task domain binding',{binding_key:key});
+  return db.prepare('SELECT * FROM task_domain_bindings WHERE binding_key=?').get(key)??null;
+}
+function requireOfficeCeoGroup(db){
+  const binding=bindingRow(db,'OFFICE_CEO_GROUP');
+  if(!binding)throw new AppError('OFFICE_CEO_BINDING_MISSING','Office CEO Person Group binding is not configured');
+  const group=contacts.rawPersonGroup(db,binding.entity_id,'contacts');
+  if(!group)throw new AppError('OFFICE_CEO_GROUP_MISSING','Bound Office CEO Person Group does not exist',{group_id:'PG-'+binding.entity_id});
+  return group;
+}
+function requirePersonalLabel(db){
+  const binding=bindingRow(db,'PERSONAL_LABEL');
+  if(!binding)throw new AppError('PERSONAL_LABEL_BINDING_MISSING','Personal Label binding is not configured');
+  const label=db.prepare('SELECT * FROM labels WHERE id=?').get(binding.entity_id);
+  if(!label)throw new AppError('PERSONAL_LABEL_MISSING','Bound personal Label does not exist',{label_id:'L-'+binding.entity_id});
+  return label;
+}
+function personInOfficeCeo(db,personId){
+  const group=requireOfficeCeoGroup(db);
+  try{return contacts.personInGroup(db,group.id,personId,'contacts');}
+  catch(error){throw new AppError('OFFICE_CEO_MEMBERSHIP_UNAVAILABLE',error.message);}
+}
+function taskIsPersonal(db,taskId){
+  const label=requirePersonalLabel(db);
+  return Boolean(db.prepare('SELECT 1 ok FROM task_labels WHERE task_id=? AND label_id=?').get(taskId,label.id));
+}
+function taskBinding(db,action,p){
+  if(action==='get'){
+    const key=required(p,'key',100),row=bindingRow(db,key);
+    return{ok:true,binding:row?{key:row.binding_key,entity_id:key==='OFFICE_CEO_GROUP'?'PG-'+row.entity_id:'L-'+row.entity_id,created_at:row.created_at,updated_at:row.updated_at}:null};
+  }
+  if(action==='validate'){
+    const group=requireOfficeCeoGroup(db),label=requirePersonalLabel(db);
+    return{ok:true,office_ceo_group_id:'PG-'+group.id,personal_label_id:'L-'+label.id};
+  }
+  if(action==='set')return mutate(db,'config.binding_set',p,()=>{
+    const key=required(p,'key',100);
+    if(!TASK_BINDINGS.has(key))throw new AppError('INVALID_FIELD','Unsupported Task domain binding',{binding_key:key});
+    const raw=required(p,'entity_id',100);let entityId;
+    if(key==='OFFICE_CEO_GROUP'){
+      try{entityId=contacts.personGroupNumber(raw);}catch{throw new AppError('INVALID_ID','OFFICE_CEO_GROUP requires a canonical PG-* identifier');}
+      if(!contacts.rawPersonGroup(db,entityId,'contacts'))throw new AppError('NOT_FOUND','Person Group PG-'+entityId+' not found',undefined,3);
+    }else{
+      entityId=id(raw,'L');
+      if(!db.prepare('SELECT 1 FROM labels WHERE id=?').get(entityId))throw new AppError('NOT_FOUND','Label L-'+entityId+' not found',undefined,3);
+    }
+    const at=now(),prior=bindingRow(db,key);
+    if(prior?.entity_id===entityId)return{ok:true,binding:{key,entity_id:key==='OFFICE_CEO_GROUP'?'PG-'+entityId:'L-'+entityId},changed:false};
+    db.prepare('INSERT INTO task_domain_bindings(binding_key,entity_id,created_at,updated_at) VALUES(?,?,?,?) ON CONFLICT(binding_key) DO UPDATE SET entity_id=excluded.entity_id,updated_at=excluded.updated_at').run(key,entityId,prior?.created_at??at,at);
+    return{ok:true,binding:{key,entity_id:key==='OFFICE_CEO_GROUP'?'PG-'+entityId:'L-'+entityId},changed:true};
+  });
+  throw new AppError('USAGE','Unknown config binding action: '+action);
+}
+function fmtDeadlineChangeRequest(r){
+  return{id:'DCR-'+r.id,task_id:'T-'+r.task_id,base_due_date:r.base_due_date??null,base_due_time:r.base_due_time??null,requested_due_date:r.requested_due_date??null,requested_due_time:r.requested_due_time??null,reason:r.reason,status:r.status,approved_due_date:r.approved_due_date??null,approved_due_time:r.approved_due_time??null,created_at:r.created_at,resolved_at:r.resolved_at??null};
+}
+function pendingDeadlineChangeRequest(db,taskId){
+  return db.prepare("SELECT * FROM deadline_change_requests WHERE task_id=? AND status='PENDING' ORDER BY id DESC LIMIT 1").get(taskId)??null;
+}
+function deadlineRequestHistory(db,taskId){
+  return db.prepare('SELECT * FROM deadline_change_requests WHERE task_id=? ORDER BY id').all(taskId).map(fmtDeadlineChangeRequest);
+}
+function closePendingDeadlineRequest(db,taskId,at){const req=pendingDeadlineChangeRequest(db,taskId);if(!req)return null;db.prepare("UPDATE deadline_change_requests SET status='SUPERSEDED',resolved_at=? WHERE id=? AND status='PENDING'").run(at,req.id);return fmtDeadlineChangeRequest(db.prepare('SELECT * FROM deadline_change_requests WHERE id=?').get(req.id));}
+function applyEffectiveDeadline(db,taskId,current,targetDate,targetTime,reason,at){
+  const sets=[],vals=[],events=[];
+  if(targetDate!==current.due_date){sets.push('due_date=?');vals.push(targetDate);events.push(['DUE_DATE_CHANGED',current.due_date,targetDate,reason]);}
+  if(targetTime!==current.due_time){sets.push('due_time=?');vals.push(targetTime);events.push(['DUE_TIME_CHANGED',current.due_time,targetTime,reason]);}
+  if(!sets.length)return false;
+  db.prepare('UPDATE tasks SET '+sets.join(',')+' WHERE id=?').run(...vals,taskId);
+  for(const e of events)event(db,taskId,...e,at);
+  return true;
+}
+function deadlineRequest(db,action,p){
+  const taskId=id(p.task_id,'T'),task=taskRow(db,taskId);
+  if(!task)throw new AppError('NOT_FOUND','Task T-'+taskId+' not found',undefined,3);
+  if(action==='get'){
+    const pending=pendingDeadlineChangeRequest(db,taskId);
+    return{ok:true,task:taskPresented(db,task),governance:{office_ceo:personInOfficeCeo(db,task.assignee_canonical_id)},pending:pending?fmtDeadlineChangeRequest(pending):null,history:deadlineRequestHistory(db,taskId)};
+  }
+  if(action==='create')return mutate(db,'deadline_request.create',p,()=>{
+    const current=taskRow(db,taskId);
+    if(current.status!=='OPEN')throw new AppError('INVALID_STATE','Deadline Change Request requires an OPEN Task');
+    if(personInOfficeCeo(db,current.assignee_canonical_id))throw new AppError('DIRECT_DEADLINE_CHANGE_ALLOWED','Office CEO Task deadlines are changed directly rather than through a Deadline Change Request');
+    if(!('due_date'in p)&&!('due_time'in p))throw new AppError('INVALID_FIELD','Deadline Change Request requires due_date and/or due_time');
+    const targetDate='due_date'in p?date(p.due_date):current.due_date,targetTime='due_time'in p?time(p.due_time):current.due_time;
+    deadline(targetDate,targetTime);
+    if(targetDate===current.due_date&&targetTime===current.due_time)throw new AppError('INVALID_FIELD','Requested deadline must differ from the effective Task deadline');
+    const reason=required(p,'reason',2000),at=now(),prior=pendingDeadlineChangeRequest(db,taskId);
+    if(prior)db.prepare("UPDATE deadline_change_requests SET status='SUPERSEDED',resolved_at=? WHERE id=? AND status='PENDING'").run(at,prior.id);
+    const rid=Number(db.prepare("INSERT INTO deadline_change_requests(task_id,base_due_date,base_due_time,requested_due_date,requested_due_time,reason,status,approved_due_date,approved_due_time,created_at,resolved_at) VALUES(?,?,?,?,?,?,'PENDING',NULL,NULL,?,NULL)").run(taskId,current.due_date,current.due_time,targetDate,targetTime,reason,at).lastInsertRowid);
+    return{ok:true,request:fmtDeadlineChangeRequest(db.prepare('SELECT * FROM deadline_change_requests WHERE id=?').get(rid)),superseded:prior?fmtDeadlineChangeRequest(db.prepare('SELECT * FROM deadline_change_requests WHERE id=?').get(prior.id)):null};
+  });
+  if(action==='approve')return mutate(db,'deadline_request.approve',p,()=>{
+    const current=taskRow(db,taskId);
+    if(current.status!=='OPEN')throw new AppError('INVALID_STATE','Only an OPEN Task deadline request can be approved');
+    const req=pendingDeadlineChangeRequest(db,taskId);
+    if(!req)throw new AppError('NOT_FOUND','Task T-'+taskId+' has no pending Deadline Change Request',undefined,3);
+    if(current.due_date!==req.base_due_date||current.due_time!==req.base_due_time)throw new AppError('STALE_DEADLINE_REQUEST','Effective Task deadline changed after the request was created',{effective:{due_date:current.due_date,due_time:current.due_time},base:{due_date:req.base_due_date,due_time:req.base_due_time}});
+    const override='due_date'in p||'due_time'in p,targetDate='due_date'in p?date(p.due_date):req.requested_due_date,targetTime='due_time'in p?time(p.due_time):req.requested_due_time;
+    deadline(targetDate,targetTime);
+    if(targetDate===current.due_date&&targetTime===current.due_time)throw new AppError('INVALID_FIELD','Approval deadline must differ from the current effective deadline; reject the request to keep it');
+    const at=now();applyEffectiveDeadline(db,taskId,current,targetDate,targetTime,req.reason,at);
+    db.prepare("UPDATE deadline_change_requests SET status='APPROVED',approved_due_date=?,approved_due_time=?,resolved_at=? WHERE id=? AND status='PENDING'").run(targetDate,targetTime,at,req.id);
+    return{ok:true,request:fmtDeadlineChangeRequest(db.prepare('SELECT * FROM deadline_change_requests WHERE id=?').get(req.id)),task:taskPresented(db,taskRow(db,taskId)),modified_from_request:override&&(targetDate!==req.requested_due_date||targetTime!==req.requested_due_time)};
+  });
+  if(action==='reject')return mutate(db,'deadline_request.reject',p,()=>{
+    const req=pendingDeadlineChangeRequest(db,taskId);
+    if(!req)throw new AppError('NOT_FOUND','Task T-'+taskId+' has no pending Deadline Change Request',undefined,3);
+    const at=now();db.prepare("UPDATE deadline_change_requests SET status='REJECTED',resolved_at=? WHERE id=? AND status='PENDING'").run(at,req.id);
+    return{ok:true,request:fmtDeadlineChangeRequest(db.prepare('SELECT * FROM deadline_change_requests WHERE id=?').get(req.id)),task:taskPresented(db,taskRow(db,taskId))};
+  });
+  throw new AppError('USAGE','Unknown deadline-request action: '+action);
+}
 
 
 function recurrenceLabels(db,n){return db.prepare('SELECT l.* FROM labels l JOIN recurrence_labels rl ON rl.label_id=l.id WHERE rl.recurrence_id=? ORDER BY l.display_name,l.id').all(n).map(fmtLabel);}
@@ -337,9 +487,9 @@ function inbox(db,action,p){
 
 function taskLabels(db,n){return db.prepare('SELECT l.* FROM labels l JOIN task_labels tl ON tl.label_id=l.id WHERE tl.task_id=? ORDER BY l.display_name,l.id').all(n).map(fmtLabel);}
 function taskLabelEmojis(db,n){return taskLabels(db,n).map(x=>x.emoji).filter(Boolean).filter((x,i,a)=>a.indexOf(x)===i).slice(0,3);}
-function taskPresented(db,r){const recurrence=recurrenceTaskProvenance(db,r.id);return{...fmtTask(r),label_emojis:taskLabelEmojis(db,r.id),...(recurrence?{recurrence}:{})};}
+function taskPresented(db,r){const recurrence=recurrenceTaskProvenance(db,r.id),pending=pendingDeadlineChangeRequest(db,r.id);return{...fmtTask(r),label_emojis:taskLabelEmojis(db,r.id),pending_deadline_change_request:pending?fmtDeadlineChangeRequest(pending):null,...(recurrence?{recurrence}:{})};}
 function originalDeadline(db,n){const r=db.prepare("SELECT new_value FROM task_events WHERE task_id=? AND event_type='CREATED' ORDER BY id LIMIT 1").get(n);if(!r)return null; try{const v=JSON.parse(r.new_value);return{due_date:v.due_date??null,due_time:v.due_time??null};}catch{return null;}}
-function taskDetail(db,n){const r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);const changes=db.prepare("SELECT * FROM task_events WHERE task_id=? AND event_type IN ('DUE_DATE_CHANGED','DUE_TIME_CHANGED') ORDER BY id").all(n).map(fmtEvent);const comments=db.prepare('SELECT * FROM task_comments WHERE task_id=? ORDER BY id DESC LIMIT 5').all(n).reverse().map(fmtComment);return{ok:true,task:taskPresented(db,r),labels:taskLabels(db,n),original_deadline:originalDeadline(db,n),deadline_change_count:changes.length,latest_deadline_change:changes.length?changes[changes.length-1]:null,recent_comments:comments};}
+function taskDetail(db,n){const r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND','Task T-'+n+' not found',undefined,3);const changes=db.prepare("SELECT * FROM task_events WHERE task_id=? AND event_type IN ('DUE_DATE_CHANGED','DUE_TIME_CHANGED') ORDER BY id").all(n).map(fmtEvent);const comments=db.prepare('SELECT * FROM task_comments WHERE task_id=? ORDER BY id DESC LIMIT 5').all(n).reverse().map(fmtComment);const pending=pendingDeadlineChangeRequest(db,n);return{ok:true,task:taskPresented(db,r),labels:taskLabels(db,n),original_deadline:originalDeadline(db,n),deadline_change_count:changes.length,latest_deadline_change:changes.length?changes[changes.length-1]:null,pending_deadline_change_request:pending?fmtDeadlineChangeRequest(pending):null,deadline_change_requests:deadlineRequestHistory(db,n),recent_comments:comments};}
 function taskQuery(db,p,{searchMode=false}={}){
   const c=[],a=[]; let status=p.status===undefined?(searchMode?'*':'OPEN'):p.status; if(status!=='*'){if(!['OPEN','DONE','CANCELLED'].includes(status))throw new AppError('INVALID_FIELD','status must be OPEN, DONE, CANCELLED, or *');c.push('t.status=?');a.push(status);}
   if(p.assignee!==undefined||p.assignee_id!==undefined){const per=resolvePerson(db,p.assignee_id??p.assignee);c.push("EXISTS(SELECT 1 FROM contacts.people ap WHERE ap.id=t.assignee_id AND (ap.id=? OR (ap.status='MERGED' AND ap.merged_into=?)))");a.push(per.id,per.id);}
@@ -363,17 +513,38 @@ function taskQuery(db,p,{searchMode=false}={}){
     orderArgs=[today,today,clockTime];
   }
   const rows=db.prepare(`SELECT t.*,p.id assignee_canonical_id,p.display_name assignee,p.is_self assignee_is_self,pr.title project_title,pr.status project_status FROM tasks t JOIN contacts.people ps ON ps.id=t.assignee_id JOIN contacts.people p ON p.id=CASE WHEN ps.status='MERGED' THEN ps.merged_into ELSE ps.id END LEFT JOIN projects pr ON pr.id=t.project_id ${where} ORDER BY ${ordering} LIMIT ?`).all(...a,...orderArgs,limit);
+  if(!searchMode&&status==='OPEN'&&p.view==='today'){
+    const ranked=rows.map(r=>{const personal=taskIsPersonal(db,r.id),office=personInOfficeCeo(db,r.assignee_canonical_id);const section=r.due_date<today?'OVERDUE':personal?'PERSONAL':office?'OFFICE_CEO':'TEAM';return{row:r,task:{...taskPresented(db,r),today_section:section}};});
+    const rank={OVERDUE:0,OFFICE_CEO:1,TEAM:2,PERSONAL:3};
+    ranked.sort((a,b)=>{const ar=rank[a.task.today_section],br=rank[b.task.today_section];if(ar!==br)return ar-br;if(a.task.today_section==='PERSONAL'){const at=a.row.due_time??'99:99',bt=b.row.due_time??'99:99';return at.localeCompare(bt)||a.row.id-b.row.id;}const byPerson=a.row.assignee.localeCompare(b.row.assignee,'ru-RU');if(byPerson)return byPerson;if(a.task.today_section==='OVERDUE')return (a.row.due_date??'').localeCompare(b.row.due_date??'')||(a.row.due_time??'').localeCompare(b.row.due_time??'')||a.row.id-b.row.id;return (a.row.due_time??'99:99').localeCompare(b.row.due_time??'99:99')||a.row.id-b.row.id;});
+    return{ok:true,tasks:ranked.map(x=>x.task),count:ranked.length,local_date:today,local_time:clockTime,timezone:TZ,today_view:true};
+  }
   return{ok:true,tasks:rows.map(r=>taskPresented(db,r)),count:rows.length,local_date:today,local_time:clockTime,timezone:TZ};
 }
 function task(db,action,p){
   if(action==='list')return taskQuery(db,p); if(action==='find'||action==='search')return taskQuery(db,p,{searchMode:true});
   if(action==='get'){const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);return{ok:true,task:taskPresented(db,r)};}
   if(action==='detail'){return taskDetail(db,id(p.id,'T'));}
-  if(action==='history'){const n=id(p.id,'T');if(!taskRow(db,n))throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);return{ok:true,task_id:`T-${n}`,events:db.prepare('SELECT * FROM task_events WHERE task_id=? ORDER BY id').all(n).map(fmtEvent),comments:db.prepare('SELECT * FROM task_comments WHERE task_id=? ORDER BY id').all(n).map(fmtComment)};}
+  if(action==='history'){const n=id(p.id,'T');if(!taskRow(db,n))throw new AppError('NOT_FOUND','Task T-'+n+' not found',undefined,3);return{ok:true,task_id:'T-'+n,events:db.prepare('SELECT * FROM task_events WHERE task_id=? ORDER BY id').all(n).map(fmtEvent),deadline_change_requests:deadlineRequestHistory(db,n),comments:db.prepare('SELECT * FROM task_comments WHERE task_id=? ORDER BY id').all(n).map(fmtComment)};}
   if(action==='create')return mutate(db,'task.create',p,()=>({ok:true,task:createTask(db,p)}));
-  if(action==='update')return mutate(db,'task.update',p,()=>{const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);if(r.status!=='OPEN')throw new AppError('INVALID_STATE','Only OPEN tasks can be updated');const targetDate='due_date'in p?date(p.due_date):r.due_date,targetTime='due_time'in p?time(p.due_time):r.due_time;deadline(targetDate,targetTime);const reason=optionalString(p,'reason',2000),sets=[],vals=[],ev=[]; if('title'in p){const v=required(p,'title',2000);if(v!==r.title){sets.push('title=?');vals.push(v);ev.push(['TITLE_CHANGED',r.title,v,null]);}} if('assignee'in p||'assignee_id'in p){const per=resolvePerson(db,p.assignee_id??p.assignee,{create:p.create_assignee===true});if(per.id!==r.assignee_id){sets.push('assignee_id=?');vals.push(per.id);ev.push(['ASSIGNEE_CHANGED',`P-${r.assignee_id}`,`P-${per.id}`,null]);}} if('due_date'in p&&targetDate!==r.due_date){sets.push('due_date=?');vals.push(targetDate);ev.push(['DUE_DATE_CHANGED',r.due_date,targetDate,reason]);} if('due_time'in p&&targetTime!==r.due_time){sets.push('due_time=?');vals.push(targetTime);ev.push(['DUE_TIME_CHANGED',r.due_time,targetTime,reason]);} if(!sets.length)return{ok:true,task:taskPresented(db,r),changed:false};db.prepare(`UPDATE tasks SET ${sets.join(',')} WHERE id=?`).run(...vals,n);const at=now();ev.forEach(x=>event(db,n,...x,at));return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true};});
-  if(action==='complete')return mutate(db,'task.complete',p,()=>{const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);const source=recurrenceForTask(db,n);if(r.status==='DONE'){const successor=source?.recurrence.mode==='AFTER_COMPLETION'?db.prepare('SELECT task_id FROM recurrence_occurrences WHERE predecessor_task_id=?').get(n):null;return{ok:true,task:taskPresented(db,r),changed:false,successor:successor?taskPresented(db,taskRow(db,successor.task_id)):null};}if(r.status!=='OPEN')throw new AppError('INVALID_STATE',`Cannot change ${r.status} task to DONE`);const at=now();db.prepare("UPDATE tasks SET status='DONE',completed_at=? WHERE id=?").run(at,n);event(db,n,'STATUS_CHANGED',r.status,'DONE',null,at);const closed_reminders=closeLinkedReminders(db,n,'TASK_COMPLETED',at);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_RECURRENCE_FAULT==='after-complete-before-successor')throw new AppError('TEST_RECURRENCE_FAULT','Synthetic recurrence completion fault');let successor=null;if(source?.recurrence.mode==='AFTER_COMPLETION'&&source.recurrence.status==='ACTIVE')successor=afterSuccessor(db,source.recurrence,n,localDateAt(at),at).task;return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true,successor,closed_reminders};});
-  if(action==='cancel')return mutate(db,'task.cancel',p,()=>{const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);if(r.status==='CANCELLED')return{ok:true,task:taskPresented(db,r),changed:false};if(r.status!=='OPEN')throw new AppError('INVALID_STATE',`Cannot change ${r.status} task to CANCELLED`);const at=now(),source=recurrenceForTask(db,n);db.prepare("UPDATE tasks SET status='CANCELLED',completed_at=NULL WHERE id=?").run(n);event(db,n,'STATUS_CHANGED',r.status,'CANCELLED',null,at);const closed_reminders=closeLinkedReminders(db,n,'TASK_CANCELLED',at);return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true,closed_reminders,recurrence_resolution_required:Boolean(source?.recurrence.mode==='AFTER_COMPLETION'&&source.recurrence.status==='ACTIVE'),recurrence_id:source?`R-${source.recurrence.id}`:null};});
+  if(action==='update')return mutate(db,'task.update',p,()=>{
+    const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND','Task T-'+n+' not found',undefined,3);if(r.status!=='OPEN')throw new AppError('INVALID_STATE','Only OPEN tasks can be updated');
+    const targetDate='due_date'in p?date(p.due_date):r.due_date,targetTime='due_time'in p?time(p.due_time):r.due_time;deadline(targetDate,targetTime);
+    const deadlineChanged=targetDate!==r.due_date||targetTime!==r.due_time;
+    const targetAssignee=('assignee'in p||'assignee_id'in p)?resolvePerson(db,p.assignee_id??p.assignee,{create:p.create_assignee===true}):null;
+    const pendingRequest=deadlineChanged?pendingDeadlineChangeRequest(db,n):null;
+    if(deadlineChanged&&pendingRequest)throw new AppError('DEADLINE_REQUEST_PENDING','Task has a pending Deadline Change Request; resolve it instead of changing the effective deadline directly',{task_id:'T-'+n,pending_request:fmtDeadlineChangeRequest(pendingRequest)});
+    if(deadlineChanged&&(!personInOfficeCeo(db,r.assignee_canonical_id)||(targetAssignee&&!personInOfficeCeo(db,targetAssignee.id))))throw new AppError('DEADLINE_REQUEST_REQUIRED','A direct deadline change cannot create or modify an external-assignee commitment; use a reason-backed Deadline Change Request instead',{task_id:'T-'+n,pending_request:null});
+    const reason=optionalString(p,'reason',2000),sets=[],vals=[],ev=[];
+    if('title'in p){const v=required(p,'title',2000);if(v!==r.title){sets.push('title=?');vals.push(v);ev.push(['TITLE_CHANGED',r.title,v,null]);}}
+    if(targetAssignee&&targetAssignee.id!==r.assignee_id){sets.push('assignee_id=?');vals.push(targetAssignee.id);ev.push(['ASSIGNEE_CHANGED','P-'+r.assignee_id,'P-'+targetAssignee.id,null]);}
+    if('due_date'in p&&targetDate!==r.due_date){sets.push('due_date=?');vals.push(targetDate);ev.push(['DUE_DATE_CHANGED',r.due_date,targetDate,reason]);}
+    if('due_time'in p&&targetTime!==r.due_time){sets.push('due_time=?');vals.push(targetTime);ev.push(['DUE_TIME_CHANGED',r.due_time,targetTime,reason]);}
+    if(!sets.length)return{ok:true,task:taskPresented(db,r),changed:false};
+    db.prepare('UPDATE tasks SET '+sets.join(',')+' WHERE id=?').run(...vals,n);const at=now();ev.forEach(x=>event(db,n,...x,at));return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true};
+  });
+  if(action==='complete')return mutate(db,'task.complete',p,()=>{const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);const source=recurrenceForTask(db,n);if(r.status==='DONE'){const successor=source?.recurrence.mode==='AFTER_COMPLETION'?db.prepare('SELECT task_id FROM recurrence_occurrences WHERE predecessor_task_id=?').get(n):null;return{ok:true,task:taskPresented(db,r),changed:false,successor:successor?taskPresented(db,taskRow(db,successor.task_id)):null};}if(r.status!=='OPEN')throw new AppError('INVALID_STATE',`Cannot change ${r.status} task to DONE`);const at=now(),closed_deadline_request=closePendingDeadlineRequest(db,n,at);db.prepare("UPDATE tasks SET status='DONE',completed_at=? WHERE id=?").run(at,n);event(db,n,'STATUS_CHANGED',r.status,'DONE',null,at);const closed_reminders=closeLinkedReminders(db,n,'TASK_COMPLETED',at);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_RECURRENCE_FAULT==='after-complete-before-successor')throw new AppError('TEST_RECURRENCE_FAULT','Synthetic recurrence completion fault');let successor=null;if(source?.recurrence.mode==='AFTER_COMPLETION'&&source.recurrence.status==='ACTIVE')successor=afterSuccessor(db,source.recurrence,n,localDateAt(at),at).task;return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true,successor,closed_reminders,closed_deadline_request};});
+  if(action==='cancel')return mutate(db,'task.cancel',p,()=>{const n=id(p.id,'T'),r=taskRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Task T-${n} not found`,undefined,3);if(r.status==='CANCELLED')return{ok:true,task:taskPresented(db,r),changed:false};if(r.status!=='OPEN')throw new AppError('INVALID_STATE',`Cannot change ${r.status} task to CANCELLED`);const at=now(),source=recurrenceForTask(db,n),closed_deadline_request=closePendingDeadlineRequest(db,n,at);db.prepare("UPDATE tasks SET status='CANCELLED',completed_at=NULL WHERE id=?").run(n);event(db,n,'STATUS_CHANGED',r.status,'CANCELLED',null,at);const closed_reminders=closeLinkedReminders(db,n,'TASK_CANCELLED',at);return{ok:true,task:taskPresented(db,taskRow(db,n)),changed:true,closed_reminders,closed_deadline_request,recurrence_resolution_required:Boolean(source?.recurrence.mode==='AFTER_COMPLETION'&&source.recurrence.status==='ACTIVE'),recurrence_id:source?`R-${source.recurrence.id}`:null};});
   throw new AppError('USAGE',`Unknown task action: ${action}`);
 }
 
@@ -414,8 +585,8 @@ function label(db,action,p){
   if(action==='rename')return mutate(db,'label.rename',p,()=>{const n=id(p.id,'L');if(!db.prepare('SELECT 1 FROM labels WHERE id=?').get(n))throw new AppError('NOT_FOUND',`Label L-${n} not found`,undefined,3);const name=required(p,'display_name',500),conflicts=labelsMatching(db,name).filter(x=>x.id!==n);if(conflicts.length)throw new AppError('IDENTITY_CONFLICT','Label name matches another canonical Label or alias',{candidates:conflicts.map(fmtLabel)});db.prepare('UPDATE labels SET display_name=? WHERE id=?').run(name,n);return{ok:true,label:fmtLabel(db.prepare('SELECT * FROM labels WHERE id=?').get(n))};});
   if(action==='set_emoji')return mutate(db,'label.set_emoji',p,()=>{const n=id(p.id,'L'),current=db.prepare('SELECT * FROM labels WHERE id=?').get(n);if(!current)throw new AppError('NOT_FOUND',`Label L-${n} not found`,undefined,3);const emoji=emojiValue(p);if((current.emoji??null)===emoji)return{ok:true,label:fmtLabel(current),changed:false};db.prepare('UPDATE labels SET emoji=? WHERE id=?').run(emoji,n);return{ok:true,label:fmtLabel(db.prepare('SELECT * FROM labels WHERE id=?').get(n)),changed:true};});
   if(action==='alias_add'||action==='alias_remove')return mutate(db,`label.${action}`,p,()=>{const n=id(p.id,'L'),alias=required(p,'alias',500);if(!db.prepare('SELECT 1 FROM labels WHERE id=?').get(n))throw new AppError('NOT_FOUND',`Label L-${n} not found`,undefined,3);if(action==='alias_add'){const conflicts=labelsMatching(db,alias).filter(x=>x.id!==n);if(conflicts.length)throw new AppError('ALIAS_CONFLICT','Label alias matches another canonical Label',{candidates:conflicts.map(fmtLabel)});db.prepare('INSERT OR IGNORE INTO label_aliases(label_id,alias) VALUES(?,?)').run(n,alias);}else db.prepare('DELETE FROM label_aliases WHERE label_id=? AND alias=?').run(n,alias);return{ok:true,label_id:`L-${n}`,aliases:db.prepare('SELECT alias FROM label_aliases WHERE label_id=? ORDER BY alias').all(n).map(x=>x.alias)};});
-  if(action==='delete')return mutate(db,'label.delete',p,()=>{const n=id(p.id,'L'),current=db.prepare('SELECT * FROM labels WHERE id=?').get(n);if(!current)throw new AppError('NOT_FOUND',`Label L-${n} not found`,undefined,3);const taskAssociationCount=Number(db.prepare('SELECT count(*) n FROM task_labels WHERE label_id=?').get(n).n),affected=db.prepare('SELECT recurrence_id FROM recurrence_labels WHERE label_id=? ORDER BY recurrence_id').all(n).map(x=>({id:x.recurrence_id,before:recurrenceTemplate(db,recurrenceRow(db,x.recurrence_id))})),recurrenceAssociationCount=affected.length,at=now();db.prepare('DELETE FROM task_labels WHERE label_id=?').run(n);db.prepare('DELETE FROM recurrence_labels WHERE label_id=?').run(n);for(const x of affected)recurrenceEvent(db,x.id,'TEMPLATE_CHANGED',x.before,recurrenceTemplate(db,recurrenceRow(db,x.id)),'Canonical Label deletion',at);db.prepare('DELETE FROM label_aliases WHERE label_id=?').run(n);db.prepare('DELETE FROM labels WHERE id=?').run(n);return{ok:true,deleted:fmtLabel(current),task_association_count:taskAssociationCount,recurrence_association_count:recurrenceAssociationCount,removed_task_label_relationships:taskAssociationCount,removed_recurrence_label_relationships:recurrenceAssociationCount};});
-  if(action==='merge')return mutate(db,'label.merge',p,()=>{const from=id(p.from_id,'L'),to=id(p.into_id,'L');if(from===to)throw new AppError('INVALID_FIELD','from_id and into_id must differ');const a=db.prepare('SELECT * FROM labels WHERE id=?').get(from),b=db.prepare('SELECT * FROM labels WHERE id=?').get(to);if(!a||!b)throw new AppError('NOT_FOUND','Label merge source or target not found');if(a.emoji&&b.emoji&&a.emoji!==b.emoji)throw new AppError('LABEL_EMOJI_CONFLICT','Label merge would discard conflicting emoji',{from:fmtLabel(a),into:fmtLabel(b)});const aliases=[a.display_name,...db.prepare('SELECT alias FROM label_aliases WHERE label_id=?').all(from).map(x=>x.alias)];for(const alias of aliases){const conflicts=labelsMatching(db,alias).filter(x=>x.id!==from&&x.id!==to);if(conflicts.length)throw new AppError('ALIAS_CONFLICT','Merged Label alias matches another canonical Label',{alias,candidates:conflicts.map(fmtLabel)});}for(const x of db.prepare('SELECT task_id FROM task_labels WHERE label_id=?').all(from))db.prepare('INSERT OR IGNORE INTO task_labels(task_id,label_id) VALUES(?,?)').run(x.task_id,to);const affectedRec=db.prepare('SELECT recurrence_id FROM recurrence_labels WHERE label_id=? ORDER BY recurrence_id').all(from).map(x=>({id:x.recurrence_id,before:recurrenceTemplate(db,recurrenceRow(db,x.recurrence_id))})),mergeAt=now();for(const x of affectedRec)db.prepare('INSERT OR IGNORE INTO recurrence_labels(recurrence_id,label_id) VALUES(?,?)').run(x.id,to);db.prepare('DELETE FROM recurrence_labels WHERE label_id=?').run(from);for(const x of affectedRec)recurrenceEvent(db,x.id,'TEMPLATE_CHANGED',x.before,recurrenceTemplate(db,recurrenceRow(db,x.id)),'Canonical Label merge',mergeAt);for(const alias of aliases)if(ci(alias)!==ci(b.display_name))db.prepare('INSERT OR IGNORE INTO label_aliases(label_id,alias) VALUES(?,?)').run(to,alias);if(!b.emoji&&a.emoji)db.prepare('UPDATE labels SET emoji=? WHERE id=?').run(a.emoji,to);db.prepare('DELETE FROM task_labels WHERE label_id=?').run(from);db.prepare('DELETE FROM label_aliases WHERE label_id=?').run(from);db.prepare('DELETE FROM labels WHERE id=?').run(from);return{ok:true,merged_from:`L-${from}`,label:fmtLabel(db.prepare('SELECT * FROM labels WHERE id=?').get(to)),aliases:db.prepare('SELECT alias FROM label_aliases WHERE label_id=? ORDER BY alias').all(to).map(x=>x.alias)};});
+  if(action==='delete')return mutate(db,'label.delete',p,()=>{const n=id(p.id,'L'),current=db.prepare('SELECT * FROM labels WHERE id=?').get(n);if(!current)throw new AppError('NOT_FOUND',`Label L-${n} not found`,undefined,3);const personalBinding=bindingRow(db,'PERSONAL_LABEL');if(personalBinding?.entity_id===n)throw new AppError('BOUND_LABEL_DELETE_FORBIDDEN','Cannot delete the Label currently bound as PERSONAL_LABEL; merge it into the replacement Label instead',{label_id:`L-${n}`});const taskAssociationCount=Number(db.prepare('SELECT count(*) n FROM task_labels WHERE label_id=?').get(n).n),affected=db.prepare('SELECT recurrence_id FROM recurrence_labels WHERE label_id=? ORDER BY recurrence_id').all(n).map(x=>({id:x.recurrence_id,before:recurrenceTemplate(db,recurrenceRow(db,x.recurrence_id))})),recurrenceAssociationCount=affected.length,at=now();db.prepare('DELETE FROM task_labels WHERE label_id=?').run(n);db.prepare('DELETE FROM recurrence_labels WHERE label_id=?').run(n);for(const x of affected)recurrenceEvent(db,x.id,'TEMPLATE_CHANGED',x.before,recurrenceTemplate(db,recurrenceRow(db,x.id)),'Canonical Label deletion',at);db.prepare('DELETE FROM label_aliases WHERE label_id=?').run(n);db.prepare('DELETE FROM labels WHERE id=?').run(n);return{ok:true,deleted:fmtLabel(current),task_association_count:taskAssociationCount,recurrence_association_count:recurrenceAssociationCount,removed_task_label_relationships:taskAssociationCount,removed_recurrence_label_relationships:recurrenceAssociationCount};});
+  if(action==='merge')return mutate(db,'label.merge',p,()=>{const from=id(p.from_id,'L'),to=id(p.into_id,'L');if(from===to)throw new AppError('INVALID_FIELD','from_id and into_id must differ');const a=db.prepare('SELECT * FROM labels WHERE id=?').get(from),b=db.prepare('SELECT * FROM labels WHERE id=?').get(to);if(!a||!b)throw new AppError('NOT_FOUND','Label merge source or target not found');if(a.emoji&&b.emoji&&a.emoji!==b.emoji)throw new AppError('LABEL_EMOJI_CONFLICT','Label merge would discard conflicting emoji',{from:fmtLabel(a),into:fmtLabel(b)});const personalBinding=bindingRow(db,'PERSONAL_LABEL');const aliases=[a.display_name,...db.prepare('SELECT alias FROM label_aliases WHERE label_id=?').all(from).map(x=>x.alias)];for(const alias of aliases){const conflicts=labelsMatching(db,alias).filter(x=>x.id!==from&&x.id!==to);if(conflicts.length)throw new AppError('ALIAS_CONFLICT','Merged Label alias matches another canonical Label',{alias,candidates:conflicts.map(fmtLabel)});}for(const x of db.prepare('SELECT task_id FROM task_labels WHERE label_id=?').all(from))db.prepare('INSERT OR IGNORE INTO task_labels(task_id,label_id) VALUES(?,?)').run(x.task_id,to);const affectedRec=db.prepare('SELECT recurrence_id FROM recurrence_labels WHERE label_id=? ORDER BY recurrence_id').all(from).map(x=>({id:x.recurrence_id,before:recurrenceTemplate(db,recurrenceRow(db,x.recurrence_id))})),mergeAt=now();for(const x of affectedRec)db.prepare('INSERT OR IGNORE INTO recurrence_labels(recurrence_id,label_id) VALUES(?,?)').run(x.id,to);db.prepare('DELETE FROM recurrence_labels WHERE label_id=?').run(from);for(const x of affectedRec)recurrenceEvent(db,x.id,'TEMPLATE_CHANGED',x.before,recurrenceTemplate(db,recurrenceRow(db,x.id)),'Canonical Label merge',mergeAt);for(const alias of aliases)if(ci(alias)!==ci(b.display_name))db.prepare('INSERT OR IGNORE INTO label_aliases(label_id,alias) VALUES(?,?)').run(to,alias);if(!b.emoji&&a.emoji)db.prepare('UPDATE labels SET emoji=? WHERE id=?').run(a.emoji,to);if(personalBinding?.entity_id===from)db.prepare("UPDATE task_domain_bindings SET entity_id=?,updated_at=? WHERE binding_key='PERSONAL_LABEL'").run(to,mergeAt);db.prepare('DELETE FROM task_labels WHERE label_id=?').run(from);db.prepare('DELETE FROM label_aliases WHERE label_id=?').run(from);db.prepare('DELETE FROM labels WHERE id=?').run(from);return{ok:true,merged_from:`L-${from}`,label:fmtLabel(db.prepare('SELECT * FROM labels WHERE id=?').get(to)),aliases:db.prepare('SELECT alias FROM label_aliases WHERE label_id=? ORDER BY alias').all(to).map(x=>x.alias),personal_label_rebound:personalBinding?.entity_id===from};});
   throw new AppError('USAGE',`Unknown label action: ${action}`);
 }
 function term(db,action,p){
@@ -438,7 +609,7 @@ try{
   else{
     db=openDb();
     if(scope==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,database:DB_PATH,timezone:TZ});
-    else if(scope==='health')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:db.prepare('PRAGMA user_version').get().user_version,sqlite_version:db.prepare('SELECT sqlite_version() v').get().v,database:DB_PATH,timezone:TZ,local_date:localDate(),local_time:localTime(),counts:{inbox:db.prepare('SELECT count(*) n FROM inbox_items').get().n,tasks:db.prepare('SELECT count(*) n FROM tasks').get().n,projects:db.prepare('SELECT count(*) n FROM projects').get().n,people:db.prepare('SELECT count(*) n FROM contacts.people').get().n,active_people:db.prepare("SELECT count(*) n FROM contacts.people WHERE status='ACTIVE'").get().n,labels:db.prepare('SELECT count(*) n FROM labels').get().n,comments:db.prepare('SELECT count(*) n FROM task_comments').get().n,events:db.prepare('SELECT count(*) n FROM task_events').get().n,terms:db.prepare('SELECT count(*) n FROM term_aliases').get().n,recurrences:db.prepare('SELECT count(*) n FROM recurrences').get().n,recurrence_occurrences:db.prepare('SELECT count(*) n FROM recurrence_occurrences').get().n,recurrence_events:db.prepare('SELECT count(*) n FROM recurrence_events').get().n,reminders:db.prepare('SELECT count(*) n FROM reminders').get().n}});
-    else if(scope==='inbox')ok(inbox(db,action,p)); else if(scope==='task')ok(task(db,action,p)); else if(scope==='reminder')ok(reminder(db,action,p)); else if(scope==='reminder-internal'&&action==='dispatch')ok(reminderDispatch(db,p)); else if(scope==='reminder-internal'&&action==='render')ok(reminderRenderClaim(db,p)); else if(scope==='reminder-internal'&&action==='settle')ok(reminderSettle(db,p)); else if(scope==='recurrence')ok(recurrence(db,action,p)); else if(scope==='project')ok(project(db,action,p)); else if(scope==='task-project')ok(taskProject(db,action,p)); else if(scope==='person')ok(person(db,action,p)); else if(scope==='label')ok(label(db,action,p)); else if(scope==='term')ok(term(db,action,p)); else if(scope==='task-label')ok(taskLabel(db,action,p)); else if(scope==='comment')ok(comment(db,action,p)); else if(scope==='ref'&&action==='resolve')ok(refResolve(db,p)); else throw new AppError('USAGE','Usage: taskctl <init|health|inbox|task|reminder|recurrence|project|task-project|person|label|term|task-label|comment|ref> ...');
+    else if(scope==='health')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:db.prepare('PRAGMA user_version').get().user_version,sqlite_version:db.prepare('SELECT sqlite_version() v').get().v,database:DB_PATH,timezone:TZ,local_date:localDate(),local_time:localTime(),counts:{inbox:db.prepare('SELECT count(*) n FROM inbox_items').get().n,tasks:db.prepare('SELECT count(*) n FROM tasks').get().n,projects:db.prepare('SELECT count(*) n FROM projects').get().n,people:db.prepare('SELECT count(*) n FROM contacts.people').get().n,active_people:db.prepare("SELECT count(*) n FROM contacts.people WHERE status='ACTIVE'").get().n,labels:db.prepare('SELECT count(*) n FROM labels').get().n,comments:db.prepare('SELECT count(*) n FROM task_comments').get().n,events:db.prepare('SELECT count(*) n FROM task_events').get().n,terms:db.prepare('SELECT count(*) n FROM term_aliases').get().n,recurrences:db.prepare('SELECT count(*) n FROM recurrences').get().n,recurrence_occurrences:db.prepare('SELECT count(*) n FROM recurrence_occurrences').get().n,recurrence_events:db.prepare('SELECT count(*) n FROM recurrence_events').get().n,reminders:db.prepare('SELECT count(*) n FROM reminders').get().n,deadline_change_requests:db.prepare('SELECT count(*) n FROM deadline_change_requests').get().n,pending_deadline_change_requests:db.prepare("SELECT count(*) n FROM deadline_change_requests WHERE status='PENDING'").get().n,domain_bindings:db.prepare('SELECT count(*) n FROM task_domain_bindings').get().n}});
+    else if(scope==='config')ok(taskBinding(db,action,p)); else if(scope==='deadline-request')ok(deadlineRequest(db,action,p)); else if(scope==='inbox')ok(inbox(db,action,p)); else if(scope==='task')ok(task(db,action,p)); else if(scope==='reminder')ok(reminder(db,action,p)); else if(scope==='reminder-internal'&&action==='dispatch')ok(reminderDispatch(db,p)); else if(scope==='reminder-internal'&&action==='render')ok(reminderRenderClaim(db,p)); else if(scope==='reminder-internal'&&action==='settle')ok(reminderSettle(db,p)); else if(scope==='recurrence')ok(recurrence(db,action,p)); else if(scope==='project')ok(project(db,action,p)); else if(scope==='task-project')ok(taskProject(db,action,p)); else if(scope==='person')ok(person(db,action,p)); else if(scope==='label')ok(label(db,action,p)); else if(scope==='term')ok(term(db,action,p)); else if(scope==='task-label')ok(taskLabel(db,action,p)); else if(scope==='comment')ok(comment(db,action,p)); else if(scope==='ref'&&action==='resolve')ok(refResolve(db,p)); else throw new AppError('USAGE','Usage: taskctl <init|health|config|deadline-request|inbox|task|reminder|recurrence|project|task-project|person|label|term|task-label|comment|ref> ...');
   }
 }catch(e){die(e);}finally{try{db?.close();}catch{}}

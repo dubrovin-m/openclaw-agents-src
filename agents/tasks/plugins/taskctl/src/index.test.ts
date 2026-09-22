@@ -9,6 +9,7 @@ import { TASKCTL_EXECUTABLE, buildInvocation, executeTaskctl, validateAndSanitiz
 const CANDIDATE_TASKCTL = join(process.cwd(), "..", "..", "taskctl");
 
 const VALID_PAYLOADS: Record<string, Record<string, unknown>> = {
+  deadline_request_get:{task_id:"T-1"}, deadline_request_create:{operation_key:"d1",task_id:"T-1",due_date:"2026-09-29",reason:"blocked"}, deadline_request_approve:{operation_key:"d2",task_id:"T-1",due_date:"2026-09-26"}, deadline_request_reject:{operation_key:"d3",task_id:"T-1"},
   inbox_add:{operation_key:"1",content:"x",capture_key:"c"}, inbox_list:{}, inbox_get:{id:"I-1"}, inbox_discard:{operation_key:"2",id:"I-1"}, inbox_commit:{operation_key:"3",id:"I-1",tasks:[{title:"x",assignee:"Дубровин М.",project_id:"PRJ-1"}]},
   task_create:{operation_key:"4",title:"x",assignee:"Дубровин М.",project_id:"PRJ-1"}, task_list:{}, task_search:{search:"x"}, task_get:{id:"T-1"}, task_detail:{id:"T-1"}, task_history:{id:"T-1"}, task_update:{operation_key:"5",id:"T-1",title:"y"}, task_complete:{operation_key:"6",id:"T-1"}, task_cancel:{operation_key:"7",id:"T-1"},
   reminder_create:{operation_key:"rem1",task_id:"T-1",trigger_date:"2026-09-17",trigger_time:"12:00"}, reminder_list:{}, reminder_reschedule:{operation_key:"rem2",id:"REM-1",trigger_date:"2026-09-18",trigger_time:"18:00"}, reminder_cancel:{operation_key:"rem3",id:"REM-1"},
@@ -21,8 +22,8 @@ const VALID_PAYLOADS: Record<string, Record<string, unknown>> = {
 };
 
 describe("taskctl deterministic action registry",()=>{
-  it("contains exactly the supported 59 actions",()=>{
-    expect(TASKCTL_ACTIONS).toHaveLength(59);
+  it("contains exactly the supported 63 actions",()=>{
+    expect(TASKCTL_ACTIONS).toHaveLength(63);
     expect([...TASKCTL_ACTIONS].sort()).toEqual(Object.keys(VALID_PAYLOADS).sort());
     expect(Object.keys(ACTION_REGISTRY).sort()).toEqual(Object.keys(VALID_PAYLOADS).sort());
   });
@@ -134,8 +135,8 @@ describe("taskctl temp database integration",()=>{
       invoke("task-label","add",{operation_key:"tl-add",task_id:"T-1",label_id:resolved.matches[0].id});
       expect(invoke("task","detail",{id:"T-1"})).toMatchObject({task:{assignee:"Дима",assignee_is_self:false,label_emojis:["🏛"],project_id:"PRJ-1",project_title:"Подготовить СД"},labels:[{id:"L-1",display_name:"Совет директоров",emoji:"🏛"}],original_deadline:{due_date:"2026-08-22"}});
       expect(invoke("project","get",{id:"PRJ-1"})).toMatchObject({project:{id:"PRJ-1",status:"ACTIVE",task_counts:{total:1,OPEN:1,DONE:0,CANCELLED:0}},tasks:[{id:"T-1"}]});
-      invoke("comment","add",{operation_key:"c",task_id:"T-1",content:"Ждем Минфин"}); invoke("task","update",{operation_key:"m",id:"T-1",due_date:"2026-08-25",reason:"ждем данные"});
-      expect(invoke("task","detail",{id:"T-1"})).toMatchObject({original_deadline:{due_date:"2026-08-22"},deadline_change_count:1});
+      invoke("comment","add",{operation_key:"c",task_id:"T-1",content:"Ждем Минфин"});
+      expect(invoke("task","detail",{id:"T-1"})).toMatchObject({original_deadline:{due_date:"2026-08-22"},deadline_change_count:0,recent_comments:[{content:"Ждем Минфин"}]});
       expect(invoke("label","resolve",{reference:"СД"})).toMatchObject({matches:[{display_name:"Совет директоров",emoji:"🏛",task_association_count:1}]});
       expect(invoke("task","search",{search:"Минфин"})).toMatchObject({count:1,tasks:[{id:"T-1",label_emojis:["🏛"],project_id:"PRJ-1"}]}); expect(invoke("ref","resolve",{number:1,context:"task"})).toMatchObject({id:"T-1"});
       invoke("task-project","set",{operation_key:"clear-project",task_id:"T-1",project_id:null});

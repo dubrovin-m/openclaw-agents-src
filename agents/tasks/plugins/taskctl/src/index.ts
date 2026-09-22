@@ -67,6 +67,8 @@ export function validateAndSanitizePayload(action: unknown, payload: unknown): {
   for(const key of keys){const message=valueError(a,key,obj[key]);if(message)return{ok:false,error:validationError(message,{field:key})};}
   if(a==="task_update"&&keys.every(k=>["operation_key","id","reason"].includes(k)))return{ok:false,error:validationError("task_update requires at least one mutable task field")};
   if(a==="task_update"&&has(obj,"reason")&&!has(obj,"due_date")&&!has(obj,"due_time"))return{ok:false,error:validationError("reason is allowed only with a deadline change")};
+  if(a==="deadline_request_create"&&!has(obj,"due_date")&&!has(obj,"due_time"))return{ok:false,error:validationError("deadline_request_create requires due_date and/or due_time")};
+  if(a==="deadline_request_create"&&!validString(obj.reason,2000))return{ok:false,error:validationError("deadline_request_create requires a non-empty reason")};
   if(a==="task_create"&&obj.due_time!==undefined&&obj.due_time!==null&&(!has(obj,"due_date")||obj.due_date===null))return{ok:false,error:validationError("due_time requires due_date")};
   if(a==="recurrence_create"){
     const seeded=has(obj,"seed_task_id");

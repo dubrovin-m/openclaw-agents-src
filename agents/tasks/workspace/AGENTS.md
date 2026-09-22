@@ -94,7 +94,13 @@ Required: `title`, canonical assignee. Optional: `due_date`, `due_time`, zero or
 - Existing committed Tasks must not be silently rewritten for presentation cleanup.
 - Priority, Directions, attachments, dependencies, subprojects, milestones, Project ownership, Project comments, Project recurrence, Project templates, persistent Project percentage complete, and scheduled digests are outside this batch.
 
-Every deadline transition must remain reconstructible. Before any `task_update` that changes `due_date` or `due_time`, successfully obtain the target Task's current canonical state with `task_get` in the current turn. A failed or unavailable `task_get` is a hard stop for that deadline mutation: do not infer from the title, conversation, earlier turns, or cached state and do not call `task_update`. Determine deadline-reason policy from that successful operational read. If the current assignee is canonical self `Дубровин М.`, an otherwise unambiguous `due_date` or `due_time` change proceeds without requiring a reason; persist a voluntarily supplied reason when present. If the current assignee is another Person and no reason was supplied, ask before mutation. If the user explicitly declines with `без причины`, `не указывать`, or equivalent, apply the valid change with `reason:null`. If current authoritative assignee state cannot be established reliably, do not infer the self exception or mutate on a guess.
+Every deadline transition must remain reconstructible. Before changing an existing Task deadline, successfully obtain the current Task with `task_get` and inspect deadline governance with `deadline_request_get` in the current turn. If either authoritative read fails, do not infer governance from names, titles, conversation history, or cached state.
+
+If `deadline_request_get.governance.office_ceo` is true, an otherwise unambiguous deadline change may be applied directly with `task_update`; a reason is optional and should be preserved when the user supplied one.
+
+If `deadline_request_get.governance.office_ceo` is false, never change `due_date` or `due_time` directly. A proposed move requires a non-empty reason. If no reason is available, ask for it and mutate nothing; an explicit refusal to provide a reason does not waive this requirement. Once the reason and proposed deadline are explicit, use `deadline_request_create`. The Task's effective deadline remains unchanged while the request is pending.
+
+When one pending request exists, interpret an unambiguous user decision as resolution of that request. Use `deadline_request_approve` to accept the requested deadline, or supply explicit `due_date` / `due_time` to approve a different deadline. Resolve relative approval language from the current effective Task deadline returned by authoritative state, not from today and not from the requested deadline. Use `deadline_request_reject` when the user keeps the existing deadline. Never invent or silently infer approval.
 
 ## Recurring Tasks
 
@@ -134,11 +140,11 @@ Recurring reminders, snooze, condition/location triggers, automatic reminder pol
 
 ## Existing Task operations
 
-Use deterministic Task state for queries and mutations. Unambiguous reversible single-Task edits execute through `task_update`; completion executes through `task_complete`; Project association executes through `task_project_set`. Cancellation and bulk mutations require confirmation; after cancellation confirmation use `task_cancel`. Ambiguous mutations require disambiguation. If no matching Task exists, do not synthesize one. Never express completion, cancellation, or Project association by placing `status` or `project_id` in `task_update`.
+Use deterministic Task state for queries and mutations. Unambiguous reversible single-Task edits execute through `task_update` except deadline changes governed by the Deadline Change Request rules above. Completion executes through `task_complete`; Project association executes through `task_project_set`. Cancellation and bulk mutations require confirmation; after cancellation confirmation use `task_cancel`. Ambiguous mutations require disambiguation. If no matching Task exists, do not synthesize one. Never express completion, cancellation, Project association, or an external-assignee pending deadline proposal through ordinary `task_update`.
 
 Completion and update intent may be imperative or declarative. Inspect committed Task state as needed: if exactly one plausible OPEN Task matches, apply the allowed single-Task mutation through the corresponding dedicated tool; if several plausible Tasks match, ask for disambiguation and mutate none. Do not route an existing-state report to `inbox_add`.
 
-Natural requests such as `задачи на сегодня` and `Что у меня сегодня?` mean all OPEN Tasks requiring attention today: already-overdue OPEN Tasks plus OPEN Tasks whose `due_date` is the current local date. Use one `task_list` call with `view:"today"`; do not synthesize this view by unioning several model-side queries. Future-dated and undated Tasks are excluded. An explicit exact-deadline request such as `задачи со сроком сегодня` is different: use exact `due_on:<local today>` so earlier overdue dates are excluded.
+Natural requests such as `задачи на сегодня` and `Что у меня сегодня?` mean all OPEN Tasks requiring attention today: already-overdue OPEN Tasks plus OPEN Tasks whose `due_date` is the current local date. Use one `task_list` call with `view:"today"`; do not synthesize this view by unioning several model-side queries. The deterministic result includes `today_section` for each Task and is already ordered as `OVERDUE`, `OFFICE_CEO`, `TEAM`, then `PERSONAL`. Preserve that classification and order without adding assignee subgroup headings. Future-dated and undated Tasks are excluded. An explicit exact-deadline request such as `задачи со сроком сегодня` is different: use exact `due_on:<local today>` so earlier overdue dates are excluded.
 
 Task comments are append-only progress/context notes. Adding a comment must not rewrite title, assignee, deadline, Labels, Project association, or prior comments.
 
@@ -163,7 +169,9 @@ Show up to three distinct non-null emoji from applied canonical Labels in the de
 
 Use concise human-readable deadlines and `—` when absent. Omit redundant status when the query already constrains it; include concise status when results materially differ.
 
-Unless the user requests another ordering, routine OPEN Task lists are rendered in visible deadline sections in this order: `Просрочено`, `Сегодня`, `Завтра`, then specific future dates in ascending order, then `Без срока`. Omit empty sections. Use the deterministic order returned by `task_list`; do not regroup Tasks conversationally. Within each deadline section, Tasks sharing the same derived presentation grouping Label are already adjacent. The grouping Label is the first canonical Label in deterministic canonical Label order and is presentation-only: never persist or infer a primary Label. Unlabeled Tasks form the final hidden cluster in each section. Do not render Label names, standalone Label emoji, Label-group headings, or a `Без метки` heading. Label emoji remain only in each Task's first line. `due_time` influences stable order within its relevant day but never creates another section or subgroup.
+For natural today intent, render the deterministic `today_section` values as visible sections in this order: `🔴 ПРОСРОЧЕНО N`, `💼 СЕГОДНЯ · ОФИС CEO N`, `📌 СЕГОДНЯ · КОМАНДА N`, `🏠 СЕГОДНЯ · ЛИЧНОЕ N`; omit empty sections. Overdue Tasks show assignee plus effective overdue date and optional time. If an overdue Task has `pending_deadline_change_request`, append its requested deadline as `↪ ... на согласовании` without treating it as effective. Office CEO and Team Tasks show assignee plus optional time but do not repeat today's date. Personal Tasks omit assignee and today's date; show only optional time on the metadata line, and use no empty second line when no time exists.
+
+Unless the user requests another ordering, routine OPEN Task lists other than the dedicated natural today view are rendered in visible deadline sections in this order: `Просрочено`, `Сегодня`, `Завтра`, then specific future dates in ascending order, then `Без срока`. Omit empty sections. Use the deterministic order returned by `task_list`; do not regroup Tasks conversationally. Within each deadline section, Tasks sharing the same derived presentation grouping Label are already adjacent. The grouping Label is the first canonical Label in deterministic canonical Label order and is presentation-only: never persist or infer a primary Label. Unlabeled Tasks form the final hidden cluster in each section. Do not render Label names, standalone Label emoji, Label-group headings, or a `Без метки` heading. Label emoji remain only in each Task's first line. `due_time` influences stable order within its relevant day but never creates another section or subgroup.
 
 Use one consistent compact separator between adjacent entries and do not repeat them as prose.
 
@@ -219,6 +227,10 @@ Do not mutate Task Agent state without user action. User-requested one-shot Remi
 - `taskctl task list`
 - `taskctl task get`
 - `taskctl task update`
+- `taskctl deadline-request get`
+- `taskctl deadline-request create`
+- `taskctl deadline-request approve`
+- `taskctl deadline-request reject`
 - `taskctl task complete`
 - `taskctl task cancel`
 - `taskctl reminder create`

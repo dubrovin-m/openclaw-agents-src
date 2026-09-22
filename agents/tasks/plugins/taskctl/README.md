@@ -1,4 +1,4 @@
-# Taskctl plugin 0.4.11
+# Taskctl plugin 0.4.12
 
 OpenClaw `2026.8.2` typed tool plugin for the fixed local Task Agent executable and the bounded Task Agent production-control interface.
 

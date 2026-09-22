@@ -2,7 +2,7 @@
 
 const crypto = require('node:crypto');
 
-const CONTACT_SCHEMA_VERSION = 2;
+const CONTACT_SCHEMA_VERSION = 3;
 const SELF_NAME = 'Дубровин М.';
 const STATUS_ACTIVE = 'ACTIVE';
 const STATUS_MERGED = 'MERGED';
@@ -26,12 +26,20 @@ const personNumber = (value) => {
   if (m) return Number(m[1]);
   throw new Error('Expected P-<number> or positive integer');
 };
+const personGroupNumber = (value) => {
+  if (Number.isSafeInteger(value) && value > 0) return value;
+  const m = typeof value === 'string' ? value.trim().match(/^(?:PG-)?([1-9]\d*)$/i) : null;
+  if (m) return Number(m[1]);
+  throw new Error('Expected PG-<number> or positive integer');
+};
 
 function schemaSql(schema = 'main') {
   const s = schemaName(schema);
   return [
     `CREATE TABLE IF NOT EXISTS ${s}.people(id INTEGER PRIMARY KEY AUTOINCREMENT, display_name TEXT NOT NULL CHECK(length(trim(display_name))>0), organization TEXT, title TEXT, is_self INTEGER NOT NULL DEFAULT 0 CHECK(is_self IN (0,1)), status TEXT NOT NULL CHECK(status IN ('ACTIVE','MERGED')), merged_into INTEGER REFERENCES people(id) ON DELETE RESTRICT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK((status='ACTIVE' AND merged_into IS NULL) OR (status='MERGED' AND merged_into IS NOT NULL AND merged_into<>id))) STRICT;`,
     `CREATE TABLE IF NOT EXISTS ${s}.person_aliases(person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT, alias TEXT NOT NULL CHECK(length(trim(alias))>0), created_at TEXT NOT NULL, PRIMARY KEY(person_id,alias)) STRICT;`,
+    `CREATE TABLE IF NOT EXISTS ${s}.person_groups(id INTEGER PRIMARY KEY AUTOINCREMENT, display_name TEXT NOT NULL CHECK(length(trim(display_name))>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;`,
+    `CREATE TABLE IF NOT EXISTS ${s}.person_group_members(group_id INTEGER NOT NULL REFERENCES person_groups(id) ON DELETE RESTRICT, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT, created_at TEXT NOT NULL, PRIMARY KEY(group_id,person_id)) STRICT;`,
     `CREATE TABLE IF NOT EXISTS ${s}.important_dates(id INTEGER PRIMARY KEY AUTOINCREMENT, person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT, type TEXT NOT NULL CHECK(type IN ('BIRTHDAY','ANNIVERSARY','OTHER')), year INTEGER CHECK(year IS NULL OR (year BETWEEN 1000 AND 9999)), month INTEGER NOT NULL CHECK(month BETWEEN 1 AND 12), day INTEGER NOT NULL CHECK(day BETWEEN 1 AND 31), annual INTEGER NOT NULL CHECK(annual IN (0,1)), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, CHECK(annual=1 OR year IS NOT NULL)) STRICT;`,
     `CREATE TABLE IF NOT EXISTS ${s}.important_date_reminders(id INTEGER PRIMARY KEY AUTOINCREMENT, important_date_id INTEGER NOT NULL REFERENCES important_dates(id) ON DELETE CASCADE, offset_value INTEGER NOT NULL CHECK(offset_value>=0), offset_unit TEXT NOT NULL CHECK(offset_unit IN ('DAYS','WEEKS','MONTHS')), created_at TEXT NOT NULL, updated_at TEXT NOT NULL, UNIQUE(important_date_id,offset_value,offset_unit)) STRICT;`,
     `CREATE TABLE IF NOT EXISTS ${s}.important_date_deliveries(reminder_id INTEGER NOT NULL REFERENCES important_date_reminders(id) ON DELETE CASCADE, occurrence_key TEXT NOT NULL CHECK(length(occurrence_key)=10), status TEXT NOT NULL CHECK(status IN ('CLAIMED','DELIVERED')), claim_token TEXT, claimed_at TEXT, claim_expires_at TEXT, delivered_at TEXT, PRIMARY KEY(reminder_id,occurrence_key), CHECK((status='CLAIMED' AND claim_token IS NOT NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL AND delivered_at IS NULL) OR (status='DELIVERED' AND delivered_at IS NOT NULL))) STRICT;`,
@@ -40,6 +48,7 @@ function schemaSql(schema = 'main') {
     `CREATE UNIQUE INDEX IF NOT EXISTS ${s}.idx_important_dates_single_birthday ON important_dates(person_id,type) WHERE type='BIRTHDAY';`,
     `CREATE INDEX IF NOT EXISTS ${s}.idx_people_status ON people(status,id);`,
     `CREATE INDEX IF NOT EXISTS ${s}.idx_person_aliases_alias ON person_aliases(alias);`,
+    `CREATE INDEX IF NOT EXISTS ${s}.idx_person_group_members_person ON person_group_members(person_id,group_id);`,
     `CREATE INDEX IF NOT EXISTS ${s}.idx_important_dates_person ON important_dates(person_id,type,month,day);`,
     `CREATE INDEX IF NOT EXISTS ${s}.idx_important_date_reminders_date ON important_date_reminders(important_date_id,id);`,
     `CREATE INDEX IF NOT EXISTS ${s}.idx_important_date_deliveries_claim ON important_date_deliveries(status,claim_token,claim_expires_at);`,
@@ -61,7 +70,7 @@ function requireSchema(db, schema = 'main') {
 function ensureSchema(db, schema = 'main', options = {}) {
   const s = schemaName(schema);
   const version = schemaVersion(db,s);
-  if (![0,1,CONTACT_SCHEMA_VERSION].includes(version)) throw new Error(`Unsupported Contacts schema version ${version}`);
+  if (![0,1,2,CONTACT_SCHEMA_VERSION].includes(version)) throw new Error(`Unsupported Contacts schema version ${version}`);
   if (version === CONTACT_SCHEMA_VERSION) {
     db.exec(schemaSql(s));
     return;
@@ -71,6 +80,7 @@ function ensureSchema(db, schema = 'main', options = {}) {
   try {
     db.exec(schemaSql(s));
     if (version === 1 && options.fault === 'after-important-date-ddl') throw new Error('Synthetic Contacts migration fault');
+    if (version <= 2 && options.fault === 'after-person-group-ddl') throw new Error('Synthetic Contacts Person Group migration fault');
     db.exec(`PRAGMA ${s}.user_version=${CONTACT_SCHEMA_VERSION}`);
     if (ownsTransaction) db.exec('COMMIT');
   } catch (error) {
@@ -248,6 +258,14 @@ function merge(db, fromValue, intoValue, options = {}) {
     // silently choosing one of two contradictory birthdays.
     db.prepare(`UPDATE ${table(schema,'important_dates')} SET person_id=?,updated_at=? WHERE person_id=?`).run(into.id,at,from.id);
   }
+  if (schemaVersion(db,schema) >= 3) {
+    // Group membership follows canonical Person identity. Preserve the earliest known
+    // membership timestamp and deduplicate when both identities already belong.
+    const memberships=db.prepare(`SELECT group_id,created_at FROM ${table(schema,'person_group_members')} WHERE person_id=? ORDER BY group_id`).all(from.id);
+    const insert=db.prepare(`INSERT OR IGNORE INTO ${table(schema,'person_group_members')}(group_id,person_id,created_at) VALUES(?,?,?)`);
+    for(const membership of memberships)insert.run(membership.group_id,into.id,membership.created_at);
+    db.prepare(`DELETE FROM ${table(schema,'person_group_members')} WHERE person_id=?`).run(from.id);
+  }
   db.prepare(`UPDATE ${table(schema, 'people')} SET merged_into=?,updated_at=? WHERE status='MERGED' AND merged_into=?`).run(into.id,at,from.id);
   db.prepare(`UPDATE ${table(schema, 'people')} SET status='MERGED',merged_into=?,is_self=0,updated_at=? WHERE id=?`).run(into.id,at,from.id);
   return { changed:true, from:rawPerson(db,from.id,schema), person:into };
@@ -292,13 +310,81 @@ function integrity(db, schema = 'main') {
       } catch (error) { errors.push(`P-${row.id}: ${error.message}`); }
     }
   }
-  if (Number(db.prepare(`PRAGMA ${schemaName(schema)}.user_version`).get().user_version) >= 2) {
+  const version=Number(db.prepare(`PRAGMA ${schemaName(schema)}.user_version`).get().user_version);
+  if (version >= 2) {
     for (const row of db.prepare(`SELECT * FROM ${table(schema,'important_dates')}`).all()) {
       try { normalizeImportantDateInput(row,row); canonicalPerson(db,row.person_id,schema); } catch (error) { errors.push(`DATE-${row.id}: ${error.message}`); }
     }
   }
+  if(version>=3){
+    const names=new Map();
+    for(const group of db.prepare(`SELECT * FROM ${table(schema,'person_groups')} ORDER BY id`).all()){
+      const key=ci(group.display_name);if(names.has(key))errors.push(`PG-${group.id} duplicates Person Group name of PG-${names.get(key)}`);else names.set(key,group.id);
+    }
+    for(const membership of db.prepare(`SELECT * FROM ${table(schema,'person_group_members')} ORDER BY group_id,person_id`).all()){
+      const person=rawPerson(db,membership.person_id,schema);
+      if(!person||person.status!==STATUS_ACTIVE)errors.push(`PG-${membership.group_id} membership references non-ACTIVE P-${membership.person_id}`);
+    }
+  }
   const counts=(name)=>Number(db.prepare(`SELECT count(*) n FROM ${table(schema,name)}`).get().n);
-  return { ok:errors.length===0, errors, people:people.length, aliases:counts('person_aliases'), important_dates:counts('important_dates'), important_date_reminders:counts('important_date_reminders') };
+  return { ok:errors.length===0, errors, people:people.length, aliases:counts('person_aliases'), important_dates:counts('important_dates'), important_date_reminders:counts('important_date_reminders'), person_groups:version>=3?counts('person_groups'):0, person_group_members:version>=3?counts('person_group_members'):0 };
+}
+
+
+
+function rawPersonGroup(db,id,schema='main'){
+  return db.prepare(`SELECT * FROM ${table(schema,'person_groups')} WHERE id=?`).get(personGroupNumber(id))??null;
+}
+function formatPersonGroup(row,extra={}){
+  if(!row)return null;
+  return {id:`PG-${row.id}`,display_name:row.display_name,created_at:row.created_at,updated_at:row.updated_at,...extra};
+}
+function matchingPersonGroups(db,reference,schema='main'){
+  const q=ci(reference);
+  return db.prepare(`SELECT * FROM ${table(schema,'person_groups')} ORDER BY id`).all().filter(row=>ci(row.display_name)===q);
+}
+function resolvePersonGroup(db,reference,schema='main'){
+  if(Number.isSafeInteger(reference)||(typeof reference==='string'&&/^(?:PG-)?[1-9]\d*$/i.test(reference.trim()))){
+    const row=rawPersonGroup(db,reference,schema);return row?{outcome:'MATCH',matches:[row]}:{outcome:'NOT_FOUND',matches:[]};
+  }
+  const value=String(reference??'').trim();if(!value)return{outcome:'NOT_FOUND',matches:[]};
+  const matches=matchingPersonGroups(db,value,schema);
+  return matches.length===1?{outcome:'MATCH',matches}:matches.length>1?{outcome:'AMBIGUOUS',matches}:{outcome:'NOT_FOUND',matches:[]};
+}
+function createPersonGroup(db,input,options={}){
+  const schema=options.schema??'main',displayName=String(input.display_name??'').trim();if(!displayName)throw new Error('display_name must be a non-empty string');
+  const matches=matchingPersonGroups(db,displayName,schema);if(matches.length)throw new Error('Person Group display_name already exists');
+  const at=options.at??now(),info=db.prepare(`INSERT INTO ${table(schema,'person_groups')}(display_name,created_at,updated_at) VALUES(?,?,?)`).run(displayName,at,at);
+  return rawPersonGroup(db,Number(info.lastInsertRowid),schema);
+}
+function renamePersonGroup(db,id,displayName,options={}){
+  const schema=options.schema??'main',group=rawPersonGroup(db,id,schema);if(!group)throw new Error('Person Group not found');
+  const value=String(displayName??'').trim();if(!value)throw new Error('display_name must be a non-empty string');
+  const conflicts=matchingPersonGroups(db,value,schema).filter(row=>row.id!==group.id);if(conflicts.length)throw new Error('Person Group display_name already exists');
+  if(group.display_name===value)return group;
+  db.prepare(`UPDATE ${table(schema,'person_groups')} SET display_name=?,updated_at=? WHERE id=?`).run(value,options.at??now(),group.id);
+  return rawPersonGroup(db,group.id,schema);
+}
+function personGroupMembers(db,id,schema='main'){
+  const group=rawPersonGroup(db,id,schema);if(!group)throw new Error('Person Group not found');
+  return db.prepare(`SELECT p.* FROM ${table(schema,'person_group_members')} gm JOIN ${table(schema,'people')} p ON p.id=gm.person_id WHERE gm.group_id=? ORDER BY p.display_name,p.id`).all(group.id).map(row=>canonicalPerson(db,row,schema));
+}
+function formatPersonGroupDetail(db,row,schema='main'){
+  return formatPersonGroup(row,{members:personGroupMembers(db,row.id,schema).map(formatPerson)});
+}
+function addPersonGroupMember(db,groupValue,personValue,options={}){
+  const schema=options.schema??'main',group=rawPersonGroup(db,groupValue,schema),person=canonicalPerson(db,personValue,schema);if(!group)throw new Error('Person Group not found');if(!person)throw new Error('Person not found');
+  const info=db.prepare(`INSERT OR IGNORE INTO ${table(schema,'person_group_members')}(group_id,person_id,created_at) VALUES(?,?,?)`).run(group.id,person.id,options.at??now());
+  return {group,person,changed:info.changes>0};
+}
+function removePersonGroupMember(db,groupValue,personValue,options={}){
+  const schema=options.schema??'main',group=rawPersonGroup(db,groupValue,schema),person=canonicalPerson(db,personValue,schema);if(!group)throw new Error('Person Group not found');if(!person)throw new Error('Person not found');
+  const info=db.prepare(`DELETE FROM ${table(schema,'person_group_members')} WHERE group_id=? AND person_id=?`).run(group.id,person.id);
+  return {group,person,changed:info.changes>0};
+}
+function personInGroup(db,groupValue,personValue,schema='main'){
+  const group=rawPersonGroup(db,groupValue,schema),person=canonicalPerson(db,personValue,schema);if(!group)throw new Error('Person Group not found');if(!person)throw new Error('Person not found');
+  return Boolean(db.prepare(`SELECT 1 ok FROM ${table(schema,'person_group_members')} WHERE group_id=? AND person_id=?`).get(group.id,person.id));
 }
 
 
@@ -530,9 +616,10 @@ function mutate(db, operationType, payload, fn, options = {}) {
 
 module.exports = {
   CONTACT_SCHEMA_VERSION, SELF_NAME, STATUS_ACTIVE, STATUS_MERGED,
-  ci, personNumber, importantDateNumber, importantDateReminderNumber, schemaSql, schemaVersion, requireSchema, ensureSchema, ensureSingleSelf, integrity,
+  ci, personNumber, personGroupNumber, importantDateNumber, importantDateReminderNumber, schemaSql, schemaVersion, requireSchema, ensureSchema, ensureSingleSelf, integrity,
   rawPerson, canonicalPerson, formatPerson, aliasesFor, matchingPeople, resolve, search,
   createOrReuse, updateFacts, addAlias, removeAlias, merge, mutate,
+  rawPersonGroup, formatPersonGroup, formatPersonGroupDetail, matchingPersonGroups, resolvePersonGroup, createPersonGroup, renamePersonGroup, personGroupMembers, addPersonGroupMember, removePersonGroupMember, personInGroup,
   rawImportantDate, formatImportantDate, listImportantDates, createImportantDate, updateImportantDate, setImportantDateReminders, deleteImportantDate,
   importantDateOccurrences, claimDueImportantDateReminders, renderImportantDateClaim, settleImportantDateClaim,
   normalizeReminderSpecs, subtractOffset, dateInTimezone,

@@ -15,7 +15,7 @@ const json = (rel) => JSON.parse(read(rel));
 const fail = (message) => { throw new Error(message); };
 
 const release = json('release.json');
-if (release?.generation?.sqlite_schema !== 8) fail('Batch 8 must validate Daily Review against the current schema v8 generation');
+if (release?.generation?.sqlite_schema !== 9) fail('Batch 8 must validate Daily Review against the current schema v9 generation');
 
 const tools = json('config/tasks-tools.json');
 if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_daily_review').length !== 1) {
@@ -27,13 +27,16 @@ if (tools.allow.filter((name) => name === 'task_management_review').length !== 1
 if (tools.allow.filter((name) => name === 'task_reminder_dispatch').length !== 1) {
   fail('task_reminder_dispatch must be host-allowlisted exactly once for scheduler-only execution');
 }
+for (const required of ['deadline_request_get','deadline_request_create','deadline_request_approve','deadline_request_reject']) {
+  if (tools.allow.filter((name) => name === required).length !== 1) fail(required + ' must be host-allowlisted exactly once');
+}
 for (const denied of ['write','edit','apply_patch','exec','process','gateway','cron','browser','sessions_spawn','sessions_send','subagents','nodes']) {
   if (!tools.deny?.includes(denied)) fail(`Task Agent deny policy lost ${denied}`);
 }
 
 const manifest = json('plugins/taskctl/openclaw.plugin.json');
 const staticTools = manifest?.contracts?.tools;
-if (!Array.isArray(staticTools) || staticTools.length !== 63) fail('Batch 8 static plugin registry must contain 63 tools');
+if (!Array.isArray(staticTools) || staticTools.length !== 67) fail('Batch 8 static plugin registry must contain 67 tools');
 if (staticTools.filter((name) => name === 'task_daily_review').length !== 1) fail('static registry must declare task_daily_review exactly once');
 if (staticTools.filter((name) => name === 'task_management_review').length !== 1) fail('static registry must declare task_management_review exactly once');
 if (staticTools.filter((name) => name === 'task_reminder_dispatch').length !== 1) fail('static registry must declare task_reminder_dispatch exactly once');
@@ -51,7 +54,7 @@ for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyRe
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
 const taskctl = read('taskctl');
-for (const required of ["const IMPLEMENTATION_VERSION = '0.4.11';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
+for (const required of ["const IMPLEMENTATION_VERSION = '0.4.12';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
   if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
@@ -59,7 +62,7 @@ const plugin = read('plugins/taskctl/src/plugin.ts');
 if (!plugin.includes('factory: ({ api, toolContext }) => createDailyReviewTool(api, toolContext)')) {
   fail('Daily Review must remain a context-gated factory tool');
 }
-if (!plugin.includes('factory: ({ toolContext }) => createManagementReviewTool(toolContext)')) {
+if (!plugin.includes('factory: ({ api, toolContext }) => createManagementReviewTool(api, toolContext)')) {
   fail('Management Review must remain a context-gated factory tool');
 }
 
@@ -74,7 +77,7 @@ for (const required of [
   'sessionPersistence: "detached"',
   'disableTools: true',
   'modelRun: true',
-  'TASKCTL_SCHEMA_VERSION = 8',
+  'TASKCTL_SCHEMA_VERSION = 9',
   'runDailyReviewSnapshot',
   'completionStatus === "succeeded"',
   'deliveryStatus === "delivered"',
@@ -99,7 +102,7 @@ if (/\b(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b/.test(daily)) {
 }
 
 const tests = read('plugins/taskctl/src/plugin.test.ts');
-if (!tests.includes('ordinaryToolNames()).toHaveLength(60)')) fail('ordinary 60-tool surface regression is not asserted');
+if (!tests.includes('ordinaryToolNames()).toHaveLength(64)')) fail('ordinary 64-tool surface regression is not asserted');
 if (!tests.includes('expect(byName.has(TASK_DAILY_REVIEW_TOOL)).toBe(false)')) fail('ordinary normalized surface must exclude Daily Review');
 if (!tests.includes('expect(byName.has(TASK_REMINDER_DISPATCH_TOOL)).toBe(false)')) fail('ordinary normalized surface must exclude Reminder dispatcher');
 
@@ -120,7 +123,7 @@ CDB="$TMP/tasks-contacts.sqlite3"
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init)
 node - "$init" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (result.schema_version !== 8 || result.implementation_version !== '0.4.11') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.11 / schema 8`);
+if (result.schema_version !== 9 || result.implementation_version !== '0.4.12') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.12 / schema 9`);
 NODE
 
 
@@ -128,10 +131,15 @@ BOUNDARY="2026-09-05T06:30:00.000Z"
 node - "$DB" "$CDB" <<'NODE'
 const { DatabaseSync } = require('node:sqlite');
 const db = new DatabaseSync(process.argv[2]);
-const cdb = new DatabaseSync(process.argv[3], { readOnly: true });
+const cdb = new DatabaseSync(process.argv[3]);
 try {
   const person = Number(cdb.prepare("SELECT id FROM people WHERE is_self=1 AND status='ACTIVE'").get().id);
+  const group = Number(cdb.prepare("INSERT INTO person_groups(display_name,created_at,updated_at) VALUES('Office CEO','2026-09-05T05:00:00.000Z','2026-09-05T05:00:00.000Z')").run().lastInsertRowid);
+  cdb.prepare("INSERT INTO person_group_members(group_id,person_id,created_at) VALUES(?,?,'2026-09-05T05:00:00.000Z')").run(group,person);
   db.prepare("INSERT INTO labels(display_name,emoji,created_at) VALUES('Работа','💼','2026-09-05T05:00:00.000Z')").run();
+  const personalLabel = Number(db.prepare("INSERT INTO labels(display_name,emoji,created_at) VALUES('Personal fixture','🏠','2026-09-05T05:00:00.000Z')").run().lastInsertRowid);
+  db.prepare("INSERT INTO task_domain_bindings(binding_key,entity_id,created_at,updated_at) VALUES('OFFICE_CEO_GROUP',?,'2026-09-05T05:00:00.000Z','2026-09-05T05:00:00.000Z')").run(group);
+  db.prepare("INSERT INTO task_domain_bindings(binding_key,entity_id,created_at,updated_at) VALUES('PERSONAL_LABEL',?,'2026-09-05T05:00:00.000Z','2026-09-05T05:00:00.000Z')").run(personalLabel);
   db.prepare("INSERT INTO projects(title,status,created_at,completed_at) VALUES('Batch 8','ACTIVE','2026-09-05T05:00:00.000Z',NULL)").run();
   db.exec('BEGIN IMMEDIATE;');
   db.prepare("INSERT INTO inbox_items(content,received_at,capture_key) VALUES('Before boundary','2026-09-05T06:00:00.000Z','batch8-inbox-before')").run();
@@ -150,11 +158,11 @@ NODE
 snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 node - "$snapshot" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (!result.ok || result.implementation_version !== '0.4.11' || result.schema_version !== 8 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
+if (!result.ok || result.implementation_version !== '0.4.12' || result.schema_version !== 9 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
 if (!Array.isArray(result.tasks) || result.tasks.length !== 250) process.exit(3);
 if (result.tasks.some((task) => task.title === 'Done' || task.title === 'Future')) process.exit(4);
 const first = result.tasks.find((task) => task.id === 'T-1');
-if (!first || first.project_id !== 'PRJ-1' || first.project_title !== 'Batch 8' || first.assignee !== 'Дубровин М.' || first.labels?.[0]?.display_name !== 'Работа') process.exit(5);
+if (!first || first.project_id !== 'PRJ-1' || first.project_title !== 'Batch 8' || first.assignee !== 'Дубровин М.' || first.labels?.[0]?.display_name !== 'Работа' || first.office_ceo !== true || first.personal !== false) process.exit(5);
 if (result.inbox_count !== 1) process.exit(6);
 NODE
 
@@ -173,6 +181,9 @@ try {
   const savelev=Number(addPerson.run('Савельев Е.',at,at).lastInsertRowid);
   const savelevOld=Number(addPerson.run('Савельев старый',at,at).lastInsertRowid);
   cdb.prepare("UPDATE people SET status='MERGED',merged_into=?,updated_at=? WHERE id=?").run(savelev,at,savelevOld);
+  const group=Number(cdb.prepare("INSERT INTO person_groups(display_name,created_at,updated_at) VALUES('Office CEO',?,?)").run(at,at).lastInsertRowid);
+  cdb.prepare('INSERT INTO person_group_members(group_id,person_id,created_at) VALUES(?,?,?)').run(group,savelev,at);
+  db.prepare("INSERT INTO task_domain_bindings(binding_key,entity_id,created_at,updated_at) VALUES('OFFICE_CEO_GROUP',?,?,?)").run(group,at,at);
   const add=db.prepare('INSERT INTO tasks(title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id) VALUES(?,?,?,?,?,?,?,NULL)');
   add.run('Старое поручение',ivanov,'OPEN','2026-09-10',null,at,null);
   add.run('Срок сегодня',ivanov,'OPEN','2026-09-16',null,at,null);
@@ -184,10 +195,11 @@ NODE
 management=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MANAGEMENT_DB" TASKCTL_CONTACTS_DB="$MANAGEMENT_CDB" TASKCTL_PAYLOAD='{"boundary":"2026-09-16T16:00:00.000Z"}' "$TASKCTL" review management-snapshot)
 node - "$management" <<'NODE'
 const result=JSON.parse(process.argv[2]);
-if(!result.ok||result.local_date!=='2026-09-16'||result.overdue_count!==1||result.completed_today_count!==1)process.exit(2);
-if(!result.message.includes('Старое поручение — срок 10.09')||!result.message.includes('Закрыто сегодня'))process.exit(3);
-if(result.message.includes('Срок сегодня')||result.message.includes('Исключенное поручение')||result.message.includes('Закрыто вчера'))process.exit(4);
-if(!result.excluded_people.some((person)=>person.reference==='Савельев'&&person.display_name==='Савельев Е.'))process.exit(5);
+if(!result.ok||result.local_date!=='2026-09-16'||result.not_completed_count!==2||result.completed_count!==1||result.office_ceo_group_id!=='PG-1')process.exit(2);
+const notCompleted=result.not_completed.map(task=>task.title).sort();
+if(JSON.stringify(notCompleted)!==JSON.stringify(['Срок сегодня','Старое поручение'].sort()))process.exit(3);
+if(result.not_completed.some(task=>task.title==='Исключенное поручение')||result.completed.some(task=>task.title==='Закрыто вчера'))process.exit(4);
+if(!result.completed.some(task=>task.title==='Закрыто сегодня'))process.exit(5);
 NODE
 
 LEGACY_DB="$TMP/schema4.sqlite3"
