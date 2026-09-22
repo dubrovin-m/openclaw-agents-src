@@ -14,6 +14,7 @@ npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "o
 OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
 [ -x "$OPENCLAW_BIN" ] || { echo "Unable to install exact OpenClaw target $TARGET_OPENCLAW_VERSION" >&2; exit 2; }
 OPENCLAW_BIN_DIR=$(dirname "$OPENCLAW_BIN")
+export PATH="$OPENCLAW_BIN_DIR:$PATH"
 ISOLATED_PATH="$OPENCLAW_BIN_DIR:$NODE_BIN_DIR:/usr/bin:/bin"
 RUNTIME="$TMP/runtime"
 GATEWAY_LOG="$TMP/gateway.log"
