@@ -10,7 +10,7 @@ describe("Calendar tool policy", () => {
   it("blocks the Google Calendar native surface for non-Calendar agents", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
-      { toolName: "mcp__google_calendar__search_events", params: {} },
+      { toolName: "mcp__codex_apps__google_calendar_search", params: {} },
       { agentId: "main" },
     )).toMatchObject({ block: true });
   });
@@ -18,12 +18,12 @@ describe("Calendar tool policy", () => {
   it("allows only configured reads for Calendar Agent", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
-      { toolName: "mcp__google_calendar__search_events", params: {} },
+      { toolName: "mcp__codex_apps__google_calendar_search", params: {} },
       { agentId: "calendar" },
     )).toBeUndefined();
     expect(calendarToolPolicy(
       VALID_CONFIG,
-      { toolName: "mcp__google_calendar__delete_event", params: { event_id: "x" } },
+      { toolName: "mcp__codex_apps__google_calendar_delete_event", params: { event_id: "x" } },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
   });
@@ -32,7 +32,7 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
-        toolName: "mcp__google_calendar__set_event_label_silently",
+        toolName: "mcp__codex_apps__google_calendar_set_event_label_silently",
         params: { event_id: "event-1", label_id: "label-strategy" },
       },
       { agentId: "calendar" },
@@ -41,7 +41,7 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
-        toolName: "mcp__google_calendar__set_event_label_silently",
+        toolName: "mcp__codex_apps__google_calendar_set_event_label_silently",
         params: { event_id: "event-1", label_id: "label-strategy", title: "mutate me" },
       },
       { agentId: "calendar" },
@@ -50,7 +50,7 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
-        toolName: "mcp__google_calendar__set_event_label_silently",
+        toolName: "mcp__codex_apps__google_calendar_set_event_label_silently",
         params: { event_id: "event-1", label_id: "unknown-label" },
       },
       { agentId: "calendar" },
@@ -61,14 +61,14 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
-        toolName: "mcp__google_calendar__set_event_label_silently",
+        toolName: "mcp__codex_apps__google_calendar_set_event_label_silently",
         params: { event_id: "event-1", label_id: "label-unclassified" },
       },
       { agentId: "calendar" },
     )).toBeUndefined();
     expect(calendarToolPolicy(
       VALID_CONFIG,
-      { toolName: "mcp__google_calendar__respond_event", params: { event_id: "event-1" } },
+      { toolName: "mcp__codex_apps__google_calendar_respond_event", params: { event_id: "event-1" } },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
   });
