@@ -75,9 +75,8 @@ jobs:
         run: |
           set -euo pipefail
           npm test
-          npm run build
-          openclaw plugins build --root . --entry ./dist/plugin.js
-          openclaw plugins validate --root . --entry ./dist/plugin.js
+          npm run plugin:build
+          npm run plugin:validate
 
       - name: Verify generated Calendar metadata is frozen
         run: |
