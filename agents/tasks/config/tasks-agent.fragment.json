@@ -1,5 +1,7 @@
 {
   "id": "tasks",
   "workspace": "/home/dubrovin/.openclaw/workspace-tasks",
-  "agentDir": "/home/dubrovin/.openclaw/agents/tasks/agent"
+  "agentDir": "/home/dubrovin/.openclaw/agents/tasks/agent",
+  "bootstrapMaxChars": 40000,
+  "bootstrapTotalMaxChars": 60000
 }
