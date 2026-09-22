@@ -4,17 +4,22 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
-OPENCLAW_BIN=$(command -v openclaw || true)
-[ -n "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || { echo "OpenClaw executable unavailable" >&2; exit 2; }
 NODE_BIN_DIR=$(dirname "$(command -v node)")
-ISOLATED_PATH="$NODE_BIN_DIR:/usr/bin:/bin"
+TARGET_OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 TMP=$(mktemp -d /tmp/task-recurrence-gateway-e2e.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT INT TERM
+TARGET_OPENCLAW_PREFIX="$TMP/openclaw-target"
+command -v npm >/dev/null 2>&1 || { echo "npm is required to qualify the exact OpenClaw target" >&2; exit 2; }
+npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$TARGET_OPENCLAW_VERSION" >/dev/null
+OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
+[ -x "$OPENCLAW_BIN" ] || { echo "Unable to install exact OpenClaw target $TARGET_OPENCLAW_VERSION" >&2; exit 2; }
+OPENCLAW_BIN_DIR=$(dirname "$OPENCLAW_BIN")
+ISOLATED_PATH="$OPENCLAW_BIN_DIR:$NODE_BIN_DIR:/usr/bin:/bin"
 RUNTIME="$TMP/runtime"
 GATEWAY_LOG="$TMP/gateway.log"
 STATUS_JSON="$TMP/status.json"
 GATEWAY_PID=""
-TOKEN="task-recurrence-e2e-$(date +%s)-$$"
+TOKEN="task-recurrence-e2e-$(date +%s)-$"
 
 fail(){
   echo "$*" >&2
