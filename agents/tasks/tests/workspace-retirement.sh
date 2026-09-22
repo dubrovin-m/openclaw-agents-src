@@ -4,7 +4,7 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 if node - "$ROOT/release.json" <<'NODE'
-const r=require(process.argv[2]);process.exit(r?.important_date_dispatcher&&r?.from?.sqlite_schemas?.[0]===8?0:1);
+const r=require(process.argv[2]);process.exit(r?.important_date_dispatcher&&r?.from?.sqlite_schemas?.[0]===9&&r?.from?.taskctl_versions?.[0]==='0.4.12'&&r?.from?.plugin_versions?.[0]==='0.4.25'?0:1);
 NODE
 then
   exec bash "$ROOT/tests/important-date-deploy.sh"

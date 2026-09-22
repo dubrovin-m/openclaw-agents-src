@@ -17,6 +17,21 @@ const fail = (message) => { throw new Error(message); };
 const release = json('release.json');
 if (release?.generation?.sqlite_schema !== 9) fail('Batch 8 must validate Daily Review against the current schema v9 generation');
 
+const agentsPrompt = read('workspace/AGENTS.md');
+const earlyPrompt = agentsPrompt.slice(0, 12000);
+for (const required of [
+  '## Critical today review path',
+  'Use exactly one `task_list` call with `view:"today"`',
+  '🔴 ПРОСРОЧЕНО N',
+  '💼 СЕГОДНЯ · ОФИС CEO N',
+  '📌 СЕГОДНЯ · КОМАНДА N',
+  '🏠 СЕГОДНЯ · ЛИЧНОЕ N',
+  'Do not add an overall `Сегодня — N задач` heading',
+  'На сегодня задач нет.',
+]) {
+  if (!earlyPrompt.includes(required)) fail(`critical manual-today prompt rule escaped the early bootstrap window: ${required}`);
+}
+
 const tools = json('config/tasks-tools.json');
 if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_daily_review').length !== 1) {
   fail('task_daily_review must be host-allowlisted exactly once');
