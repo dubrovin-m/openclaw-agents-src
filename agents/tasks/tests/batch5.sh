@@ -35,9 +35,12 @@ create_task() {
 }
 
 # BL-018: natural today view is OPEN due_date <= local today; due_on remains exact-date.
+# Keep the durable PERSONAL_LABEL binding separate from the ordinary Label lifecycle fixtures below.
+PERSONAL_LABEL=$(run label create '{"operation_key":"b5:personal-label","display_name":"Personal fixture","emoji":"🏠"}')
+PERSONAL_LABEL_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).label.id)' "$PERSONAL_LABEL")
+run config set "{\"operation_key\":\"b5:bind-personal\",\"key\":\"PERSONAL_LABEL\",\"entity_id\":\"$PERSONAL_LABEL_ID\"}" >/dev/null
 TODAY_LABEL=$(run label create '{"operation_key":"b5:today-label","display_name":"Today fixture","emoji":"🗓"}')
 TODAY_LABEL_ID=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).label.id)' "$TODAY_LABEL")
-run config set "{\"operation_key\":\"b5:bind-personal\",\"key\":\"PERSONAL_LABEL\",\"entity_id\":\"$TODAY_LABEL_ID\"}" >/dev/null
 OVERDUE=$(create_task 'b5:t-overdue' 'Overdue' '2026-08-28' "$TODAY_LABEL_ID")
 YESTERDAY=$(create_task 'b5:t-yesterday' 'Yesterday' '2026-08-29' "$TODAY_LABEL_ID")
 TODAY=$(create_task 'b5:t-today' 'Today' '2026-08-30' "$TODAY_LABEL_ID")
