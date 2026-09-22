@@ -6,7 +6,7 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "plugin:build": "npm run build && openclaw plugins build --root . --entry ./dist/plugin.js",
-    "plugin:validate": "npm run build && openclaw plugins validate --root . --entry ./dist/plugin.js",
+    "plugin:validate": "npm run plugin:build && openclaw plugins validate --root . --entry ./dist/plugin.js",
     "test": "vitest run"
   },
   "files": [
