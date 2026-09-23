@@ -41,4 +41,3 @@ export function calendarToolPolicy(configValue, event, context) {
         return writeAllowed(config, event.params);
     return block("Tool is outside the Calendar Agent authority boundary.");
 }
-
