@@ -264,7 +264,6 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
         }
 
         const updatedBody = {
-          ...current,
           labelProperties: {
             ...(record(current.labelProperties) ?? {}),
             eventLabels: merged,
@@ -281,7 +280,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
               eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
             };
           }>(deps, writeUrl, {
-            method: "PUT",
+            method: "PATCH",
             headers,
             body: JSON.stringify(updatedBody),
           });
