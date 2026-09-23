@@ -181,7 +181,6 @@ export function createGoogleCalendarProvider(deps = {}) {
                     return { changed: false, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
                 }
                 const updatedBody = {
-                    ...current,
                     labelProperties: {
                         ...(record(current.labelProperties) ?? {}),
                         eventLabels: merged,
@@ -193,7 +192,7 @@ export function createGoogleCalendarProvider(deps = {}) {
                 try {
                     const writeUrl = apiUrl(`/calendars/${encodePath(current.id ?? config.designatedCalendar)}`);
                     const updated = await requestJson(deps, writeUrl, {
-                        method: "PUT",
+                        method: "PATCH",
                         headers,
                         body: JSON.stringify(updatedBody),
                     });
