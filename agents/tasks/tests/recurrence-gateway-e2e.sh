@@ -4,17 +4,23 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
-OPENCLAW_BIN=$(command -v openclaw || true)
-[ -n "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || { echo "OpenClaw executable unavailable" >&2; exit 2; }
 NODE_BIN_DIR=$(dirname "$(command -v node)")
-ISOLATED_PATH="$NODE_BIN_DIR:/usr/bin:/bin"
+TARGET_OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 TMP=$(mktemp -d /tmp/task-recurrence-gateway-e2e.XXXXXX)
+trap 'rm -rf "$TMP"' EXIT INT TERM
+TARGET_OPENCLAW_PREFIX="$TMP/openclaw-target"
+command -v npm >/dev/null 2>&1 || { echo "npm is required to qualify the exact OpenClaw target" >&2; exit 2; }
+npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$TARGET_OPENCLAW_VERSION" >/dev/null
+OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
+[ -x "$OPENCLAW_BIN" ] || { echo "Unable to install exact OpenClaw target $TARGET_OPENCLAW_VERSION" >&2; exit 2; }
+OPENCLAW_BIN_DIR=$(dirname "$OPENCLAW_BIN")
+export PATH="$OPENCLAW_BIN_DIR:$PATH"
+ISOLATED_PATH="$OPENCLAW_BIN_DIR:$NODE_BIN_DIR:/usr/bin:/bin"
 RUNTIME="$TMP/runtime"
 GATEWAY_LOG="$TMP/gateway.log"
 STATUS_JSON="$TMP/status.json"
 GATEWAY_PID=""
-TOKEN="task-recurrence-e2e-$(date +%s)-$$"
+TOKEN="task-recurrence-e2e-$(date +%s)-$"
 
 fail(){
   echo "$*" >&2
@@ -22,11 +28,25 @@ fail(){
   exit 2
 }
 
+stop_runtime_children(){
+  local pids
+  pids=$(pgrep -f "$TARGET_OPENCLAW_PREFIX" 2>/dev/null || true)
+  [ -z "$pids" ] || kill -TERM $pids 2>/dev/null || true
+  for _ in $(seq 1 40); do
+    pids=$(pgrep -f "$TARGET_OPENCLAW_PREFIX" 2>/dev/null || true)
+    [ -n "$pids" ] || return 0
+    sleep 0.1
+  done
+  pids=$(pgrep -f "$TARGET_OPENCLAW_PREFIX" 2>/dev/null || true)
+  [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
+}
+
 cleanup(){
   if [ -n "$GATEWAY_PID" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
     kill -TERM "$GATEWAY_PID" 2>/dev/null || true
     wait "$GATEWAY_PID" 2>/dev/null || true
   fi
+  stop_runtime_children
   rm -rf "$TMP"
 }
 trap cleanup EXIT INT TERM
@@ -91,10 +111,12 @@ start_gateway(){
 }
 
 stop_gateway(){
-  [ -n "$GATEWAY_PID" ] || return 0
-  kill -TERM "$GATEWAY_PID" 2>/dev/null || true
-  wait "$GATEWAY_PID" 2>/dev/null || true
-  GATEWAY_PID=""
+  if [ -n "$GATEWAY_PID" ]; then
+    kill -TERM "$GATEWAY_PID" 2>/dev/null || true
+    wait "$GATEWAY_PID" 2>/dev/null || true
+    GATEWAY_PID=""
+  fi
+  stop_runtime_children
 }
 
 TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-root "$RUNTIME" >/dev/null

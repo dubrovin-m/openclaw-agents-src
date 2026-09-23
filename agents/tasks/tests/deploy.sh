@@ -54,11 +54,11 @@ write_taskctl_fixture "$BAD_TASKCTL" 0.4.9 4 0
 cat > "$FIX/config/tasks-tools.json" <<'JSON'
 {"profile":"full","allow":["taskctl","task_update","task_complete","task_cancel","read"],"deny":["write","edit","apply_patch","exec","process","browser","gateway"],"fs":{"workspaceOnly":true}}
 JSON
-cat > "$FIX/plugins/taskctl/package.json" <<'JSON'
-{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"2026.8.2"},"peerDependencies":{"openclaw":">=2026.8.2"},"openclaw":{"extensions":["./dist/plugin.js"],"compat":{"pluginApi":">=2026.8.2"},"build":{"openclawVersion":"2026.8.2"}}}
+cat > "$FIX/plugins/taskctl/package.json" <<JSON
+{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":">=$OPENCLAW_VERSION"},"openclaw":{"extensions":["./dist/plugin.js"],"compat":{"pluginApi":">=$OPENCLAW_VERSION"},"build":{"openclawVersion":"$OPENCLAW_VERSION"}}}
 JSON
-cat > "$FIX/plugins/taskctl/package-lock.json" <<'JSON'
-{"name":"openclaw-plugin-taskctl","version":"0.4.1","packages":{"":{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"2026.8.2"},"peerDependencies":{"openclaw":">=2026.8.2"}},"node_modules/typebox":{"version":"1.3.15"}}}
+cat > "$FIX/plugins/taskctl/package-lock.json" <<JSON
+{"name":"openclaw-plugin-taskctl","version":"0.4.1","packages":{"":{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":">=$OPENCLAW_VERSION"}},"node_modules/typebox":{"version":"1.3.15"}}}
 JSON
 cat > "$FIX/plugins/taskctl/openclaw.plugin.json" <<'JSON'
 {"id":"taskctl","version":"0.4.1","contracts":{"tools":["taskctl","task_update","task_complete","task_cancel"]}}
