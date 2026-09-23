@@ -304,7 +304,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
       );
       return {
         changed: true,
-        event_ref: providerEventRef(updated),
+        event_ref: eventRef,
         label_id: updated.eventLabelId ?? labelId,
         etag: updated.etag,
       };
