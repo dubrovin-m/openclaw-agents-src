@@ -155,4 +155,58 @@ describe("Google Calendar provider", () => {
     })).rejects.toThrow(/not part of the effective analytical configuration/u);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
+
+  it("synchronizes configured analytical labels while preserving unrelated Calendar state", async () => {
+    const currentCalendar = {
+      id: "primary",
+      summary: "AI Calendar",
+      description: "keep me",
+      timeZone: "Europe/Moscow",
+      labelProperties: {
+        eventLabels: [
+          { id: "label-strategy", backgroundColor: "#336699" },
+          { id: "unrelated-label", name: "Personal", backgroundColor: "#123456" },
+        ],
+      },
+    };
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(currentCalendar))
+      .mockResolvedValueOnce(jsonResponse({
+        ...currentCalendar,
+        labelProperties: {
+          eventLabels: [
+            { id: "label-strategy", name: "Strategy", backgroundColor: "#336699" },
+            { id: "unrelated-label", name: "Personal", backgroundColor: "#123456" },
+            { id: "label-delivery", name: "Delivery", backgroundColor: "#669933" },
+            { id: "label-service", name: "Service", backgroundColor: "#999999" },
+            { id: "label-unclassified", name: "Unclassified", backgroundColor: "#CCCCCC" },
+          ],
+        },
+      }));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.syncLabels(VALID_CONFIG)).resolves.toMatchObject({
+      changed: true,
+      calendar_id: "primary",
+    });
+
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+    const [rawUrl, init] = fetchImpl.mock.calls[1];
+    expect(new URL(String(rawUrl)).pathname).toBe("/calendar/v3/calendars/primary");
+    expect(init?.method).toBe("PUT");
+    const body = JSON.parse(String(init?.body));
+    expect(body.summary).toBe("AI Calendar");
+    expect(body.description).toBe("keep me");
+    expect(body.timeZone).toBe("Europe/Moscow");
+    expect(body.labelProperties.eventLabels).toContainEqual(
+      { id: "unrelated-label", name: "Personal", backgroundColor: "#123456" },
+    );
+    expect(body.labelProperties.eventLabels).toContainEqual(
+      { id: "label-strategy", name: "Strategy", backgroundColor: "#336699" },
+    );
+  });
+
 });
