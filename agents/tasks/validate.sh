@@ -2,6 +2,17 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
+
+VALIDATION_TMP=$(mktemp -d "${TMPDIR:-/tmp}/task-agent-validate.XXXXXX")
+cleanup_validation_tmp(){ rm -rf "$VALIDATION_TMP"; }
+handle_validation_int(){ exit 130; }
+handle_validation_term(){ exit 143; }
+trap cleanup_validation_tmp EXIT
+trap handle_validation_int INT
+trap handle_validation_term TERM
+mkdir -p "$VALIDATION_TMP/tmp" "$VALIDATION_TMP/node-compile-cache"
+export TMPDIR="$VALIDATION_TMP/tmp"
+export NODE_COMPILE_CACHE="$VALIDATION_TMP/node-compile-cache"
 EXPECTED_OPENCLAW=$(node -e 'const x=require(process.argv[1]);process.stdout.write(x.openclaw.version)' "$REPO_ROOT/runtime-contract.json")
 test "$(openclaw --version | awk '{print $2}')" = "$EXPECTED_OPENCLAW"
 openclaw config validate
@@ -104,8 +115,8 @@ bash "$ROOT/tests/recurrence-qualification.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/reminders.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/deadline-governance.sh"
 
-PACK_DIR=$(mktemp -d /tmp/task-agent-plugin-pack.XXXXXX)
-trap 'rm -rf "$PACK_DIR"' EXIT INT TERM
+PACK_DIR="$VALIDATION_TMP/plugin-pack"
+mkdir -p "$PACK_DIR"
 (
   cd "$ROOT/plugins/taskctl"
   npm ci
@@ -120,12 +131,12 @@ GENERATED_ARTIFACT="$PACK_DIR/$ARTIFACT_BASENAME"
 test -f "$GENERATED_ARTIFACT"
 test "$(sha256sum "$GENERATED_ARTIFACT" | awk '{print $1}')" = "$EXPECTED_ARTIFACT_SHA"
 cmp -s "$GENERATED_ARTIFACT" "$ARTIFACT"
-rm -rf "$PACK_DIR"
-trap - EXIT INT TERM
-
 # Deployment/recovery source is validated after the current plugin artifact exists.
 bash "$ROOT/tests/deploy.sh"
 bash "$ROOT/tests/isolated-runtime.sh"
 bash "$ROOT/tests/recurrence-gateway-e2e.sh"
 
+cleanup_validation_tmp
+trap - EXIT INT TERM
+[ ! -e "$VALIDATION_TMP" ]
 printf '\nTASK_AGENT_SOURCE_VALID\n'
