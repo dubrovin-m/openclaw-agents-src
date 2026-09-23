@@ -203,15 +203,13 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" mutation_started false
 assert_field "$CASE_RESULT" backup_created false
 ! grep -q '^backup create ' "$FAKE_TRACE"
-! grep -q '^update --tag 2026.8.2 --json
- "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 run_case 110 FAKE_DF_LOW_AFTER_BACKUP=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" mutation_started false
 assert_field "$CASE_RESULT" backup_created true
-! grep -q '^update --tag 2026.8.2 --json
- "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 echo ROLLOUT_WRAPPER_TEST_PASS
