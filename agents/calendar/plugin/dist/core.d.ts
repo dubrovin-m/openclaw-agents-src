@@ -104,3 +104,4 @@ export declare function analyzeCalendar(configValue: unknown, kind: ReviewKind, 
         };
     };
 };
+
