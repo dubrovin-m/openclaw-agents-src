@@ -88,7 +88,7 @@ try {
   const here=path.dirname(fileURLToPath(import.meta.url));
   const installed=fs.readFileSync(path.join(here,'installed-revision'),'utf8').trim();
   const source=execFileSync('git',['-C',sourceDir,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
-  ok=candidate.controller_revision===installed&&candidate.production_baseline_sha===source&&candidate.control_repository==='example/control'&&candidate.implementation_repository==='example/source';
+  ok=candidate.controller_revision===installed&&candidate.protected_path_baseline_sha===source&&candidate.production_baseline_sha===source&&candidate.control_repository==='example/control'&&candidate.implementation_repository==='example/source';
 } catch {}
 process.stdout.write(JSON.stringify({ok,generation:'target'})+'\n');
 JS
@@ -167,7 +167,7 @@ reset_runtime(){
   git show "$FROM:agents/tasks/production-control/openclaw-task-production-control.timer" > "$SYSTEMD/openclaw-task-production-control.timer"
   chmod 644 "$SYSTEMD"/*
   cat > "$STATE/state.json" <<JSON
-{"version":1,"mode":"ACTIVE","controller_revision":"$FROM","production_baseline_sha":"$BASELINE","deployment_blocked":false,"last_diagnostic":{"ok":true},"requests":{"77":{"type":"diagnose","state":"SUCCESS","completed_at":"old"}},"watermark":100,"minimum_comment_id":50}
+{"version":1,"mode":"ACTIVE","controller_revision":"$FROM","protected_path_baseline_sha":"$FROM","production_baseline_sha":"$BASELINE","deployment_blocked":false,"last_diagnostic":{"ok":true},"requests":{"77":{"type":"diagnose","state":"SUCCESS","completed_at":"old"}},"watermark":100,"minimum_comment_id":50}
 JSON
   chmod 600 "$STATE/state.json"
   git clone -q --no-hardlinks --no-checkout "$REPO" "$SOURCE"
@@ -192,7 +192,7 @@ assert_old_state(){
   test "$(cat "$LIB/installed-revision")" = "$FROM"
   node - "$STATE/state.json" "$FROM" "$BASELINE" <<'NODE'
 const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],baseline=process.argv[4];
-if(s.mode!=='ACTIVE'||s.controller_revision!==from||s.production_baseline_sha!==baseline||s.watermark!==100||s.minimum_comment_id!==50)process.exit(2);
+if(s.mode!=='ACTIVE'||s.controller_revision!==from||s.protected_path_baseline_sha!==from||s.production_baseline_sha!==baseline||s.watermark!==100||s.minimum_comment_id!==50)process.exit(2);
 if(s.requests?.['77']?.state!=='SUCCESS'||s.last_diagnostic?.ok!==true)process.exit(2);
 NODE
   test "$(git -C "$SOURCE" rev-parse HEAD)" = "$FROM"
@@ -206,16 +206,21 @@ assert_target_state(){
   node - "$STATE/state.json" "$TO" "$FROM" "$stage" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
 const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2])),to=process.argv[3],from=process.argv[4],stage=process.argv[5];
 const control=process.argv[6],implementation=process.argv[7],issue=Number(process.argv[8]),login=process.argv[9],ownerId=Number(process.argv[10]);
-if(s.mode!=='ACTIVE'||s.controller_revision!==to||s.production_baseline_sha!==to||s.last_diagnostic!==null)process.exit(2);
+if(s.mode!=='ACTIVE'||s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==to||s.last_diagnostic!==null)process.exit(2);
 if(s.control_repository!==control||s.implementation_repository!==implementation||s.control_issue!==issue||s.owner_login!==login||s.owner_id!==ownerId)process.exit(2);
 if(s.watermark!==100||s.minimum_comment_id!==50||s.requests?.['77']?.state!=='SUCCESS')process.exit(2);
-if(s.last_break_glass_reconciliation?.from_controller!==from||s.last_break_glass_reconciliation?.deploy_stage!==stage||s.last_break_glass_reconciliation?.to!==to)process.exit(2);
+if(s.last_break_glass_reconciliation?.from_controller!==from||s.last_break_glass_reconciliation?.from_protected_path_baseline!==from||s.last_break_glass_reconciliation?.deploy_stage!==stage||s.last_break_glass_reconciliation?.to!==to)process.exit(2);
 NODE
   test "$(git -C "$SOURCE" rev-parse HEAD)" = "$TO"
   test -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all)"
   test "$(git -C "$SOURCE" remote get-url origin)" = "$IMPLEMENTATION_URL"
   test "$(cat "$SYSTEMCTL_STATE/timer")" = active
-  test -n "$(find "$STATE" -path '*/break-glass-reconcile-*/result.json' -print -quit)"
+  result_file=$(find "$STATE" -path '*/break-glass-reconcile-*/result.json' -print -quit)
+  test -n "$result_file"
+  node - "$result_file" "$FROM" "$TO" <<'NODE'
+const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],to=process.argv[4];
+if(r.result!=='PASS'||r.from_protected_path_baseline!==from||r.to_protected_path_baseline!==to)process.exit(2);
+NODE
 }
 
 cd "$REPO"
