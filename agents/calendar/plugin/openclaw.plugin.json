@@ -247,6 +247,7 @@
       "calendar_provider_list_events",
       "calendar_provider_get_event",
       "calendar_provider_get_labels",
+      "calendar_provider_sync_labels",
       "calendar_provider_set_label"
     ]
   },
@@ -267,6 +268,9 @@
       "optional": true
     },
     "calendar_provider_get_labels": {
+      "optional": true
+    },
+    "calendar_provider_sync_labels": {
       "optional": true
     },
     "calendar_provider_set_label": {
