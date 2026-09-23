@@ -5,7 +5,11 @@ REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 
 VALIDATION_TMP=$(mktemp -d "${TMPDIR:-/tmp}/task-agent-validate.XXXXXX")
 cleanup_validation_tmp(){ rm -rf "$VALIDATION_TMP"; }
-trap cleanup_validation_tmp EXIT INT TERM
+handle_validation_int(){ exit 130; }
+handle_validation_term(){ exit 143; }
+trap cleanup_validation_tmp EXIT
+trap handle_validation_int INT
+trap handle_validation_term TERM
 mkdir -p "$VALIDATION_TMP/tmp" "$VALIDATION_TMP/node-compile-cache"
 export TMPDIR="$VALIDATION_TMP/tmp"
 export NODE_COMPILE_CACHE="$VALIDATION_TMP/node-compile-cache"
