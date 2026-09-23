@@ -197,12 +197,13 @@ describe("Google Calendar provider", () => {
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const [rawUrl, init] = fetchImpl.mock.calls[1];
     expect(new URL(String(rawUrl)).pathname).toBe("/calendar/v3/calendars/calendar%40example.com");
-    expect(init?.method).toBe("PUT");
+    expect(init?.method).toBe("PATCH");
     expect(new Headers(init?.headers).get("if-match")).toBe("\"c1\"");
     const body = JSON.parse(String(init?.body));
-    expect(body.summary).toBe("AI Calendar");
-    expect(body.description).toBe("keep me");
-    expect(body.timeZone).toBe("Europe/Moscow");
+    expect(Object.keys(body)).toEqual(["labelProperties"]);
+    expect(body.summary).toBeUndefined();
+    expect(body.description).toBeUndefined();
+    expect(body.timeZone).toBeUndefined();
     expect(body.labelProperties.eventLabels).toContainEqual(
       { id: "unrelated-label", name: "Personal", backgroundColor: "#123456" },
     );
