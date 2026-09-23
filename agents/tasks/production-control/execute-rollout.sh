@@ -152,7 +152,7 @@ set -e
 if [ "$STATUS_EXIT" -ne 0 ]; then rm -f "$STATUS_JSON"; REASON="OpenClaw update status probe failed"; finish; fi
 if ! EXPECTED_ENV="$EXPECTED_OPENCLAW_VERSION" node - "$STATUS_JSON" <<'NODE'
 const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const ok=v?.effectiveChannel==='stable'&&v?.schedule?.channel==='stable'&&v?.schedule?.install?.kind==='package'&&v?.updateAvailable?.currentVersion===process.env.EXPECTED_ENV;
+const ok=v?.effectiveChannel==='stable'&&v?.schedule?.channel==='stable'&&v?.schedule?.target?.kind==='package'&&v?.updateAvailable?.currentVersion===process.env.EXPECTED_ENV;
 if(!ok)process.exit(2);
 NODE
 then rm -f "$STATUS_JSON"; REASON="Production update state does not match the qualified package/stable predecessor"; finish; fi
