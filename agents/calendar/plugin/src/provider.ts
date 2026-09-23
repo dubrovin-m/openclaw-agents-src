@@ -230,7 +230,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
 
     async syncLabels(configValue: unknown) {
       const config = parseCalendarConfig(configValue);
-      const url = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
+      const readUrl = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
       const configured = [...config.leaves.map((leaf) => leaf.providerLabel), config.unclassifiedLabel];
       const configuredById = new Map(configured.map((label) => [label.id, label]));
 
@@ -241,7 +241,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
           labelProperties?: {
             eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
           };
-        }>(deps, url);
+        }>(deps, readUrl);
 
         const existing = current.labelProperties?.eventLabels ?? [];
         const merged = existing.map((label) => {
@@ -274,12 +274,13 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
         if (current.etag) headers.set("if-match", current.etag);
 
         try {
+          const writeUrl = apiUrl(`/calendars/${encodePath(current.id ?? config.designatedCalendar)}`);
           const updated = await requestJson<Record<string, unknown> & {
             id?: string;
             labelProperties?: {
               eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
             };
-          }>(deps, url, {
+          }>(deps, writeUrl, {
             method: "PUT",
             headers,
             body: JSON.stringify(updatedBody),
