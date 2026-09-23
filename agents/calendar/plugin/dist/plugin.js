@@ -137,4 +137,3 @@ entry.register = (api) => {
     api.on("before_tool_call", (event, context) => calendarToolPolicy(api.pluginConfig, event, context), { priority: 100 });
 };
 export default entry;
-
