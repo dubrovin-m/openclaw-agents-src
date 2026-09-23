@@ -25,11 +25,11 @@ const fs=require('fs'),path=require('path');let p=fs.realpathSync(process.argv[2
 NODE
 ) || fail "OpenClaw package root unavailable"
 export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
-export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$REPO_ROOT"
-
 PRED_SRC="$TMP/predecessor-source"
 git clone -q --shared --no-checkout "$REPO_ROOT" "$PRED_SRC"
 git -C "$PRED_SRC" checkout -q --detach "$PRED"
+# Historical recovery qualification stays bound to the predecessor generation.
+export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$PRED_SRC"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 mkdir -p "$BASE/state/backups/tools-md-migration"
