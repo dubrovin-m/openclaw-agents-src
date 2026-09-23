@@ -11,6 +11,7 @@
       "parents",
       "leaves",
       "unclassifiedLabel",
+      "classificationRules",
       "targets"
     ],
     "properties": {
@@ -76,7 +77,11 @@
             "id",
             "name",
             "kind",
-            "providerLabel"
+            "providerLabel",
+            "definition",
+            "includes",
+            "excludes",
+            "examples"
           ],
           "properties": {
             "id": {
@@ -125,6 +130,36 @@
                 }
               },
               "additionalProperties": false
+            },
+            "definition": {
+              "type": "string",
+              "minLength": 1
+            },
+            "includes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "excludes": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "uniqueItems": true
+            },
+            "examples": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 1
+              },
+              "minItems": 1,
+              "uniqueItems": true
             }
           },
           "additionalProperties": false
@@ -183,6 +218,15 @@
           }
         },
         "additionalProperties": false
+      },
+      "classificationRules": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "uniqueItems": true
       }
     },
     "additionalProperties": false
