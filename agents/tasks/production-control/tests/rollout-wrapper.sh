@@ -11,6 +11,7 @@ STATE="$TMP/controller-state"
 FAKEBIN="$TMP/bin"
 FAKE_STATE="$TMP/openclaw-version"
 FAKE_TRACE="$TMP/trace"
+FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
 TASK_RESULT_DIR="$TMP/task-results"
 mkdir -p "$SRC/agents/tasks" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
 
@@ -85,6 +86,7 @@ case "${1:-}" in
     [ -n "$out" ] || exit 2
     mkdir -p "$out"
     : > "$out/fake-openclaw-backup.tar.gz"
+    : > "$FAKE_DF_BACKUP_MARKER"
     echo '{"ok":true}'
     ;;
   plugins)
@@ -98,8 +100,20 @@ esac
 SH
 chmod 700 "$FAKEBIN/openclaw"
 
+cat > "$FAKEBIN/df" <<'SH'
+#!/usr/bin/env bash
+set -euo pipefail
+avail=${FAKE_DF_AVAIL_KB:-4194304}
+if [ "${FAKE_DF_LOW_AFTER_BACKUP:-0}" = 1 ] && [ -e "$FAKE_DF_BACKUP_MARKER" ]; then
+  avail=1024
+fi
+printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
+printf '/dev/fake 8388608 1 %s 1%% /\n' "$avail"
+SH
+chmod 700 "$FAKEBIN/df"
+
 export PATH="$FAKEBIN:$PATH"
-export FAKE_STATE FAKE_TRACE
+export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
 
 read_result() { node -e "const v=require(process.argv[1]);process.stdout.write(JSON.stringify(v))" "$1"; }
@@ -116,6 +130,7 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
+  rm -f "$FAKE_DF_BACKUP_MARKER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
   env "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
@@ -181,5 +196,20 @@ run_case 108 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=APPLY FAKE_TASK_MUTATION=
 assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" task_mutation_started true
+
+run_case 109 FAKE_DF_AVAIL_KB=1024
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" backup_created false
+! grep -q '^backup create ' "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
+
+run_case 110 FAKE_DF_LOW_AFTER_BACKUP=1
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" backup_created true
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 echo ROLLOUT_WRAPPER_TEST_PASS

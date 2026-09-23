@@ -17,7 +17,7 @@ case "$SOURCE_DIR" in /*) ;; *) echo "Source checkout must be absolute" >&2; exi
 case "$STATE_DIR" in /*) ;; *) echo "Controller state directory must be absolute" >&2; exit 2;; esac
 [[ "$EXPECTED_OPENCLAW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid expected OpenClaw predecessor version" >&2; exit 2; }
 
-for cmd in node git mkdir chmod mktemp find awk date wc tail mv rm sha256sum; do
+for cmd in node git mkdir chmod mktemp find awk date wc tail mv rm sha256sum df; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Required command unavailable: $cmd" >&2; exit 2; }
 done
 
@@ -143,6 +143,25 @@ gateway_health() {
   [ "$code" -eq 0 ]
 }
 
+MIN_FREE_KB=2097152
+disk_headroom_ok() {
+  local path available
+  for path in "$HOME" "${TMPDIR:-/tmp}" "$STATE_DIR"; do
+    available=$(df -Pk "$path" 2>>"$LOG" | awk 'NR==2 {print $4}')
+    [[ "$available" =~ ^[0-9]+$ ]] || return 1
+    if [ "$available" -lt "$MIN_FREE_KB" ]; then
+      printf 'disk headroom insufficient path=%s available_kb=%s required_kb=%s\n' "$path" "$available" "$MIN_FREE_KB" >>"$LOG"
+      return 1
+    fi
+  done
+  return 0
+}
+
+if ! disk_headroom_ok; then
+  REASON="Insufficient free disk space for OpenClaw rollout; at least 2 GiB is required on runtime, temp, and controller-state filesystems"
+  finish
+fi
+
 STATUS_JSON=$(mktemp "$EXEC_DIR/update-status-$REQUEST_ID.XXXXXX")
 chmod 600 "$STATUS_JSON"
 set +e
@@ -190,6 +209,11 @@ chmod go-rwx "$BACKUP_ARCHIVE" 2>/dev/null || true
 BACKUP_SHA256=$(sha256sum "$BACKUP_ARCHIVE" | awk '{print $1}')
 [[ "$BACKUP_SHA256" =~ ^[0-9a-f]{64}$ ]] || { REASON="Verified pre-update OpenClaw backup checksum is invalid"; finish; }
 BACKUP_CREATED=true
+
+if ! disk_headroom_ok; then
+  REASON="Insufficient free disk space for OpenClaw mutation after backup; at least 2 GiB is required"
+  finish
+fi
 
 UPDATE_JSON=$(mktemp "$EXEC_DIR/update-$REQUEST_ID.XXXXXX")
 chmod 600 "$UPDATE_JSON"
