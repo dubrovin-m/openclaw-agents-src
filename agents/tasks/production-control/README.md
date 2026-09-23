@@ -54,6 +54,10 @@ Bootstrap is an explicitly approved activation operation. The installed controll
 
 Bootstrap validates both repository relationships through GitHub, records the current control-comment watermark, and persists the binding in owner-private controller state. The source tree contains no concrete production binding values.
 
+## Resource preflight
+
+OpenClaw rollout requires at least 2 GiB of free space on the runtime/home, temporary-work, and controller-state filesystems before preparation proceeds, and re-checks the same headroom after creating the verified backup and before the first update mutation. Insufficient headroom is a pre-mutation refusal; the controller does not delete unrelated temporary data to make room.
+
 ## Failure semantics
 
 Production mutation remains fail-closed. Unknown or unproven post-mutation outcomes block later production mutation until explicit reconciliation. There is no automatic production retry. Recovery and break-glass paths must preserve exact source/recovery provenance and remain separately approved when required.
