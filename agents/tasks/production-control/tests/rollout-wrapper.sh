@@ -53,7 +53,7 @@ case "${1:-}" in
   gateway)
     if [ "${2:-}" = call ] && [ "${3:-}" = update.status ]; then
       if [ "${FAKE_BAD_STATUS:-0}" = 1 ]; then channel=beta; else channel=stable; fi
-      printf '{"updateAvailable":{"currentVersion":"%s","latestVersion":"2026.8.2","channel":"latest"},"effectiveChannel":"%s","schedule":{"channel":"%s","autoEnabled":false,"install":{"kind":"package"},"target":{"kind":"package","version":"2026.8.2"}}}\n' "$(cat "$FAKE_STATE")" "$channel" "$channel"
+      printf '{"updateAvailable":{"currentVersion":"%s","latestVersion":"2026.8.2","channel":"latest"},"effectiveChannel":"%s","schedule":{"channel":"%s","autoEnabled":false,"target":{"kind":"package","version":"2026.8.2"}}}\n' "$(cat "$FAKE_STATE")" "$channel" "$channel"
     elif [ "${2:-}" = health ]; then
       [ "${FAKE_HEALTH_FAIL:-0}" != 1 ] || exit 1
       echo '{"ok":true}'
