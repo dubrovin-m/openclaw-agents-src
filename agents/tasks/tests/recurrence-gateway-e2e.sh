@@ -41,13 +41,27 @@ stop_runtime_children(){
   [ -z "$pids" ] || kill -KILL $pids 2>/dev/null || true
 }
 
+remove_tmp(){
+  for _ in $(seq 1 40); do
+    rm -rf "$TMP" 2>/dev/null || true
+    if [ ! -e "$TMP" ]; then
+      sleep 0.1
+      [ ! -e "$TMP" ] && return 0
+    fi
+    stop_runtime_children
+    sleep 0.1
+  done
+  echo "unable to remove isolated runtime directory: $TMP" >&2
+  return 1
+}
+
 cleanup(){
   if [ -n "$GATEWAY_PID" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
     kill -TERM "$GATEWAY_PID" 2>/dev/null || true
     wait "$GATEWAY_PID" 2>/dev/null || true
   fi
   stop_runtime_children
-  rm -rf "$TMP"
+  remove_tmp
 }
 trap cleanup EXIT INT TERM
 
