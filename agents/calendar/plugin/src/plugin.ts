@@ -16,6 +16,7 @@ const calendarConfigSchema = Type.Object({
     prefix: Type.String({ minLength: 1 }),
     read: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
     classificationWrite: Type.String({ minLength: 1 }),
+    labelAdminWrite: Type.String({ minLength: 1 }),
   }, { additionalProperties: false }),
   parents: Type.Array(Type.Object({
     id: Type.String({ minLength: 1 }),
