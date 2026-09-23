@@ -60,10 +60,10 @@ export function parseCalendarConfig(value) {
     if (!nonEmpty(root.designatedCalendar))
         throw new Error("designatedCalendar is required");
     const provider = asRecord(root.providerTools);
-    if (!provider || !nonEmpty(provider.prefix) || !Array.isArray(provider.read) || !nonEmpty(provider.classificationWrite)) {
-        throw new Error("providerTools requires prefix, read, and classificationWrite");
+    if (!provider || !nonEmpty(provider.prefix) || !Array.isArray(provider.read) || !nonEmpty(provider.classificationWrite) || !nonEmpty(provider.labelAdminWrite)) {
+        throw new Error("providerTools requires prefix, read, classificationWrite, and labelAdminWrite");
     }
-    if (Object.keys(provider).some((key) => !["prefix", "read", "classificationWrite"].includes(key))) {
+    if (Object.keys(provider).some((key) => !["prefix", "read", "classificationWrite", "labelAdminWrite"].includes(key))) {
         throw new Error("providerTools contains unsupported fields");
     }
     const prefix = provider.prefix.trim();
@@ -75,11 +75,13 @@ export function parseCalendarConfig(value) {
     if (read.length < 1 || new Set(read).size !== read.length)
         throw new Error("providerTools.read must contain unique tool names");
     const classificationWrite = provider.classificationWrite.trim();
-    if (!read.every((tool) => tool.startsWith(prefix)) || !classificationWrite.startsWith(prefix)) {
+    const labelAdminWrite = provider.labelAdminWrite.trim();
+    if (!read.every((tool) => tool.startsWith(prefix)) || !classificationWrite.startsWith(prefix) || !labelAdminWrite.startsWith(prefix)) {
         throw new Error("Every configured Calendar provider tool must start with providerTools.prefix");
     }
-    if (read.includes(classificationWrite))
-        throw new Error("classificationWrite cannot also be a read tool");
+    if (read.includes(classificationWrite) || read.includes(labelAdminWrite) || classificationWrite === labelAdminWrite) {
+        throw new Error("Calendar provider write tools must be distinct from reads and from each other");
+    }
     if (!Array.isArray(root.parents) || root.parents.length < 1)
         throw new Error("parents must be a non-empty array");
     const parents = root.parents.map((item, index) => {
@@ -157,7 +159,7 @@ export function parseCalendarConfig(value) {
     }
     return {
         designatedCalendar: root.designatedCalendar.trim(),
-        providerTools: { prefix, read, classificationWrite },
+        providerTools: { prefix, read, classificationWrite, labelAdminWrite },
         parents,
         leaves,
         unclassifiedLabel,
