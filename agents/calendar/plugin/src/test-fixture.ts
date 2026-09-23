@@ -9,7 +9,8 @@ export const VALID_CONFIG: CalendarConfig = {
       "calendar_provider_get_event",
       "calendar_provider_get_labels"
     ],
-    classificationWrite: "calendar_provider_set_label"
+    classificationWrite: "calendar_provider_set_label",
+    labelAdminWrite: "calendar_provider_sync_labels"
   },
   parents: [
     { id: "direction", name: "Direction" },

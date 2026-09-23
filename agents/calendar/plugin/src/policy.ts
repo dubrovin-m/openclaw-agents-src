@@ -48,6 +48,12 @@ export function calendarToolPolicy(
   if (OWNED_TOOLS.has(toolName)) return undefined;
   if (config.providerTools.read.includes(toolName)) return undefined;
   if (toolName === config.providerTools.classificationWrite) return writeAllowed(config, event.params);
+  if (toolName === config.providerTools.labelAdminWrite) {
+    if (event.params && Object.keys(event.params).length > 0) {
+      return block("Calendar label-definition sync accepts no model-supplied mutation payload.");
+    }
+    return undefined;
+  }
 
   return block("Tool is outside the Calendar Agent authority boundary.");
 }

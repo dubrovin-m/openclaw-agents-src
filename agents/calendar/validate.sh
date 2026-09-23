@@ -33,7 +33,7 @@ if(!Array.isArray(agent.skills)||agent.skills.length!==0)fail('Calendar v1 must 
 if('model' in agent||'auth' in agent||'bindings' in agent)fail('model/auth/bindings are runtime state, not package defaults');
 
 if(tools.profile!=='full')fail('Calendar must use the full profile with an explicit finite allowlist');
-const expectedAllow=['calendar_config_get','calendar_review_window','calendar_analyze','calendar_provider_list_events','calendar_provider_get_event','calendar_provider_get_labels','calendar_provider_set_label'];
+const expectedAllow=['calendar_config_get','calendar_review_window','calendar_analyze','calendar_provider_list_events','calendar_provider_get_event','calendar_provider_get_labels','calendar_provider_set_label','calendar_provider_sync_labels'];
 if(JSON.stringify(tools.allow)!==JSON.stringify(expectedAllow))fail('unexpected Calendar allowlist');
 const requiredDenied=['read','write','edit','apply_patch','exec','process','browser','gateway','cron','web_search','web_fetch','sessions','sessions_list','sessions_history','sessions_send','sessions_spawn','subagents','nodes','computer','canvas'];
 if(!Array.isArray(tools.deny)||requiredDenied.some((name)=>!tools.deny.includes(name)))fail('Calendar denylist must block non-provider authority surfaces');

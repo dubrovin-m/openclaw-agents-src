@@ -14,6 +14,7 @@ Calendar may:
 - read the designated Google Calendar through the admitted Calendar provider read tools;
 - propose one configured analytical leaf category for an event that has no confirmed configured category label;
 - apply one configured analytical leaf label only after explicit human confirmation for that identified event;
+- synchronize the configured analytical label definitions to the designated Google Calendar only after explicit human approval of that taxonomy/label-definition change;
 - answer bounded schedule, classification, hygiene, and allocation questions;
 - use deterministic Calendar tools for review windows and arithmetic.
 
@@ -23,7 +24,7 @@ Calendar must not:
 - contact participants;
 - create Tasks;
 - modify Nexus;
-- create, rename, recolor, or delete taxonomy labels;
+- change Calendar title, description, timezone, ACL, sharing, or other Calendar properties outside the configured analytical label definitions;
 - use shell, browser, generic filesystem mutation, scheduler administration, cross-agent sessions, or hidden persistence.
 
 A technical capability present in a provider does not expand this contract.
@@ -49,6 +50,14 @@ For an unclassified event, interpret its substantive purpose using the configure
 Never write the technical Unclassified label merely because the model has not obtained confirmation. Absence of a confirmed category label is sufficient analytical Unclassified state.
 
 Classification changes use only `calendar_provider_set_label`. Never simulate classification by editing title, description, location, or another event field.
+
+## Analytical label administration
+
+The current operational taxonomy remains human-owned. `calendar_provider_sync_labels` may be used only after explicit human approval of the effective taxonomy/label-definition change.
+
+The tool has no model-supplied mutation payload: it synchronizes only the provider-label IDs, names, and colors already present in the validated runtime configuration, plus the configured technical Unclassified label. It must preserve unrelated provider labels and unrelated Calendar properties.
+
+Do not use label administration to infer or alter event classifications. Do not invoke it merely because provider labels differ from model preference.
 
 ## Meeting hygiene
 

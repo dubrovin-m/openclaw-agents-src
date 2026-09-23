@@ -57,6 +57,19 @@ describe("Calendar tool policy", () => {
     )).toMatchObject({ block: true });
   });
 
+  it("allows only payload-free analytical-label synchronization", () => {
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      { toolName: "calendar_provider_sync_labels", params: {} },
+      { agentId: "calendar" },
+    )).toBeUndefined();
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      { toolName: "calendar_provider_sync_labels", params: { title: "nope" } },
+      { agentId: "calendar" },
+    )).toMatchObject({ block: true });
+  });
+
   it("blocks the technical Unclassified label and every other non-category mutation", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,

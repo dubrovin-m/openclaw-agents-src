@@ -27,6 +27,7 @@ export type CalendarConfig = {
         prefix: string;
         read: string[];
         classificationWrite: string;
+        labelAdminWrite: string;
     };
     parents: ParentCategory[];
     leaves: LeafCategory[];
