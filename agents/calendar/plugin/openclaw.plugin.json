@@ -24,7 +24,8 @@
         "required": [
           "prefix",
           "read",
-          "classificationWrite"
+          "classificationWrite",
+          "labelAdminWrite"
         ],
         "properties": {
           "prefix": {
@@ -41,6 +42,10 @@
             "uniqueItems": true
           },
           "classificationWrite": {
+            "type": "string",
+            "minLength": 1
+          },
+          "labelAdminWrite": {
             "type": "string",
             "minLength": 1
           }
