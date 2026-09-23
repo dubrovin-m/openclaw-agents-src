@@ -14,11 +14,11 @@ function block(reason: string) {
   return { block: true, blockReason: reason };
 }
 function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | undefined) {
-  if (!params || Object.keys(params).sort().join(",") !== "event_id,label_id") {
-    return block("Calendar classification write accepts exactly event_id and label_id.");
+  if (!params || Object.keys(params).sort().join(",") !== "event_ref,label_id") {
+    return block("Calendar classification write accepts exactly event_ref and label_id.");
   }
-  if (typeof params.event_id !== "string" || params.event_id.trim().length === 0 || params.event_id.length > 1024) {
-    return block("Calendar classification write requires one bounded event_id.");
+  if (typeof params.event_ref !== "string" || !/^ev_\d{8}_[0-9a-f]{16}$/u.test(params.event_ref)) {
+    return block("Calendar classification write requires one valid short event_ref.");
   }
   if (typeof params.label_id !== "string" || params.label_id.trim().length === 0 || params.label_id.length > 1024) {
     return block("Calendar classification write requires one bounded label_id.");
