@@ -1,0 +1,88 @@
+name: Calendar Agent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    paths:
+      - "runtime-contract.json"
+      - "shared/runtime-contract/**"
+      - "agents/calendar/**"
+      - ".github/workflows/calendar-agent-ci.yml"
+    types: [opened, synchronize, reopened, ready_for_review]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 12
+    env:
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_update_notifier: "false"
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read runtime contract
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          with open('runtime-contract.json', encoding='utf-8') as handle:
+              contract=json.load(handle)
+          version=str(contract.get('node',{}).get('ci_version',''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('invalid node.ci_version')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
+              output.write(f'node_version={version}\n')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+
+      - name: Validate repository runtime contract
+        run: |
+          set -euo pipefail
+          node shared/runtime-contract/runtime-contract.mjs repo-check .
+          node --test shared/runtime-contract/runtime-contract.test.mjs
+
+      - name: Validate Calendar source boundary
+        run: bash agents/calendar/validate.sh
+
+      - name: Install Calendar plugin dependencies
+        working-directory: agents/calendar/plugin
+        run: npm ci
+
+      - name: Test and build Calendar plugin
+        working-directory: agents/calendar/plugin
+        run: |
+          set -euo pipefail
+          npm test
+          npm run plugin:build
+          npm run plugin:validate
+
+      - name: Verify generated Calendar metadata is frozen
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            agents/calendar/plugin/package.json \
+            agents/calendar/plugin/package-lock.json \
+            agents/calendar/plugin/openclaw.plugin.json \
+            agents/calendar/plugin/dist

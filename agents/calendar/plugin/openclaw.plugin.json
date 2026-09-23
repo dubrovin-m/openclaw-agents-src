@@ -1,0 +1,227 @@
+{
+  "id": "calendar-analytics",
+  "name": "Calendar Analytics",
+  "description": "Stateless Calendar Agent configuration, deterministic analytics, and fail-closed tool policy.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "designatedCalendar",
+      "providerTools",
+      "parents",
+      "leaves",
+      "unclassifiedLabel",
+      "targets"
+    ],
+    "properties": {
+      "designatedCalendar": {
+        "type": "string",
+        "minLength": 1
+      },
+      "providerTools": {
+        "type": "object",
+        "required": [
+          "prefix",
+          "read",
+          "classificationWrite"
+        ],
+        "properties": {
+          "prefix": {
+            "type": "string",
+            "minLength": 1
+          },
+          "read": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "minLength": 1
+            },
+            "minItems": 1,
+            "uniqueItems": true
+          },
+          "classificationWrite": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "additionalProperties": false
+      },
+      "parents": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "name"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "minItems": 1
+      },
+      "leaves": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "id",
+            "name",
+            "kind",
+            "providerLabel"
+          ],
+          "properties": {
+            "id": {
+              "type": "string",
+              "minLength": 1
+            },
+            "name": {
+              "type": "string",
+              "minLength": 1
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "management"
+                },
+                {
+                  "type": "string",
+                  "const": "service"
+                }
+              ]
+            },
+            "parentId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "providerLabel": {
+              "type": "object",
+              "required": [
+                "id",
+                "name",
+                "backgroundColor"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "backgroundColor": {
+                  "type": "string",
+                  "pattern": "^#[0-9A-Fa-f]{6}$"
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        },
+        "minItems": 1
+      },
+      "unclassifiedLabel": {
+        "type": "object",
+        "required": [
+          "id",
+          "name",
+          "backgroundColor"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "minLength": 1
+          },
+          "name": {
+            "type": "string",
+            "minLength": 1
+          },
+          "backgroundColor": {
+            "type": "string",
+            "pattern": "^#[0-9A-Fa-f]{6}$"
+          }
+        },
+        "additionalProperties": false
+      },
+      "targets": {
+        "type": "object",
+        "required": [
+          "parents",
+          "leaves"
+        ],
+        "properties": {
+          "parents": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          },
+          "leaves": {
+            "type": "object",
+            "patternProperties": {
+              "^.*$": {
+                "type": "number",
+                "minimum": 0,
+                "maximum": 100
+              }
+            }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "calendar_config_get",
+      "calendar_review_window",
+      "calendar_analyze",
+      "calendar_provider_list_events",
+      "calendar_provider_get_event",
+      "calendar_provider_get_labels",
+      "calendar_provider_set_label"
+    ]
+  },
+  "toolMetadata": {
+    "calendar_config_get": {
+      "optional": true
+    },
+    "calendar_review_window": {
+      "optional": true
+    },
+    "calendar_analyze": {
+      "optional": true
+    },
+    "calendar_provider_list_events": {
+      "optional": true
+    },
+    "calendar_provider_get_event": {
+      "optional": true
+    },
+    "calendar_provider_get_labels": {
+      "optional": true
+    },
+    "calendar_provider_set_label": {
+      "optional": true
+    }
+  }
+}
