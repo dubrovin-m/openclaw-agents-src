@@ -3,8 +3,16 @@ import { analyzeCalendar, parseCalendarConfig, reviewWindow } from "./core.js";
 import { VALID_CONFIG } from "./test-fixture.js";
 
 describe("Calendar config", () => {
-  it("accepts a coherent hierarchy and target model", () => {
-    expect(parseCalendarConfig(VALID_CONFIG).targets.parents.direction).toBe(60);
+  it("accepts a coherent hierarchy, guidance, and target model", () => {
+    const parsed = parseCalendarConfig(VALID_CONFIG);
+    expect(parsed.targets.parents.direction).toBe(60);
+    expect(parsed.leaves[0].definition).toBe("Choose future direction.");
+    expect(parsed.classificationRules).toHaveLength(2);
+  });
+
+  it("rejects missing classification guidance", () => {
+    const { classificationRules: _classificationRules, ...withoutRules } = VALID_CONFIG;
+    expect(() => parseCalendarConfig(withoutRules)).toThrow(/classificationRules/u);
   });
 
   it("rejects target drift between parent and leaves", () => {
