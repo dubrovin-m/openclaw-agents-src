@@ -159,6 +159,7 @@ describe("Google Calendar provider", () => {
   it("synchronizes configured analytical labels while preserving unrelated Calendar state", async () => {
     const currentCalendar = {
       id: "primary",
+      etag: "\"c1\"",
       summary: "AI Calendar",
       description: "keep me",
       timeZone: "Europe/Moscow",
@@ -197,6 +198,7 @@ describe("Google Calendar provider", () => {
     const [rawUrl, init] = fetchImpl.mock.calls[1];
     expect(new URL(String(rawUrl)).pathname).toBe("/calendar/v3/calendars/primary");
     expect(init?.method).toBe("PUT");
+    expect(new Headers(init?.headers).get("if-match")).toBe("\"c1\"");
     const body = JSON.parse(String(init?.body));
     expect(body.summary).toBe("AI Calendar");
     expect(body.description).toBe("keep me");
@@ -208,5 +210,56 @@ describe("Google Calendar provider", () => {
       { id: "label-strategy", name: "Strategy", backgroundColor: "#336699" },
     );
   });
+  it("re-reads and re-merges labels after a concurrent Calendar update", async () => {
+    const first = {
+      id: "primary",
+      etag: "\"c1\"",
+      summary: "AI Calendar",
+      labelProperties: {
+        eventLabels: [{ id: "unrelated-a", name: "A", backgroundColor: "#111111" }],
+      },
+    };
+    const latest = {
+      id: "primary",
+      etag: "\"c2\"",
+      summary: "AI Calendar",
+      labelProperties: {
+        eventLabels: [
+          { id: "unrelated-a", name: "A", backgroundColor: "#111111" },
+          { id: "unrelated-b", name: "B", backgroundColor: "#222222" },
+        ],
+      },
+    };
+    const persistedLabels = [
+      ...latest.labelProperties.eventLabels,
+      { id: "label-strategy", name: "Strategy", backgroundColor: "#336699" },
+      { id: "label-delivery", name: "Delivery", backgroundColor: "#669933" },
+      { id: "label-service", name: "Service", backgroundColor: "#999999" },
+      { id: "label-unclassified", name: "Unclassified", backgroundColor: "#CCCCCC" },
+    ];
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse(first))
+      .mockResolvedValueOnce(jsonResponse({ error: "precondition" }, 412))
+      .mockResolvedValueOnce(jsonResponse(latest))
+      .mockResolvedValueOnce(jsonResponse({
+        ...latest,
+        etag: "\"c3\"",
+        labelProperties: { eventLabels: persistedLabels },
+      }));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.syncLabels(VALID_CONFIG)).resolves.toMatchObject({ changed: true });
+    expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(new Headers(fetchImpl.mock.calls[1][1]?.headers).get("if-match")).toBe("\"c1\"");
+    expect(new Headers(fetchImpl.mock.calls[3][1]?.headers).get("if-match")).toBe("\"c2\"");
+    const retriedBody = JSON.parse(String(fetchImpl.mock.calls[3][1]?.body));
+    expect(retriedBody.labelProperties.eventLabels).toContainEqual(
+      { id: "unrelated-b", name: "B", backgroundColor: "#222222" },
+    );
+  });
+
 
 });
