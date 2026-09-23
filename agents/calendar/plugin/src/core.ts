@@ -10,6 +10,10 @@ export type LeafCategory = {
   kind: "management" | "service";
   parentId?: string;
   providerLabel: ProviderLabel;
+  definition: string;
+  includes: string[];
+  excludes: string[];
+  examples: string[];
 };
 export type CalendarConfig = {
   designatedCalendar: string;
@@ -21,6 +25,7 @@ export type CalendarConfig = {
   parents: ParentCategory[];
   leaves: LeafCategory[];
   unclassifiedLabel: ProviderLabel;
+  classificationRules: string[];
   targets: {
     parents: Record<string, number>;
     leaves: Record<string, number>;
@@ -58,6 +63,16 @@ function label(value: unknown, path: string): ProviderLabel {
     backgroundColor: object.backgroundColor,
   };
 }
+function stringList(value: unknown, path: string, minItems = 1): string[] {
+  if (!Array.isArray(value) || value.length < minItems) throw new Error(`${path} must be an array with at least ${minItems} item(s)`);
+  const result = value.map((item, index) => {
+    if (!nonEmpty(item)) throw new Error(`${path}[${index}] must be a non-empty string`);
+    return item.trim();
+  });
+  if (new Set(result).size !== result.length) throw new Error(`${path} must contain unique values`);
+  return result;
+}
+
 function targets(value: unknown, path: string): Record<string, number> {
   const object = asRecord(value);
   if (!object) throw new Error(`${path} must be an object`);
@@ -72,7 +87,7 @@ function targets(value: unknown, path: string): Record<string, number> {
 export function parseCalendarConfig(value: unknown): CalendarConfig {
   const root = asRecord(value);
   if (!root) throw new Error("Calendar configuration must be an object");
-  const allowedRoot = ["designatedCalendar", "providerTools", "parents", "leaves", "unclassifiedLabel", "targets"];
+  const allowedRoot = ["designatedCalendar", "providerTools", "parents", "leaves", "unclassifiedLabel", "classificationRules", "targets"];
   if (Object.keys(root).some((key) => !allowedRoot.includes(key))) throw new Error("Calendar configuration contains unsupported fields");
   if (!nonEmpty(root.designatedCalendar)) throw new Error("designatedCalendar is required");
 
@@ -112,7 +127,8 @@ export function parseCalendarConfig(value: unknown): CalendarConfig {
     const object = asRecord(item);
     if (!object || !nonEmpty(object.id) || !nonEmpty(object.name)
       || (object.kind !== "management" && object.kind !== "service")
-      || Object.keys(object).some((key) => !["id", "name", "kind", "parentId", "providerLabel"].includes(key))) {
+      || !nonEmpty(object.definition)
+      || Object.keys(object).some((key) => !["id", "name", "kind", "parentId", "providerLabel", "definition", "includes", "excludes", "examples"].includes(key))) {
       throw new Error(`leaves[${index}] is invalid`);
     }
     const parentId = nonEmpty(object.parentId) ? object.parentId.trim() : undefined;
@@ -128,6 +144,10 @@ export function parseCalendarConfig(value: unknown): CalendarConfig {
       kind: object.kind,
       ...(parentId ? { parentId } : {}),
       providerLabel: label(object.providerLabel, `leaves[${index}].providerLabel`),
+      definition: object.definition.trim(),
+      includes: stringList(object.includes, `leaves[${index}].includes`),
+      excludes: stringList(object.excludes, `leaves[${index}].excludes`, 0),
+      examples: stringList(object.examples, `leaves[${index}].examples`),
     };
   });
   if (new Set(leaves.map((item) => item.id)).size !== leaves.length) throw new Error("leaf ids must be unique");
@@ -136,6 +156,7 @@ export function parseCalendarConfig(value: unknown): CalendarConfig {
   providerIds.push(unclassifiedLabel.id);
   if (new Set(providerIds).size !== providerIds.length) throw new Error("provider label ids must be unique");
 
+  const classificationRules = stringList(root.classificationRules, "classificationRules");
   const targetRoot = asRecord(root.targets);
   if (!targetRoot || Object.keys(targetRoot).some((key) => !["parents", "leaves"].includes(key))) {
     throw new Error("targets must contain only parents and leaves");
@@ -166,6 +187,7 @@ export function parseCalendarConfig(value: unknown): CalendarConfig {
     parents,
     leaves,
     unclassifiedLabel,
+    classificationRules,
     targets: { parents: parentTargets, leaves: leafTargets },
   };
 }
