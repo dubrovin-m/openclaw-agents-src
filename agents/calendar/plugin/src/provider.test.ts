@@ -138,7 +138,7 @@ describe("Google Calendar provider", () => {
     expect(JSON.parse(String(init?.body))).toEqual({ eventLabelId: "label-strategy" });
   });
 
-  it("rejects labels outside the effective analytical configuration before writing", async () => {
+  it("rejects labels outside writable configured categories, including technical Unclassified", async () => {
     const fetchImpl = vi.fn();
     const provider = createGoogleCalendarProvider({
       getAccessToken: async () => "token",
@@ -148,6 +148,10 @@ describe("Google Calendar provider", () => {
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: "event-1",
       label_id: "not-configured",
+    })).rejects.toThrow(/not part of the effective analytical configuration/u);
+    await expect(provider.setLabel(VALID_CONFIG, {
+      event_id: "event-1",
+      label_id: "label-unclassified",
     })).rejects.toThrow(/not part of the effective analytical configuration/u);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
