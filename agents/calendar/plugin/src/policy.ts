@@ -23,10 +23,7 @@ function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | 
   if (typeof params.label_id !== "string" || params.label_id.trim().length === 0 || params.label_id.length > 1024) {
     return block("Calendar classification write requires one bounded label_id.");
   }
-  const allowedLabels = new Set([
-    ...config.leaves.map((leaf) => leaf.providerLabel.id),
-    config.unclassifiedLabel.id,
-  ]);
+  const allowedLabels = new Set(config.leaves.map((leaf) => leaf.providerLabel.id));
   if (!allowedLabels.has(params.label_id)) {
     return block("Calendar classification write label_id is not part of the effective analytical configuration.");
   }
