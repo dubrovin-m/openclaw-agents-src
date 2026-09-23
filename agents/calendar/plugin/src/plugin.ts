@@ -127,6 +127,14 @@ const entry = defineToolPlugin({
       execute: async (_params, config) => provider.getLabels(config),
     }),
     tool({
+      name: "calendar_provider_sync_labels",
+      label: "Sync Calendar analytical labels",
+      description: "Synchronize configured analytical label definitions after explicit human approval while preserving unrelated labels and Calendar properties.",
+      parameters: configGetParameters,
+      optional: true,
+      execute: async (_params, config) => provider.syncLabels(config),
+    }),
+    tool({
       name: "calendar_provider_set_label",
       label: "Set Calendar analytical label",
       description: "Assign one configured analytical event label after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
