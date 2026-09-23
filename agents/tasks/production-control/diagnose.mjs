@@ -144,8 +144,13 @@ async function runtimeCheck(contractPath = runtimeContractPath) {
 
 function readControllerState() {
   const state = JSON.parse(fs.readFileSync(controllerStateFile, 'utf8'));
+  const controllerRevision = SHA_RE.test(state?.controller_revision ?? '') ? state.controller_revision : null;
+  const protectedPathBaseline = Object.hasOwn(state ?? {}, 'protected_path_baseline_sha')
+    ? (SHA_RE.test(state.protected_path_baseline_sha) ? state.protected_path_baseline_sha : null)
+    : controllerRevision;
   return {
-    controller_revision: SHA_RE.test(state?.controller_revision ?? '') ? state.controller_revision : null,
+    controller_revision: controllerRevision,
+    protected_path_baseline_sha: protectedPathBaseline,
     production_baseline_sha: SHA_RE.test(state?.production_baseline_sha ?? '') ? state.production_baseline_sha : null,
   };
 }
@@ -205,6 +210,7 @@ function provenanceCheck(expectedProductionBaselineSha = null) {
     const latest = evidence[0] ?? null;
     const ok = Boolean(
       state.controller_revision
+      && state.protected_path_baseline_sha
       && state.production_baseline_sha
       && effectiveBaseline
       && installed === state.controller_revision
@@ -214,6 +220,7 @@ function provenanceCheck(expectedProductionBaselineSha = null) {
     return {
       ok,
       controller_revision: state.controller_revision,
+      protected_path_baseline_sha: state.protected_path_baseline_sha,
       installed_controller_revision: SHA_RE.test(installed) ? installed : null,
       state_production_baseline_sha: state.production_baseline_sha,
       production_baseline_sha: effectiveBaseline,
