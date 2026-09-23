@@ -393,3 +393,4 @@ export function analyzeCalendar(configValue, kind, boundaryIso, eventsValue) {
         leafAllocation,
     };
 }
+
