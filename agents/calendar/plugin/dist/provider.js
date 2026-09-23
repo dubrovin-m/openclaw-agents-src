@@ -99,10 +99,7 @@ function eventPath(config, eventId) {
     return `/calendars/${encodePath(config.designatedCalendar)}/events/${encodePath(bounded(eventId, "event_id", 1024))}`;
 }
 function validateConfiguredLabel(config, labelId) {
-    const allowed = new Set([
-        ...config.leaves.map((leaf) => leaf.providerLabel.id),
-        config.unclassifiedLabel.id,
-    ]);
+    const allowed = new Set(config.leaves.map((leaf) => leaf.providerLabel.id));
     const id = bounded(labelId, "label_id", 1024);
     if (!allowed.has(id))
         throw new Error("label_id is not part of the effective analytical configuration.");

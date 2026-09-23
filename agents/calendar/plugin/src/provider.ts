@@ -163,10 +163,7 @@ function eventPath(config: CalendarConfig, eventId: string) {
 }
 
 function validateConfiguredLabel(config: CalendarConfig, labelId: string) {
-  const allowed = new Set([
-    ...config.leaves.map((leaf) => leaf.providerLabel.id),
-    config.unclassifiedLabel.id,
-  ]);
+  const allowed = new Set(config.leaves.map((leaf) => leaf.providerLabel.id));
   const id = bounded(labelId, "label_id", 1024);
   if (!allowed.has(id)) throw new Error("label_id is not part of the effective analytical configuration.");
   return id;

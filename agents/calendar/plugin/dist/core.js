@@ -26,6 +26,18 @@ function label(value, path) {
         backgroundColor: object.backgroundColor,
     };
 }
+function stringList(value, path, minItems = 1) {
+    if (!Array.isArray(value) || value.length < minItems)
+        throw new Error(`${path} must be an array with at least ${minItems} item(s)`);
+    const result = value.map((item, index) => {
+        if (!nonEmpty(item))
+            throw new Error(`${path}[${index}] must be a non-empty string`);
+        return item.trim();
+    });
+    if (new Set(result).size !== result.length)
+        throw new Error(`${path} must contain unique values`);
+    return result;
+}
 function targets(value, path) {
     const object = asRecord(value);
     if (!object)
@@ -42,7 +54,7 @@ export function parseCalendarConfig(value) {
     const root = asRecord(value);
     if (!root)
         throw new Error("Calendar configuration must be an object");
-    const allowedRoot = ["designatedCalendar", "providerTools", "parents", "leaves", "unclassifiedLabel", "targets"];
+    const allowedRoot = ["designatedCalendar", "providerTools", "parents", "leaves", "unclassifiedLabel", "classificationRules", "targets"];
     if (Object.keys(root).some((key) => !allowedRoot.includes(key)))
         throw new Error("Calendar configuration contains unsupported fields");
     if (!nonEmpty(root.designatedCalendar))
@@ -87,7 +99,8 @@ export function parseCalendarConfig(value) {
         const object = asRecord(item);
         if (!object || !nonEmpty(object.id) || !nonEmpty(object.name)
             || (object.kind !== "management" && object.kind !== "service")
-            || Object.keys(object).some((key) => !["id", "name", "kind", "parentId", "providerLabel"].includes(key))) {
+            || !nonEmpty(object.definition)
+            || Object.keys(object).some((key) => !["id", "name", "kind", "parentId", "providerLabel", "definition", "includes", "excludes", "examples"].includes(key))) {
             throw new Error(`leaves[${index}] is invalid`);
         }
         const parentId = nonEmpty(object.parentId) ? object.parentId.trim() : undefined;
@@ -103,6 +116,10 @@ export function parseCalendarConfig(value) {
             kind: object.kind,
             ...(parentId ? { parentId } : {}),
             providerLabel: label(object.providerLabel, `leaves[${index}].providerLabel`),
+            definition: object.definition.trim(),
+            includes: stringList(object.includes, `leaves[${index}].includes`),
+            excludes: stringList(object.excludes, `leaves[${index}].excludes`, 0),
+            examples: stringList(object.examples, `leaves[${index}].examples`),
         };
     });
     if (new Set(leaves.map((item) => item.id)).size !== leaves.length)
@@ -112,6 +129,7 @@ export function parseCalendarConfig(value) {
     providerIds.push(unclassifiedLabel.id);
     if (new Set(providerIds).size !== providerIds.length)
         throw new Error("provider label ids must be unique");
+    const classificationRules = stringList(root.classificationRules, "classificationRules");
     const targetRoot = asRecord(root.targets);
     if (!targetRoot || Object.keys(targetRoot).some((key) => !["parents", "leaves"].includes(key))) {
         throw new Error("targets must contain only parents and leaves");
@@ -143,6 +161,7 @@ export function parseCalendarConfig(value) {
         parents,
         leaves,
         unclassifiedLabel,
+        classificationRules,
         targets: { parents: parentTargets, leaves: leafTargets },
     };
 }

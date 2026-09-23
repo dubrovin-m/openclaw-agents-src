@@ -16,6 +16,10 @@ export type LeafCategory = {
     kind: "management" | "service";
     parentId?: string;
     providerLabel: ProviderLabel;
+    definition: string;
+    includes: string[];
+    excludes: string[];
+    examples: string[];
 };
 export type CalendarConfig = {
     designatedCalendar: string;
@@ -27,6 +31,7 @@ export type CalendarConfig = {
     parents: ParentCategory[];
     leaves: LeafCategory[];
     unclassifiedLabel: ProviderLabel;
+    classificationRules: string[];
     targets: {
         parents: Record<string, number>;
         leaves: Record<string, number>;

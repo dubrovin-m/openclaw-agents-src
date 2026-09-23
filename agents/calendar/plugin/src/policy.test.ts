@@ -57,7 +57,7 @@ describe("Calendar tool policy", () => {
     )).toMatchObject({ block: true });
   });
 
-  it("permits the technical Unclassified label but no other analytical mutation", () => {
+  it("blocks the technical Unclassified label and every other non-category mutation", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
@@ -65,7 +65,7 @@ describe("Calendar tool policy", () => {
         params: { event_id: "event-1", label_id: "label-unclassified" },
       },
       { agentId: "calendar" },
-    )).toBeUndefined();
+    )).toMatchObject({ block: true });
     expect(calendarToolPolicy(
       VALID_CONFIG,
       { toolName: "calendar_provider_respond_event", params: { event_id: "event-1" } },

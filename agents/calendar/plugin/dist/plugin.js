@@ -25,8 +25,13 @@ const calendarConfigSchema = Type.Object({
         kind: Type.Union([Type.Literal("management"), Type.Literal("service")]),
         parentId: Type.Optional(Type.String({ minLength: 1 })),
         providerLabel: providerLabelSchema,
+        definition: Type.String({ minLength: 1 }),
+        includes: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
+        excludes: Type.Array(Type.String({ minLength: 1 }), { uniqueItems: true }),
+        examples: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
     }, { additionalProperties: false }), { minItems: 1 }),
     unclassifiedLabel: providerLabelSchema,
+    classificationRules: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
     targets: Type.Object({
         parents: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
         leaves: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
@@ -70,7 +75,7 @@ const entry = defineToolPlugin({
         tool({
             name: "calendar_config_get",
             label: "Calendar configuration",
-            description: "Read the effective validated operational Calendar taxonomy, targets, provider labels, and provider-tool identities.",
+            description: "Read the effective validated operational Calendar taxonomy, classification guidance, targets, provider labels, and provider-tool identities.",
             parameters: configGetParameters,
             optional: true,
             execute: async (_params, config) => parseCalendarConfig(config),
@@ -118,7 +123,7 @@ const entry = defineToolPlugin({
         tool({
             name: "calendar_provider_set_label",
             label: "Set Calendar analytical label",
-            description: "Assign one configured analytical event label without changing title, time, attendees, RSVP, description, or sending guest updates.",
+            description: "Assign one configured analytical event label after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
             parameters: providerSetLabelParameters,
             optional: true,
             execute: async (params, config) => provider.setLabel(config, params),
