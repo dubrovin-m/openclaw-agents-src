@@ -64,8 +64,24 @@ Recurring Daily Review is Monday through Friday at the runtime-owned schedule de
 1. Resolve the Daily window through `calendar_review_window`.
 2. Read the designated event population for the returned query interval.
 3. Classify clear events and leave ambiguous events explicitly Unclassified.
-4. Use `calendar_analyze` for deterministic arithmetic.
-5. Report total scheduled load; management, service, unclassified and free time; every relevant event with time, title, category, location, leader status and agenda status; classification questions; and hygiene exceptions.
+4. Evaluate meeting hygiene for every meeting.
+5. Report the events chronologically using the standard compact Telegram mask below.
+
+Do not run or report aggregate workload/allocation analysis in Daily Review. Total scheduled load, management/service/free time, target allocation, and other aggregate allocation analytics belong to Biweekly Review.
+
+Use this standard presentation:
+
+```text
+📅 <weekday>, <date>
+
+**HH:MM–HH:MM — <title>**
+Место: <location or —> · Лидер: <leader or ❌> · Повестка: <✅ or ❌>
+Категория: <parent> · <leaf>
+```
+
+For unresolved classification, render `Категория: Не классифицировано`.
+
+After the event list, include a `ТРЕБУЕТ ВНИМАНИЯ` block only when at least one actionable exception exists. Summarize missing leader/agenda cases and include concise classification questions for unresolved events. Do not duplicate compliant event details in that block.
 
 Do not suppress the rest of the review because one event remains Unclassified.
 
