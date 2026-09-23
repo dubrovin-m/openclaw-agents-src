@@ -41,9 +41,9 @@ It then:
 1. installs the exact target source checkout as the durable controller source provenance;
 2. installs controller files from the exact target checkout through the existing production-control installer;
 3. requires installed controller provenance and durable source provenance to equal `--to`;
-4. creates an owner-private candidate state copy in the reconciliation backup with `controller_revision` and `production_baseline_sha` set to `--to`, while leaving the authoritative controller state unchanged;
+4. creates an owner-private candidate state copy in the reconciliation backup with `controller_revision`, `protected_path_baseline_sha`, and `production_baseline_sha` set to `--to`, while leaving the authoritative controller state unchanged;
 5. runs target local controller diagnostics against that candidate state and exact target source checkout, so runtime, release, controller, source, deployment-evidence, and provenance checks can validate the prospective state before it becomes authoritative;
-6. only after those diagnostics pass, preserves request history, watermark, minimum-comment boundary, deployment block state, and other durable controller state while advancing authoritative `controller_revision` and `production_baseline_sha` to the exact proven target;
+6. only after those diagnostics pass, preserves request history, watermark, minimum-comment boundary, deployment block state, and other durable controller state while advancing authoritative `controller_revision`, `protected_path_baseline_sha`, and `production_baseline_sha` to the exact proven target;
 7. starts the routine production-control timer and requires it active.
 
 The controller remains `ACTIVE`. No second Task runtime deployment is performed.
