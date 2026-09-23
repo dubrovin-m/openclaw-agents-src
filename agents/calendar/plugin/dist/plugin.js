@@ -14,6 +14,7 @@ const calendarConfigSchema = Type.Object({
         prefix: Type.String({ minLength: 1 }),
         read: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
         classificationWrite: Type.String({ minLength: 1 }),
+        labelAdminWrite: Type.String({ minLength: 1 }),
     }, { additionalProperties: false }),
     parents: Type.Array(Type.Object({
         id: Type.String({ minLength: 1 }),
@@ -119,6 +120,14 @@ const entry = defineToolPlugin({
             parameters: configGetParameters,
             optional: true,
             execute: async (_params, config) => provider.getLabels(config),
+        }),
+        tool({
+            name: "calendar_provider_sync_labels",
+            label: "Sync Calendar analytical labels",
+            description: "Synchronize configured analytical label definitions after explicit human approval while preserving unrelated labels and Calendar properties.",
+            parameters: configGetParameters,
+            optional: true,
+            execute: async (_params, config) => provider.syncLabels(config),
         }),
         tool({
             name: "calendar_provider_set_label",
