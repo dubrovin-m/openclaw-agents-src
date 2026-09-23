@@ -153,7 +153,9 @@ async function requestJson<T>(
   const response = await fetchImpl(url, { ...init, headers });
   if (!response.ok) {
     const text = (await response.text()).slice(0, 2000);
-    throw new Error(`Google Calendar API ${response.status}: ${text || response.statusText}`);
+    const error = new Error(`Google Calendar API ${response.status}: ${text || response.statusText}`) as Error & { status?: number };
+    error.status = response.status;
+    throw error;
   }
   return await response.json() as T;
 }
@@ -229,60 +231,75 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
     async syncLabels(configValue: unknown) {
       const config = parseCalendarConfig(configValue);
       const url = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
-      const current = await requestJson<Record<string, unknown> & {
-        id?: string;
-        labelProperties?: {
-          eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
-        };
-      }>(deps, url);
-
       const configured = [...config.leaves.map((leaf) => leaf.providerLabel), config.unclassifiedLabel];
       const configuredById = new Map(configured.map((label) => [label.id, label]));
-      const existing = current.labelProperties?.eventLabels ?? [];
-      const merged = existing.map((label) => {
-        const replacement = label.id ? configuredById.get(label.id) : undefined;
-        return replacement ?? label;
-      });
-      const existingIds = new Set(existing.flatMap((label) => label.id ? [label.id] : []));
-      for (const label of configured) {
-        if (!existingIds.has(label.id)) merged.push(label);
-      }
 
-      const unchanged = existing.length === merged.length && existing.every((label, index) => {
-        const next = merged[index];
-        return label.id === next.id
-          && label.name === next.name
-          && label.backgroundColor === next.backgroundColor;
-      });
-      if (unchanged) {
-        return { changed: false, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
-      }
+      for (let attempt = 0; attempt < 2; attempt += 1) {
+        const current = await requestJson<Record<string, unknown> & {
+          id?: string;
+          etag?: string;
+          labelProperties?: {
+            eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
+          };
+        }>(deps, url);
 
-      const updatedBody = {
-        ...current,
-        labelProperties: {
-          ...(record(current.labelProperties) ?? {}),
-          eventLabels: merged,
-        },
-      };
-      const updated = await requestJson<Record<string, unknown> & {
-        id?: string;
-        labelProperties?: {
-          eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
+        const existing = current.labelProperties?.eventLabels ?? [];
+        const merged = existing.map((label) => {
+          const replacement = label.id ? configuredById.get(label.id) : undefined;
+          return replacement ?? label;
+        });
+        const existingIds = new Set(existing.flatMap((label) => label.id ? [label.id] : []));
+        for (const label of configured) {
+          if (!existingIds.has(label.id)) merged.push(label);
+        }
+
+        const unchanged = existing.length === merged.length && existing.every((label, index) => {
+          const next = merged[index];
+          return label.id === next.id
+            && label.name === next.name
+            && label.backgroundColor === next.backgroundColor;
+        });
+        if (unchanged) {
+          return { changed: false, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
+        }
+
+        const updatedBody = {
+          ...current,
+          labelProperties: {
+            ...(record(current.labelProperties) ?? {}),
+            eventLabels: merged,
+          },
         };
-      }>(deps, url, {
-        method: "PUT",
-        body: JSON.stringify(updatedBody),
-      });
+        const headers = new Headers();
+        if (current.etag) headers.set("if-match", current.etag);
 
-      const updatedLabels = updated.labelProperties?.eventLabels ?? [];
-      for (const expected of configured) {
-        const actual = updatedLabels.find((label) => label.id === expected.id);
-        if (!actual || actual.name !== expected.name || actual.backgroundColor !== expected.backgroundColor) {
-          throw new Error(`Google Calendar analytical label sync did not persist configured label ${expected.id}.`);
+        try {
+          const updated = await requestJson<Record<string, unknown> & {
+            id?: string;
+            labelProperties?: {
+              eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
+            };
+          }>(deps, url, {
+            method: "PUT",
+            headers,
+            body: JSON.stringify(updatedBody),
+          });
+
+          const updatedLabels = updated.labelProperties?.eventLabels ?? [];
+          for (const expected of configured) {
+            const actual = updatedLabels.find((label) => label.id === expected.id);
+            if (!actual || actual.name !== expected.name || actual.backgroundColor !== expected.backgroundColor) {
+              throw new Error(`Google Calendar analytical label sync did not persist configured label ${expected.id}.`);
+            }
+          }
+          return { changed: true, calendar_id: updated.id ?? config.designatedCalendar, labels: configured };
+        } catch (error) {
+          if ((error as Error & { status?: number }).status === 412 && attempt === 0) continue;
+          throw error;
         }
       }
-      return { changed: true, calendar_id: updated.id ?? config.designatedCalendar, labels: configured };
+
+      throw new Error("Google Calendar analytical label sync could not resolve a concurrent Calendar update.");
     },
 
     async setLabel(configValue: unknown, params: { event_id: string; label_id: string }) {
