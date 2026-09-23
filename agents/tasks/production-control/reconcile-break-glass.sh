@@ -93,17 +93,22 @@ if systemctl --user is-active --quiet "$TIMER"; then echo "Controller timer must
 if systemctl --user is-active --quiet "$SERVICE"; then echo "Controller service must be inactive" >&2; exit 2; fi
 systemctl --user is-active --quiet "$NEXUS_TIMER" || { echo "Nexus sync timer must be active before controller reconciliation" >&2; exit 2; }
 
-PRIOR_BASELINE=$(node - "$STATE_FILE" "$FROM" <<'NODE'
+readarray -t PRIOR_PROVENANCE < <(node - "$STATE_FILE" "$FROM" <<'NODE'
 const fs=require('fs');
 const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const from=process.argv[3];
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true)process.exit(2);
 if(typeof s.production_baseline_sha!=='string'||!/^[0-9a-f]{40}$/.test(s.production_baseline_sha))process.exit(2);
+const protectedBaseline=Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision;
+if(typeof protectedBaseline!=='string'||!/^[0-9a-f]{40}$/.test(protectedBaseline))process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(!Number.isSafeInteger(Number(s.watermark))||!Number.isSafeInteger(Number(s.minimum_comment_id)))process.exit(2);
-process.stdout.write(s.production_baseline_sha);
+process.stdout.write(`${s.production_baseline_sha}\n${protectedBaseline}\n`);
 NODE
 ) || { echo "Controller state is not eligible for break-glass reconciliation" >&2; exit 2; }
+[ "${#PRIOR_PROVENANCE[@]}" -eq 2 ] || { echo "Controller provenance state is incomplete" >&2; exit 2; }
+PRIOR_BASELINE=${PRIOR_PROVENANCE[0]}
+PRIOR_PROTECTED_BASELINE=${PRIOR_PROVENANCE[1]}
 
 DEPLOY_RESULT=$(realpath -e "$DEPLOY_RESULT")
 [ -f "$DEPLOY_RESULT" ] && [ ! -L "$DEPLOY_RESULT" ] || { echo "Task deploy result must be a real file" >&2; exit 2; }
@@ -204,14 +209,14 @@ bash "$ROOT/install.sh" --apply >/dev/null
 [ "$(tr -d '\r\n' < "$LIB_DIR/installed-revision")" = "$TO" ] || { echo "Installed controller revision did not advance to target" >&2; false; }
 
 CANDIDATE_STATE="$BACKUP/state.candidate.json"
-node - "$STATE_FILE" "$CANDIDATE_STATE" "$FROM" "$TO" "$PRIOR_BASELINE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
+node - "$STATE_FILE" "$CANDIDATE_STATE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
 const fs=require('fs');
-const p=process.argv[2],out=process.argv[3],from=process.argv[4],to=process.argv[5],baseline=process.argv[6];
-const controlRepository=process.argv[7],implementationRepository=process.argv[8],controlIssue=Number(process.argv[9]),ownerLogin=process.argv[10],ownerId=Number(process.argv[11]);
+const p=process.argv[2],out=process.argv[3],from=process.argv[4],to=process.argv[5],baseline=process.argv[6],protectedBaseline=process.argv[7];
+const controlRepository=process.argv[8],implementationRepository=process.argv[9],controlIssue=Number(process.argv[10]),ownerLogin=process.argv[11],ownerId=Number(process.argv[12]);
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
-Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,production_baseline_sha:to});
+Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
 fs.writeFileSync(out,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 fs.chmodSync(out,0o600);
 NODE
@@ -219,16 +224,16 @@ NODE
 diag=$(OPC_CONTROLLER_STATE="$CANDIDATE_STATE" OPC_SOURCE_DIR="$SOURCE_DIR" "$LIB_DIR/controller.mjs" diagnose-local)
 node -e 'const d=JSON.parse(process.argv[1]);if(d.ok!==true)process.exit(2)' "$diag" || { echo "Target controller local diagnostics failed" >&2; false; }
 
-node - "$STATE_FILE" "$FROM" "$TO" "$PRIOR_BASELINE" "$DEPLOY_STAGE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
+node - "$STATE_FILE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$DEPLOY_STAGE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
 const fs=require('fs');
-const p=process.argv[2],from=process.argv[3],to=process.argv[4],baseline=process.argv[5],deployStage=process.argv[6];
-const controlRepository=process.argv[7],implementationRepository=process.argv[8],controlIssue=Number(process.argv[9]),ownerLogin=process.argv[10],ownerId=Number(process.argv[11]);
+const p=process.argv[2],from=process.argv[3],to=process.argv[4],baseline=process.argv[5],protectedBaseline=process.argv[6],deployStage=process.argv[7];
+const controlRepository=process.argv[8],implementationRepository=process.argv[9],controlIssue=Number(process.argv[10]),ownerLogin=process.argv[11],ownerId=Number(process.argv[12]);
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
-Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,production_baseline_sha:to});
+Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
 s.last_diagnostic=null;
-s.last_break_glass_reconciliation={from_controller:from,from_production_baseline:baseline,deploy_stage:deployStage,to,reconciled_at:new Date().toISOString()};
+s.last_break_glass_reconciliation={from_controller:from,from_protected_path_baseline:protectedBaseline,from_production_baseline:baseline,deploy_stage:deployStage,to,reconciled_at:new Date().toISOString()};
 const tmp=`${p}.tmp.${process.pid}`;
 fs.writeFileSync(tmp,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 fs.renameSync(tmp,p);
@@ -237,7 +242,7 @@ NODE
 
 node - "$STATE_FILE" "$TO" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" <<'NODE' || { echo "Reconciled controller state validation failed" >&2; false; }
 const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),to=process.argv[3],control=process.argv[4],implementation=process.argv[5];
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==to||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
 if(s.control_repository!==control||s.implementation_repository!==implementation||control===implementation)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 NODE
@@ -248,7 +253,7 @@ TIMER_STARTED=1
 systemctl --user is-active --quiet "$TIMER" || { echo "Controller timer did not become active" >&2; false; }
 
 cat > "$BACKUP/result.json" <<JSON
-{"result":"PASS","mode":"ACTIVE","from_controller":"$FROM","from_production_baseline":"$PRIOR_BASELINE","deploy_stage":"$DEPLOY_STAGE","to":"$TO","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"result":"PASS","mode":"ACTIVE","from_controller":"$FROM","from_protected_path_baseline":"$PRIOR_PROTECTED_BASELINE","to_protected_path_baseline":"$TO","from_production_baseline":"$PRIOR_BASELINE","deploy_stage":"$DEPLOY_STAGE","to":"$TO","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 chmod 600 "$BACKUP/result.json"
 

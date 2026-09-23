@@ -107,14 +107,22 @@ if systemctl --user is-active --quiet "$TIMER"; then echo "Controller timer must
 if systemctl --user is-active --quiet "$SERVICE"; then echo "Controller service must be inactive" >&2; exit 2; fi
 systemctl --user is-active --quiet "$NEXUS_TIMER" || { echo "Nexus sync timer must be active before baseline reconciliation" >&2; exit 2; }
 
-node - "$STATE_FILE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$IMPLEMENTATION_REPOSITORY" <<'NODE' || { echo "Controller state is not eligible for baseline reconciliation" >&2; exit 2; }
+CONTROLLER_STATUS=$(node "$LIB_DIR/controller.mjs" status-local 2>/dev/null) || { echo "Installed controller does not support protected-path provenance status" >&2; exit 2; }
+node -e 'const s=JSON.parse(process.argv[1]);if(typeof s.protected_path_baseline_sha!=="string"||!/^[0-9a-f]{40}$/.test(s.protected_path_baseline_sha))process.exit(2)' "$CONTROLLER_STATUS" \
+  || { echo "Installed controller does not consume protected-path provenance" >&2; exit 2; }
+
+PRIOR_PROTECTED_BASELINE=$(node - "$STATE_FILE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$IMPLEMENTATION_REPOSITORY" <<'NODE' || { echo "Controller state is not eligible for baseline reconciliation" >&2; exit 2; }
 const fs=require('fs');
 const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const controller=process.argv[3],baseline=process.argv[4],implementation=process.argv[5];
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==baseline||s.deployment_blocked===true||s.implementation_repository!==implementation)process.exit(2);
+const protectedBaseline=Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision;
+if(typeof protectedBaseline!=='string'||!/^[0-9a-f]{40}$/.test(protectedBaseline))process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(!Number.isSafeInteger(Number(s.watermark))||!Number.isSafeInteger(Number(s.minimum_comment_id)))process.exit(2);
+process.stdout.write(protectedBaseline);
 NODE
+)
 
 DEPLOY_RESULT=$(realpath -e "$DEPLOY_RESULT") || { echo "Unable to resolve Task deploy result" >&2; exit 2; }
 [ -f "$DEPLOY_RESULT" ] && [ ! -L "$DEPLOY_RESULT" ] || { echo "Task deploy result must be a real file" >&2; exit 2; }
@@ -223,12 +231,13 @@ chmod 700 "$TARGET_SOURCE"
 BACKUP_READY=1
 
 CANDIDATE_STATE="$BACKUP/state.candidate.json"
-node - "$STATE_FILE" "$CANDIDATE_STATE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$TO_BASELINE" <<'NODE'
+node - "$STATE_FILE" "$CANDIDATE_STATE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$TO_BASELINE" "$PRIOR_PROTECTED_BASELINE" <<'NODE'
 const fs=require('fs');
-const p=process.argv[2],out=process.argv[3],controller=process.argv[4],from=process.argv[5],to=process.argv[6];
+const p=process.argv[2],out=process.argv[3],controller=process.argv[4],from=process.argv[5],to=process.argv[6],protectedBaseline=process.argv[7];
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==from||s.deployment_blocked===true)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==from||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline||s.deployment_blocked===true)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
+s.protected_path_baseline_sha=to;
 s.production_baseline_sha=to;
 s.last_diagnostic=null;
 fs.writeFileSync(out,JSON.stringify(s,null,2)+'\n',{mode:0o600});
@@ -246,15 +255,16 @@ mv "$TARGET_SOURCE" "$SOURCE_DIR"
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Durable production source is dirty after baseline advance" >&2; false; }
 [ "$(git -C "$SOURCE_DIR" remote get-url origin)" = "$REPO_URL" ] || { echo "Durable production source origin mismatch after baseline advance" >&2; false; }
 
-node - "$STATE_FILE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$TO_BASELINE" "$DEPLOY_STAGE" "$RUNNER_REVISION" <<'NODE'
+node - "$STATE_FILE" "$CONTROLLER_REVISION" "$FROM_BASELINE" "$TO_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$DEPLOY_STAGE" "$RUNNER_REVISION" <<'NODE'
 const fs=require('fs');
-const p=process.argv[2],controller=process.argv[3],from=process.argv[4],to=process.argv[5],deployStage=process.argv[6],runner=process.argv[7];
+const p=process.argv[2],controller=process.argv[3],from=process.argv[4],to=process.argv[5],protectedBaseline=process.argv[6],deployStage=process.argv[7],runner=process.argv[8];
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==from||s.deployment_blocked===true)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==from||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline||s.deployment_blocked===true)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
+s.protected_path_baseline_sha=to;
 s.production_baseline_sha=to;
 s.last_diagnostic=null;
-s.last_break_glass_reconciliation={mode:'baseline-only',controller_revision:controller,from_production_baseline:from,to_production_baseline:to,deploy_stage:deployStage,runner_revision:runner,reconciled_at:new Date().toISOString()};
+s.last_break_glass_reconciliation={mode:'baseline-only',controller_revision:controller,from_protected_path_baseline:protectedBaseline,to_protected_path_baseline:to,from_production_baseline:from,to_production_baseline:to,deploy_stage:deployStage,runner_revision:runner,reconciled_at:new Date().toISOString()};
 const tmp=`${p}.tmp.${process.pid}`;
 fs.writeFileSync(tmp,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 fs.renameSync(tmp,p);
@@ -263,7 +273,7 @@ NODE
 
 node - "$STATE_FILE" "$CONTROLLER_REVISION" "$TO_BASELINE" "$RUNNER_REVISION" <<'NODE' || { echo "Reconciled baseline state validation failed" >&2; false; }
 const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),controller=process.argv[3],to=process.argv[4],runner=process.argv[5];
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==controller||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(s.last_break_glass_reconciliation?.mode!=='baseline-only'||s.last_break_glass_reconciliation?.runner_revision!==runner||s.last_break_glass_reconciliation?.to_production_baseline!==to)process.exit(2);
 NODE
@@ -277,7 +287,7 @@ systemctl --user start "$TIMER"
 systemctl --user is-active --quiet "$TIMER" || { echo "Controller timer did not become active" >&2; false; }
 
 cat > "$BACKUP/result.json" <<JSON
-{"result":"PASS","mode":"baseline-only","runner_revision":"$RUNNER_REVISION","controller_revision":"$CONTROLLER_REVISION","from_production_baseline":"$FROM_BASELINE","to_production_baseline":"$TO_BASELINE","deploy_stage":"$DEPLOY_STAGE","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"result":"PASS","mode":"baseline-only","runner_revision":"$RUNNER_REVISION","controller_revision":"$CONTROLLER_REVISION","from_protected_path_baseline":"$PRIOR_PROTECTED_BASELINE","to_protected_path_baseline":"$TO_BASELINE","from_production_baseline":"$FROM_BASELINE","to_production_baseline":"$TO_BASELINE","deploy_stage":"$DEPLOY_STAGE","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 chmod 600 "$BACKUP/result.json"
 

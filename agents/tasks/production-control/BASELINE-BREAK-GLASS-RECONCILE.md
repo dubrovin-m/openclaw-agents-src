@@ -6,6 +6,7 @@ This path exists for a narrow case where Task runtime provenance and controller 
 
 - `controller_revision` remains the exact installed controller revision;
 - `production_baseline_sha` advances to the exact proven Task runtime revision;
+- `protected_path_baseline_sha` advances to the same separately approved break-glass target, recording that protected-path changes through that generation have been accepted;
 - the durable production source checkout advances to the same production baseline revision;
 - controller files and systemd units are not reinstalled or rewritten.
 
@@ -44,8 +45,8 @@ The runner validates all immutable identities before mutation. It then:
 1. requires the target Task `deploy.sh --preflight` to return `start_is_target=1`, proving the complete live Task runtime already equals the target generation;
 2. prepares a local recovery snapshot of controller state and the durable production source checkout;
 3. prepares a credential-free copy of the target source at the exact target baseline;
-4. constructs a candidate controller state that changes only `production_baseline_sha` and runs the already-installed controller's local diagnostics against that candidate state and target source;
-5. only after candidate diagnostics pass, replaces the durable production source and advances `production_baseline_sha`, leaving `controller_revision` and installed controller files unchanged;
+4. constructs a candidate controller state that advances `production_baseline_sha` and `protected_path_baseline_sha` while leaving `controller_revision` unchanged and runs the already-installed controller's local diagnostics against that candidate state and target source;
+5. only after candidate diagnostics pass, replaces the durable production source and advances `production_baseline_sha` and `protected_path_baseline_sha`, leaving `controller_revision` and installed controller files unchanged;
 6. runs the installed controller's local diagnostics again against authoritative state;
 7. starts the routine production-control timer and requires it active;
 8. writes an owner-private reconciliation result under the controller recovery directory.
@@ -66,6 +67,7 @@ Use fresh diagnostics from the installed controller. A successful baseline-only 
 
 - installed controller revision and `controller_revision` unchanged;
 - `production_baseline_sha` equal to the exact deployed Task revision;
+- `protected_path_baseline_sha` equal to that separately accepted break-glass generation;
 - durable production source equal to that same baseline;
 - release/runtime diagnostics healthy;
 - routine production-control timer active.

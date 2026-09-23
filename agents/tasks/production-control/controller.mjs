@@ -85,11 +85,23 @@ function readToken() {
   return token;
 }
 
+export function resolveProtectedPathBaseline(state) {
+  if (Object.hasOwn(state ?? {}, 'protected_path_baseline_sha')) {
+    const explicit = state.protected_path_baseline_sha;
+    if (!SHA_RE.test(String(explicit))) throw new Error('protected-path baseline evidence invalid');
+    return String(explicit);
+  }
+  const legacy = String(state?.controller_revision ?? '');
+  if (!SHA_RE.test(legacy)) throw new Error('legacy protected-path baseline evidence invalid');
+  return legacy;
+}
+
 function readState() {
   if (!fs.existsSync(stateFile)) throw new Error('controller state is not initialized');
   const state = JSON.parse(fs.readFileSync(stateFile, 'utf8'));
   if (state.version !== CONTROL_VERSION) throw new Error(`unsupported controller state version ${state.version}`);
   setOperationalBinding(state);
+  state.protected_path_baseline_sha = resolveProtectedPathBaseline(state);
   return state;
 }
 
@@ -313,7 +325,7 @@ async function validateDeployTarget(state, sha) {
   if (!(await hasMergedMainPr(sha))) throw new Error('requested SHA is not associated with a merged implementation main pull request');
   if (!(await workflowSucceeded(REQUIRED_WORKFLOW, sha))) throw new Error('required Task Agent CI push run is not successful');
 
-  const protectedChanges = (await changedFiles(state.controller_revision, sha)).filter(isProtectedDeploymentPath);
+  const protectedChanges = (await changedFiles(state.protected_path_baseline_sha, sha)).filter(isProtectedDeploymentPath);
   if (protectedChanges.length) throw new Error(`target changes protected deployment-control paths: ${protectedChanges.join(', ')}`);
 
   if (state.mode === 'STAGED') {
@@ -338,7 +350,7 @@ async function validateRolloutTarget(state, sha) {
   for (const workflow of ROLLOUT_REQUIRED_WORKFLOWS) {
     if (!(await workflowSucceeded(workflow, sha))) throw new Error(`required rollout CI push run is not successful: ${workflow}`);
   }
-  const protectedChanges = (await changedFiles(state.controller_revision, sha)).filter(isRolloutProtectedPath);
+  const protectedChanges = (await changedFiles(state.protected_path_baseline_sha, sha)).filter(isRolloutProtectedPath);
   if (protectedChanges.length) throw new Error(`rollout target changes protected production-control paths: ${protectedChanges.join(', ')}`);
   const predecessorVersion = await runtimeContractVersionAtSha(state.production_baseline_sha);
   const targetVersion = await runtimeContractVersionAtSha(sha);
@@ -641,6 +653,7 @@ export function getSemanticStatus() {
     deployment_blocked: state.deployment_blocked === true,
     block_reason: state.block_reason ?? null,
     controller_revision: state.controller_revision ?? null,
+    protected_path_baseline_sha: state.protected_path_baseline_sha ?? null,
     production_baseline_sha: state.production_baseline_sha ?? null,
     active_request: active ? {
       id: Number(active[0]),
@@ -736,6 +749,7 @@ async function bootstrap(args) {
     minimum_comment_id: watermark,
     watermark,
     controller_revision: controllerSha,
+    protected_path_baseline_sha: controllerSha,
     production_baseline_sha: productionSha,
     deployment_blocked: false,
     block_reason: null,
@@ -744,7 +758,7 @@ async function bootstrap(args) {
     bootstrapped_at: now(),
   };
   writeState(state);
-  process.stdout.write(`${JSON.stringify({ ok: true, mode: state.mode, watermark, controller_revision: controllerSha, production_baseline_sha: productionSha })}\n`);
+  process.stdout.write(`${JSON.stringify({ ok: true, mode: state.mode, watermark, controller_revision: controllerSha, protected_path_baseline_sha: controllerSha, production_baseline_sha: productionSha })}\n`);
 }
 
 async function main() {

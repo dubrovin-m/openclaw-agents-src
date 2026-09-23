@@ -125,6 +125,13 @@ esac
 import fs from 'node:fs';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
+if(process.argv[2]==='status-local') {
+  const stateDir=process.env.OPC_STATE_DIR;
+  const state=JSON.parse(fs.readFileSync(path.join(stateDir,'state.json'),'utf8'));
+  const protectedBaseline=Object.hasOwn(state,'protected_path_baseline_sha')?state.protected_path_baseline_sha:state.controller_revision;
+  process.stdout.write(JSON.stringify({ok:true,protected_path_baseline_sha:protectedBaseline})+'\\n');
+  process.exit(0);
+}
 if(process.argv[2]!=='diagnose-local') process.exit(2);
 let ok=false;
 try {
@@ -139,7 +146,7 @@ try {
   const state=JSON.parse(fs.readFileSync(statePath,'utf8'));
   const installed=fs.readFileSync(path.join(libDir,'installed-revision'),'utf8').trim();
   const source=execFileSync('git',['-C',sourceDir,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
-  ok=state.controller_revision===installed&&state.production_baseline_sha===source;
+  ok=state.controller_revision===installed&&state.protected_path_baseline_sha===source&&state.production_baseline_sha===source;
 } catch {}
 process.stdout.write(JSON.stringify({ok})+'\\n');
 `;
@@ -173,6 +180,7 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
         ...binding,
         mode: 'ACTIVE',
         controller_revision: controllerRevision,
+        protected_path_baseline_sha: controllerRevision,
         production_baseline_sha: fromBaseline,
         deployment_blocked: false,
         last_diagnostic: { ok: true },
@@ -220,6 +228,7 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
       assert.equal(fs.readFileSync(path.join(libDir, 'installed-revision'), 'utf8').trim(), controllerRevision);
       const state = readJson(path.join(stateDir, 'state.json'));
       assert.equal(state.controller_revision, controllerRevision);
+      assert.equal(state.protected_path_baseline_sha, controllerRevision);
       assert.equal(state.production_baseline_sha, fromBaseline);
       assert.equal(state.implementation_repository, implementationRepository);
       assert.equal(state.watermark, 100);
@@ -234,6 +243,7 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
       assert.equal(fs.readFileSync(path.join(libDir, 'installed-revision'), 'utf8').trim(), controllerRevision);
       const state = readJson(path.join(stateDir, 'state.json'));
       assert.equal(state.controller_revision, controllerRevision);
+      assert.equal(state.protected_path_baseline_sha, toBaseline);
       assert.equal(state.production_baseline_sha, toBaseline);
       assert.equal(state.implementation_repository, implementationRepository);
       assert.equal(state.last_diagnostic, null);
@@ -242,6 +252,8 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
       assert.equal(state.requests['77'].state, 'SUCCESS');
       assert.equal(state.last_break_glass_reconciliation.mode, 'baseline-only');
       assert.equal(state.last_break_glass_reconciliation.controller_revision, controllerRevision);
+      assert.equal(state.last_break_glass_reconciliation.from_protected_path_baseline, controllerRevision);
+      assert.equal(state.last_break_glass_reconciliation.to_protected_path_baseline, toBaseline);
       assert.equal(state.last_break_glass_reconciliation.from_production_baseline, fromBaseline);
       assert.equal(state.last_break_glass_reconciliation.to_production_baseline, toBaseline);
       assert.equal(state.last_break_glass_reconciliation.deploy_stage, stage);
@@ -258,6 +270,8 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
       assert.equal(result.result, 'PASS');
       assert.equal(result.mode, 'baseline-only');
       assert.equal(result.controller_revision, controllerRevision);
+      assert.equal(result.from_protected_path_baseline, controllerRevision);
+      assert.equal(result.to_protected_path_baseline, toBaseline);
       assert.equal(result.to_production_baseline, toBaseline);
     }
 
@@ -326,6 +340,14 @@ process.stdout.write(JSON.stringify({ok})+'\\n');
     writeDeployResult('NOOP', toBaseline, null);
     result = run({}, { runnerRevision: '0'.repeat(40) });
     assert.equal(result.status, 2);
+    assertOldState();
+
+    resetRuntime();
+    writeDeployResult('NOOP', toBaseline, null);
+    fs.writeFileSync(path.join(libDir, 'controller.mjs'), "#!/usr/bin/env node\nif(process.argv[2]==='diagnose-local')process.stdout.write('{\"ok\":true}\\n');else process.exit(2);\n", { mode: 0o700 });
+    result = run();
+    assert.equal(result.status, 2);
+    assert.match(result.stderr, /does not support protected-path provenance status|does not consume protected-path provenance/);
     assertOldState();
 
     resetRuntime();

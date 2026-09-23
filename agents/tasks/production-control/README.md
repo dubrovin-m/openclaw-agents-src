@@ -24,6 +24,16 @@ A deployment or rollout target must be an exact current `main` revision in the c
 
 The implementation checkout used for execution is prepared from that implementation repository only. The private control repository is not implementation authority.
 
+## Provenance dimensions
+
+Controller state keeps three independent revision identities:
+
+- `controller_revision` identifies the exact installed controller implementation;
+- `protected_path_baseline_sha` identifies the latest separately accepted generation of protected controller and deployment-harness paths;
+- `production_baseline_sha` identifies the accepted deployed implementation/runtime baseline.
+
+Routine deployment and OpenClaw rollout may advance only `production_baseline_sha`. Protected-path eligibility is compared from `protected_path_baseline_sha`. Bootstrap and separately approved break-glass/controller-repair reconciliation may advance protected-path acceptance. Legacy state created before this field existed is interpreted as `protected_path_baseline_sha=controller_revision` until the next governed reconciliation persists the field explicitly.
+
 ## Private evidence boundary
 
 Production diagnostics, request outcomes, recovery evidence, baselines, and detailed execution state remain in owner-private runtime state. The controller does not publish production commit statuses or other runtime evidence to the implementation repository.
