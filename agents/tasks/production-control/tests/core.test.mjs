@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { verifyRolloutBackupArtifact } from '../controller.mjs';
+import { resolveProtectedPathBaseline, verifyRolloutBackupArtifact } from '../controller.mjs';
 import {
   isProtectedDeploymentPath,
   isRolloutProtectedPath,
@@ -34,6 +34,15 @@ const comment = (overrides = {}) => ({
   updated_at: '2026-08-26T10:00:00Z',
   user: { id: binding.owner_id, login: binding.owner_login },
   ...overrides,
+});
+
+test('protected-path baseline is independent and legacy state falls back only when the field is absent', () => {
+  const controller = '1'.repeat(40);
+  const protectedBaseline = '2'.repeat(40);
+  assert.equal(resolveProtectedPathBaseline({ controller_revision: controller, protected_path_baseline_sha: protectedBaseline }), protectedBaseline);
+  assert.equal(resolveProtectedPathBaseline({ controller_revision: controller }), controller);
+  assert.throws(() => resolveProtectedPathBaseline({ controller_revision: controller, protected_path_baseline_sha: null }), /protected-path baseline/u);
+  assert.throws(() => resolveProtectedPathBaseline({ controller_revision: controller, protected_path_baseline_sha: 'invalid' }), /protected-path baseline/u);
 });
 
 test('requires distinct validated control and implementation bindings', () => {
