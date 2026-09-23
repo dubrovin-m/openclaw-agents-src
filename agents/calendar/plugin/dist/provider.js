@@ -156,11 +156,11 @@ export function createGoogleCalendarProvider(deps = {}) {
         },
         async syncLabels(configValue) {
             const config = parseCalendarConfig(configValue);
-            const url = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
+            const readUrl = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
             const configured = [...config.leaves.map((leaf) => leaf.providerLabel), config.unclassifiedLabel];
             const configuredById = new Map(configured.map((label) => [label.id, label]));
             for (let attempt = 0; attempt < 2; attempt += 1) {
-                const current = await requestJson(deps, url);
+                const current = await requestJson(deps, readUrl);
                 const existing = current.labelProperties?.eventLabels ?? [];
                 const merged = existing.map((label) => {
                     const replacement = label.id ? configuredById.get(label.id) : undefined;
@@ -191,7 +191,8 @@ export function createGoogleCalendarProvider(deps = {}) {
                 if (current.etag)
                     headers.set("if-match", current.etag);
                 try {
-                    const updated = await requestJson(deps, url, {
+                    const writeUrl = apiUrl(`/calendars/${encodePath(current.id ?? config.designatedCalendar)}`);
+                    const updated = await requestJson(deps, writeUrl, {
                         method: "PUT",
                         headers,
                         body: JSON.stringify(updatedBody),
