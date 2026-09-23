@@ -1,4 +1,4 @@
-export declare const GOOGLE_CALENDAR_SCOPES: readonly ["https://www.googleapis.com/auth/calendar.events.owned", "https://www.googleapis.com/auth/calendar.calendars.readonly"];
+export declare const GOOGLE_CALENDAR_SCOPES: readonly ["https://www.googleapis.com/auth/calendar.events.owned", "https://www.googleapis.com/auth/calendar.calendars"];
 export type ProviderEvent = {
     id: string;
     etag?: string;
@@ -70,6 +70,11 @@ export declare function createGoogleCalendarProvider(deps?: GoogleCalendarProvid
             name?: string | undefined;
             id: string;
         }[];
+    }>;
+    syncLabels(configValue: unknown): Promise<{
+        changed: boolean;
+        calendar_id: string;
+        labels: import("./core.js").ProviderLabel[];
     }>;
     setLabel(configValue: unknown, params: {
         event_id: string;
