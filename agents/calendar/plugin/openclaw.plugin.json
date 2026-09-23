@@ -189,6 +189,15 @@
         },
         "additionalProperties": false
       },
+      "classificationRules": {
+        "type": "array",
+        "items": {
+          "type": "string",
+          "minLength": 1
+        },
+        "minItems": 1,
+        "uniqueItems": true
+      },
       "targets": {
         "type": "object",
         "required": [
@@ -218,15 +227,6 @@
           }
         },
         "additionalProperties": false
-      },
-      "classificationRules": {
-        "type": "array",
-        "items": {
-          "type": "string",
-          "minLength": 1
-        },
-        "minItems": 1,
-        "uniqueItems": true
       }
     },
     "additionalProperties": false
