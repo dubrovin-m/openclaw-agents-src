@@ -33,7 +33,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-strategy" },
+        params: { event_ref: "ev_20260922_0123456789abcdef", label_id: "label-strategy" },
       },
       { agentId: "calendar" },
     )).toBeUndefined();
@@ -42,7 +42,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-strategy", title: "mutate me" },
+        params: { event_ref: "ev_20260922_0123456789abcdef", label_id: "label-strategy", title: "mutate me" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -51,7 +51,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "unknown-label" },
+        params: { event_ref: "ev_20260922_0123456789abcdef", label_id: "unknown-label" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -62,13 +62,13 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-unclassified" },
+        params: { event_ref: "ev_20260922_0123456789abcdef", label_id: "label-unclassified" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
     expect(calendarToolPolicy(
       VALID_CONFIG,
-      { toolName: "calendar_provider_respond_event", params: { event_id: "event-1" } },
+      { toolName: "calendar_provider_respond_event", params: { event_ref: "ev_20260922_0123456789abcdef" } },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
   });
