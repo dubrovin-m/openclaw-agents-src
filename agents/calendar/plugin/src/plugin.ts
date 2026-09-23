@@ -61,11 +61,12 @@ const providerListParameters = Type.Object({
   time_min: Type.String({ minLength: 1 }),
   time_max: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
+const eventRefSchema = Type.String({ pattern: "^ev_[0-9]{8}_[0-9a-f]{16}$" });
 const providerEventParameters = Type.Object({
-  event_id: Type.String({ minLength: 1, maxLength: 1024 }),
+  event_ref: eventRefSchema,
 }, { additionalProperties: false });
 const providerSetLabelParameters = Type.Object({
-  event_id: Type.String({ minLength: 1, maxLength: 1024 }),
+  event_ref: eventRefSchema,
   label_id: Type.String({ minLength: 1, maxLength: 1024 }),
 }, { additionalProperties: false });
 
@@ -112,7 +113,7 @@ const entry = defineToolPlugin({
     tool({
       name: "calendar_provider_get_event",
       label: "Calendar event",
-      description: "Read one event from the designated Google Calendar by event id.",
+      description: "Read one event from the designated Google Calendar by the short event_ref returned by calendar_provider_list_events.",
       parameters: providerEventParameters,
       optional: true,
       execute: async (params, config) => provider.getEvent(config, params),
@@ -128,7 +129,7 @@ const entry = defineToolPlugin({
     tool({
       name: "calendar_provider_set_label",
       label: "Set Calendar analytical label",
-      description: "Assign one configured analytical event label after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
+      description: "Assign one configured analytical event label after explicit human confirmation, using the short event_ref returned by the provider and without changing title, time, attendees, RSVP, description, or sending guest updates.",
       parameters: providerSetLabelParameters,
       optional: true,
       execute: async (params, config) => provider.setLabel(config, params),
