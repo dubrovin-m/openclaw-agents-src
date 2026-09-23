@@ -230,76 +230,72 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
 
     async syncLabels(configValue: unknown) {
       const config = parseCalendarConfig(configValue);
-      const url = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
+      const readUrl = apiUrl(`/calendars/${encodePath(config.designatedCalendar)}`);
       const configured = [...config.leaves.map((leaf) => leaf.providerLabel), config.unclassifiedLabel];
-      const configuredById = new Map(configured.map((label) => [label.id, label]));
-
-      for (let attempt = 0; attempt < 2; attempt += 1) {
-        const current = await requestJson<Record<string, unknown> & {
-          id?: string;
-          etag?: string;
-          labelProperties?: {
-            eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
-          };
-        }>(deps, url);
-
-        const existing = current.labelProperties?.eventLabels ?? [];
-        const merged = existing.map((label) => {
-          const replacement = label.id ? configuredById.get(label.id) : undefined;
-          return replacement ?? label;
-        });
-        const existingIds = new Set(existing.flatMap((label) => label.id ? [label.id] : []));
-        for (const label of configured) {
-          if (!existingIds.has(label.id)) merged.push(label);
-        }
-
-        const unchanged = existing.length === merged.length && existing.every((label, index) => {
-          const next = merged[index];
-          return label.id === next.id
-            && label.name === next.name
-            && label.backgroundColor === next.backgroundColor;
-        });
-        if (unchanged) {
-          return { changed: false, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
-        }
-
-        const updatedBody = {
-          ...current,
-          labelProperties: {
-            ...(record(current.labelProperties) ?? {}),
-            eventLabels: merged,
-          },
+      let current = await requestJson<Record<string, unknown> & {
+        id?: string;
+        etag?: string;
+        labelProperties?: {
+          eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
         };
-        const headers = new Headers();
-        if (current.etag) headers.set("if-match", current.etag);
+      }>(deps, readUrl);
+      let changed = false;
 
-        try {
-          const updated = await requestJson<Record<string, unknown> & {
-            id?: string;
-            labelProperties?: {
-              eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
-            };
-          }>(deps, url, {
-            method: "PUT",
-            headers,
-            body: JSON.stringify(updatedBody),
-          });
+      for (const expected of configured) {
+        for (let attempt = 0; attempt < 2; attempt += 1) {
+          const existing = current.labelProperties?.eventLabels ?? [];
+          const actual = existing.find((label) => label.id === expected.id);
+          if (actual?.name === expected.name && actual.backgroundColor === expected.backgroundColor) break;
 
-          const updatedLabels = updated.labelProperties?.eventLabels ?? [];
-          for (const expected of configured) {
-            const actual = updatedLabels.find((label) => label.id === expected.id);
-            if (!actual || actual.name !== expected.name || actual.backgroundColor !== expected.backgroundColor) {
+          const merged = actual
+            ? existing.map((label) => label.id === expected.id ? expected : label)
+            : [...existing, expected];
+          const headers = new Headers();
+          if (current.etag) headers.set("if-match", current.etag);
+          const writeUrl = apiUrl(`/calendars/${encodePath(current.id ?? config.designatedCalendar)}`);
+
+          try {
+            const updated = await requestJson<Record<string, unknown> & {
+              id?: string;
+              etag?: string;
+              labelProperties?: {
+                eventLabels?: Array<{ id?: string; name?: string; backgroundColor?: string }>;
+              };
+            }>(deps, writeUrl, {
+              method: "PATCH",
+              headers,
+              body: JSON.stringify({
+                labelProperties: {
+                  ...(record(current.labelProperties) ?? {}),
+                  eventLabels: merged,
+                },
+              }),
+            });
+            const persisted = updated.labelProperties?.eventLabels?.find((label) => label.id === expected.id);
+            if (!persisted || persisted.name !== expected.name || persisted.backgroundColor !== expected.backgroundColor) {
               throw new Error(`Google Calendar analytical label sync did not persist configured label ${expected.id}.`);
             }
+            current = updated;
+            changed = true;
+            break;
+          } catch (error) {
+            if ((error as Error & { status?: number }).status === 412 && attempt === 0) {
+              current = await requestJson(deps, readUrl);
+              continue;
+            }
+            throw error;
           }
-          return { changed: true, calendar_id: updated.id ?? config.designatedCalendar, labels: configured };
-        } catch (error) {
-          if ((error as Error & { status?: number }).status === 412 && attempt === 0) continue;
-          throw error;
         }
       }
 
-      throw new Error("Google Calendar analytical label sync could not resolve a concurrent Calendar update.");
+      const finalLabels = current.labelProperties?.eventLabels ?? [];
+      for (const expected of configured) {
+        const actual = finalLabels.find((label) => label.id === expected.id);
+        if (!actual || actual.name !== expected.name || actual.backgroundColor !== expected.backgroundColor) {
+          throw new Error(`Google Calendar analytical label sync did not converge for configured label ${expected.id}.`);
+        }
+      }
+      return { changed, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
     },
 
     async setLabel(configValue: unknown, params: { event_id: string; label_id: string }) {
