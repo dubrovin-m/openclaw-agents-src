@@ -158,7 +158,7 @@ describe("Google Calendar provider", () => {
 
   it("synchronizes configured analytical labels while preserving unrelated Calendar state", async () => {
     const currentCalendar = {
-      id: "primary",
+      id: "calendar@example.com",
       etag: "\"c1\"",
       summary: "AI Calendar",
       description: "keep me",
@@ -191,12 +191,12 @@ describe("Google Calendar provider", () => {
 
     await expect(provider.syncLabels(VALID_CONFIG)).resolves.toMatchObject({
       changed: true,
-      calendar_id: "primary",
+      calendar_id: "calendar@example.com",
     });
 
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const [rawUrl, init] = fetchImpl.mock.calls[1];
-    expect(new URL(String(rawUrl)).pathname).toBe("/calendar/v3/calendars/primary");
+    expect(new URL(String(rawUrl)).pathname).toBe("/calendar/v3/calendars/calendar%40example.com");
     expect(init?.method).toBe("PUT");
     expect(new Headers(init?.headers).get("if-match")).toBe("\"c1\"");
     const body = JSON.parse(String(init?.body));
@@ -212,7 +212,7 @@ describe("Google Calendar provider", () => {
   });
   it("re-reads and re-merges labels after a concurrent Calendar update", async () => {
     const first = {
-      id: "primary",
+      id: "calendar@example.com",
       etag: "\"c1\"",
       summary: "AI Calendar",
       labelProperties: {
@@ -220,7 +220,7 @@ describe("Google Calendar provider", () => {
       },
     };
     const latest = {
-      id: "primary",
+      id: "calendar@example.com",
       etag: "\"c2\"",
       summary: "AI Calendar",
       labelProperties: {
@@ -253,7 +253,9 @@ describe("Google Calendar provider", () => {
 
     await expect(provider.syncLabels(VALID_CONFIG)).resolves.toMatchObject({ changed: true });
     expect(fetchImpl).toHaveBeenCalledTimes(4);
+    expect(new URL(String(fetchImpl.mock.calls[1][0])).pathname).toBe("/calendar/v3/calendars/calendar%40example.com");
     expect(new Headers(fetchImpl.mock.calls[1][1]?.headers).get("if-match")).toBe("\"c1\"");
+    expect(new URL(String(fetchImpl.mock.calls[3][0])).pathname).toBe("/calendar/v3/calendars/calendar%40example.com");
     expect(new Headers(fetchImpl.mock.calls[3][1]?.headers).get("if-match")).toBe("\"c2\"");
     const retriedBody = JSON.parse(String(fetchImpl.mock.calls[3][1]?.body));
     expect(retriedBody.labelProperties.eventLabels).toContainEqual(
