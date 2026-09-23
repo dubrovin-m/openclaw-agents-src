@@ -37,20 +37,24 @@ The plugin validates that:
 - service leaves are non-target classifications;
 - leaf and provider-label identities are unique;
 - the classification-write path can write only one configured leaf label to one event;
+- the label-administration path can synchronize only configured analytical label definitions and accepts no model-supplied mutation payload;
 - all other model-visible tool calls for the `calendar` agent fail closed unless explicitly admitted.
 
 ## Google integration boundary
 
-The v1 provider is an implementation-owned narrow adapter over the official Google Calendar API. The model sees only four provider tools:
+The v1 provider is an implementation-owned narrow adapter over the official Google Calendar API. The model sees only five provider tools:
 
 - `calendar_provider_list_events`;
 - `calendar_provider_get_event`;
 - `calendar_provider_get_labels`;
-- `calendar_provider_set_label`.
+- `calendar_provider_set_label`;
+- `calendar_provider_sync_labels`.
 
-The adapter authenticates through Google Application Default Credentials (ADC) supplied by live runtime state. It requests only Calendar event access plus read-only calendar metadata. No Google credential, refresh token, OAuth client secret, or ADC file is committed here.
+The adapter authenticates through Google Application Default Credentials (ADC) supplied by live runtime state. It requests Calendar event access plus Calendar-property write scope because Google requires `calendar.calendars` to define or rename custom labels. The model-facing tool boundary still restricts Calendar-property mutation to configured analytical label definitions only. No Google credential, refresh token, OAuth client secret, or ADC file is committed here.
 
-The only write tool, `calendar_provider_set_label`, performs a fresh event read, returns idempotently when the requested label is already present, and otherwise sends a conditional Calendar API PATCH containing only `eventLabelId`, with `eventLabelVersion=1`, `sendUpdates=none`, and the current ETag when available. There is no model-facing general event update/create/delete/respond tool.
+`calendar_provider_set_label` performs a fresh event read, returns idempotently when the requested label is already present, and otherwise sends a conditional Calendar API PATCH containing only `eventLabelId`, with `eventLabelVersion=1`, `sendUpdates=none`, and the current ETag when available.
+
+`calendar_provider_sync_labels` reads the current Calendar resource, merges the configured analytical label definitions into the existing label list by stable label ID, preserves unrelated labels and Calendar properties, updates the Calendar, and verifies that the configured IDs/names/colors persisted. It accepts no model-supplied label body. There is no model-facing general Calendar/event update/create/delete/respond tool.
 
 ## Validation
 
