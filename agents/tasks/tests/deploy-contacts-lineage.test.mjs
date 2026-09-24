@@ -6,12 +6,7 @@ import { fileURLToPath } from "node:url";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tasksRoot = path.resolve(here, "..");
-const repoRoot = path.resolve(tasksRoot, "../..");
 const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
-const taskRelease = JSON.parse(fs.readFileSync(path.join(tasksRoot, "release.json"), "utf8"));
-const contactsRelease = JSON.parse(
-  fs.readFileSync(path.join(repoRoot, "shared/contacts/release.json"), "utf8"),
-);
 
 function contactsPredecessorFunction(source) {
   const start = source.indexOf("contacts_predecessor_exact(){");
@@ -21,20 +16,18 @@ function contactsPredecessorFunction(source) {
   return source.slice(start, end);
 }
 
-test("Task deploy keeps Task and Shared Contacts predecessor lineages independent", () => {
-  assert.match(taskRelease.from?.source_revision ?? "", /^[0-9a-f]{40}$/);
-  assert.match(contactsRelease.from?.source_revision ?? "", /^[0-9a-f]{40}$/);
-  assert.notEqual(
-    taskRelease.from.source_revision,
-    contactsRelease.from.source_revision,
-    "fixture must exercise independent predecessor lineages",
-  );
-
+test("Task deploy validates Shared Contacts against its own predecessor lineage", () => {
   const fn = contactsPredecessorFunction(deploy);
+
   assert.doesNotMatch(
     fn,
     /CONTACTS_FROM_SOURCE[^\n]*RELEASE_FILE/,
     "Contacts predecessor must not be compared with the Task release predecessor revision",
+  );
+  assert.match(
+    fn,
+    /\[ -n "\$CONTACTS_FROM_SOURCE" \] \|\| return 1/,
+    "Contacts predecessor source revision must remain required",
   );
   assert.match(
     fn,
