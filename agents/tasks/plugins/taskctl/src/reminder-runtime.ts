@@ -41,7 +41,7 @@ type SchedulerGeneration = {
 
 type SchedulerServiceBinding = {
   getService: () => SchedulerService | undefined;
-  expectedRecipient: string;
+  expectedRecipient?: string;
 };
 
 type JsonRecord = Record<string, unknown>;
@@ -67,7 +67,7 @@ function requireSchedulerGeneration(): SchedulerGeneration {
   if (serviceBinding) {
     try {
       const service = serviceBinding.getService();
-      if (service) {
+      if (service && serviceBinding.expectedRecipient) {
         return { service, expectedRecipient: serviceBinding.expectedRecipient };
       }
     } catch {
@@ -286,7 +286,10 @@ export function registerReminderRuntime(api: OpenClawPluginApi): void {
           expectedRecipient: resolveExpectedReminderRecipient(context.config),
         };
       } catch {
-        schedulerServiceBinding = undefined;
+        // Presence of the service-bound scheduler is authoritative on hosts that
+        // expose it. Keep the binding so an invalid current delivery owner fails
+        // closed instead of falling back to an older cron_reconciled snapshot.
+        schedulerServiceBinding = { getService };
       }
     },
     stop: () => {

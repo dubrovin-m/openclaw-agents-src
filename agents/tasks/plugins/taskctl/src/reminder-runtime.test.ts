@@ -98,6 +98,28 @@ describe("Reminder scheduler runtime", () => {
     }, { signal: undefined });
   });
 
+  it("does not fall back to a stale reconciled snapshot when service-bound owner validation fails", async () => {
+    const { controller, job, service, hooks, services } = fixture({ reconcile: false });
+    const schedulerService = services.find((entry) => entry.id === "taskctl-reminder-scheduler-access");
+    expect(schedulerService).toBeDefined();
+
+    hooks.get("cron_reconciled")?.(
+      { enabled: true },
+      { getCron: () => service, abortSignal: controller.signal },
+    );
+    await schedulerService!.start({
+      config: { channels: { telegram: { accounts: { tasks: { allowFrom: [] } } } } },
+      getCron: () => service,
+    });
+
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "must not send" } as never);
+    await expect(executeReminderDispatch({
+      agentId: "tasks",
+      sessionKey: `agent:tasks:cron:${job.id}:trigger`,
+    } as never)).rejects.toThrow("projection is unavailable or stale");
+    expect(runInternal).not.toHaveBeenCalled();
+  });
+
   it("exposes the scheduler-only tool only to tasks cron sessions and validates the registered job", async () => {
     const { service } = fixture();
     expect(createReminderDispatchTool({ agentId: "tasks", sessionKey: "agent:tasks:main" } as never)).toBeNull();
