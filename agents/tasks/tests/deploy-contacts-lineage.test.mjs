@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tasksRoot = path.resolve(here, "..");
 const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
+const recover = fs.readFileSync(path.join(tasksRoot, "recover.sh"), "utf8");
 
 function contactsPredecessorFunction(source) {
   const start = source.indexOf("contacts_predecessor_exact(){");
@@ -64,4 +65,20 @@ test("Task deploy accepts Shared Contacts that are already at the target generat
     /contacts_predecessor_absent/,
     "absent Shared Contacts predecessor validation must remain supported",
   );
+});
+
+
+test("Task recovery validation covers the current schema 9 physical shape", () => {
+  const start = recover.indexOf("recovery_db_schema() {");
+  const end = recover.indexOf("\n\nvalidate_recovery_set()", start);
+  assert.notEqual(start, -1, "recovery_db_schema is missing");
+  assert.notEqual(end, -1, "recovery_db_schema boundary is missing");
+  const fn = recover.slice(start, end);
+
+  assert.match(fn, /\[4,5,6,7,8,9\]\.includes\(uv\)/, "schema 9 must be an accepted recovery generation");
+  assert.match(fn, /const physicalV7=physicalV5&&recurrenceShape/, "schema 9 must inherit the project and recurrence shape");
+  assert.match(fn, /const physicalV8=physicalV7&&reminderShape/, "schema 9 must inherit the Reminder shape");
+  assert.match(fn, /const physicalV9=physicalV8&&governanceShape/, "schema 9 must inherit all prior shapes before governance validation");
+  assert.match(fn, /task_domain_bindings/, "schema 9 recovery must validate Task governance bindings");
+  assert.match(fn, /deadline_change_requests/, "schema 9 recovery must validate deadline change requests");
 });
