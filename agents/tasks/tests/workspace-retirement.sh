@@ -4,6 +4,22 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 if node - "$ROOT/release.json" <<'NODE'
+const r=require(process.argv[2]);
+const from=r?.from?.sqlite_schemas;
+process.exit(
+  Array.isArray(from)&&
+  from.length===1&&
+  from[0]===r?.generation?.sqlite_schema&&
+  r?.shared_contacts?.predecessor_mode==='exact'
+    ?0:1
+);
+NODE
+then
+  node --test "$ROOT/tests/deploy-contacts-lineage.test.mjs"
+  echo TASK_AGENT_WORKSPACE_RETIREMENT_NOT_APPLICABLE_SAME_SCHEMA_PASS
+  exit 0
+fi
+if node - "$ROOT/release.json" <<'NODE'
 const r=require(process.argv[2]);process.exit(r?.important_date_dispatcher&&r?.from?.sqlite_schemas?.[0]===8?0:1);
 NODE
 then
