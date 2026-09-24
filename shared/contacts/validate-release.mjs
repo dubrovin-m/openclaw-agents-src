@@ -20,7 +20,8 @@ const predBytes=execFileSync('git',['-C',repo,'show',from.source_revision+':shar
 if(crypto.createHash('sha256').update(predBytes).digest('hex')!==from.release_sha256)fail('Shared Contacts predecessor release fingerprint mismatch');
 const pred=JSON.parse(predBytes.toString('utf8'));
 if(pred.implementation_version!==from.implementation_version||pred.sqlite_schema!==from.sqlite_schema||pred.plugin?.version!==from.plugin_version)fail('Shared Contacts predecessor identity mismatch');
-if(taskRelease?.from?.source_revision!==from.source_revision)fail('Task and Shared Contacts predecessor revisions diverge');
+// Task and Shared Contacts have independent release lineages. Cross-component compatibility
+// is owned by the immutable Shared Contacts pin in the current Task release below.
 if(!/^0\.1\.\d+$/.test(release.implementation_version||'')||!Number.isSafeInteger(release.sqlite_schema)||release.sqlite_schema<1)fail('invalid Shared Contacts generation');
 for(const file of ['core.cjs','task-store.cjs','contactctl']){
   if(!shaRe.test(release.runtime_files?.[file]||'')||release.runtime_files[file]!==sha(path.join(root,file)))fail(`runtime file fingerprint mismatch: ${file}`);

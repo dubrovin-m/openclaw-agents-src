@@ -10,6 +10,7 @@ const REMINDER_ACCOUNT_ID = "tasks";
 const REMINDER_CHANNEL_ID = "telegram";
 export const reminderDispatchParameters = Type.Object({}, { additionalProperties: false });
 let schedulerGeneration;
+let schedulerServiceBinding;
 const activeClaims = new Map();
 const knownReminderJobIds = new Set();
 function parseCurrentCronJobId(sessionKey, agentId) {
@@ -25,8 +26,22 @@ function claimToken(jobId, runAtMs) {
     return `reminder:${jobId}:${Math.trunc(runAtMs)}`;
 }
 function requireSchedulerGeneration() {
+    const serviceBinding = schedulerServiceBinding;
+    if (serviceBinding) {
+        try {
+            const service = serviceBinding.getService();
+            if (service && serviceBinding.expectedRecipient) {
+                return { service, expectedRecipient: serviceBinding.expectedRecipient };
+            }
+        }
+        catch {
+            // A revoked service-bound scheduler must fail closed rather than fall back
+            // to a potentially stale cron_reconciled snapshot.
+        }
+        throw new Error("Reminder scheduler projection is unavailable or stale");
+    }
     const generation = schedulerGeneration;
-    if (!generation || generation.abortSignal.aborted) {
+    if (!generation || generation.abortSignal?.aborted) {
         throw new Error("Reminder scheduler projection is unavailable or stale");
     }
     return generation;
@@ -119,7 +134,7 @@ export async function executeReminderDispatch(toolContext, deps = {}) {
     const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
     if (!job)
         throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to the registered Reminder dispatcher`);
-    generation.abortSignal.throwIfAborted();
+    generation.abortSignal?.throwIfAborted();
     const runAtMs = runningAtMs(job);
     const result = requireSuccessfulTaskctl(await runReminderInternal("dispatch", {
         claim_token: claimToken(jobId, runAtMs),
@@ -204,6 +219,34 @@ async function handleCronChanged(event) {
     }
 }
 export function registerReminderRuntime(api) {
+    api.registerService({
+        id: "taskctl-reminder-scheduler-access",
+        start: (context) => {
+            const serviceContext = context;
+            const getService = serviceContext.getCron;
+            if (!getService) {
+                schedulerServiceBinding = undefined;
+                return;
+            }
+            try {
+                schedulerServiceBinding = {
+                    getService,
+                    expectedRecipient: resolveExpectedReminderRecipient(context.config),
+                };
+            }
+            catch {
+                // Presence of the service-bound scheduler is authoritative on hosts that
+                // expose it. Keep the binding so an invalid current delivery owner fails
+                // closed instead of falling back to an older cron_reconciled snapshot.
+                schedulerServiceBinding = { getService };
+            }
+        },
+        stop: () => {
+            schedulerServiceBinding = undefined;
+            activeClaims.clear();
+            knownReminderJobIds.clear();
+        },
+    });
     api.on("cron_reconciled", (event, context) => {
         if (!event.enabled) {
             schedulerGeneration = undefined;
@@ -237,7 +280,7 @@ export const reminderRuntimeInternals = {
     findReminderJob,
     handleReplyPayloadSending,
     handleCronChanged,
-    resetState: () => { schedulerGeneration = undefined; activeClaims.clear(); knownReminderJobIds.clear(); },
+    resetState: () => { schedulerGeneration = undefined; schedulerServiceBinding = undefined; activeClaims.clear(); knownReminderJobIds.clear(); },
     activeClaims,
     knownReminderJobIds,
 };

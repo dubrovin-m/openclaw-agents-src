@@ -18,8 +18,13 @@ import {
 const runInternal = vi.mocked(runReminderInternal);
 
 type Hook = (...args: any[]) => any;
+type Service = {
+  id: string;
+  start: (context: any) => any;
+  stop?: (context: any) => any;
+};
 
-function fixture() {
+function fixture(options: { reconcile?: boolean } = {}) {
   const controller = new AbortController();
   const job = {
     id: "job-1",
@@ -34,13 +39,17 @@ function fixture() {
   };
   const service = { list: vi.fn(async () => [job]) };
   const hooks = new Map<string, Hook>();
+  const services: Service[] = [];
   const api = {
     config: { channels: { telegram: { accounts: { tasks: { allowFrom: ["test-owner"] } } } } },
     on: (name: string, handler: Hook) => { hooks.set(name, handler); },
+    registerService: (registered: Service) => { services.push(registered); },
   };
   registerReminderRuntime(api as never);
-  hooks.get("cron_reconciled")?.({ enabled: true }, { getCron: () => service, abortSignal: controller.signal });
-  return { controller, job, service, hooks };
+  if (options.reconcile !== false) {
+    hooks.get("cron_reconciled")?.({ enabled: true }, { getCron: () => service, abortSignal: controller.signal });
+  }
+  return { api, controller, job, service, hooks, services };
 }
 
 beforeEach(() => {
@@ -54,6 +63,61 @@ describe("Reminder scheduler runtime", () => {
       "const dispatch = await task_reminder_dispatch({});",
       "json(dispatch.count > 0 ? { notify: dispatch.message } : {});",
     ].join("\n"));
+  });
+
+  it("uses service-bound scheduler access without cron_reconciled replay and refreshes after service replacement", async () => {
+    const { api, job, service, services } = fixture({ reconcile: false });
+    const schedulerService = services.find((entry) => entry.id === "taskctl-reminder-scheduler-access");
+    expect(schedulerService).toBeDefined();
+
+    await schedulerService!.start({ config: api.config, getCron: () => service });
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "first" } as never);
+    await expect(executeReminderDispatch({
+      agentId: "tasks",
+      sessionKey: "agent:tasks:cron:job-1:trigger",
+    } as never)).resolves.toMatchObject({ count: 1 });
+    expect(service.list).toHaveBeenCalledTimes(1);
+
+    await schedulerService!.stop?.({ config: api.config });
+    const replacementJob = {
+      ...job,
+      state: { runningAtMs: job.state.runningAtMs + 60_000 },
+    };
+    const replacementService = { list: vi.fn(async () => [replacementJob]) };
+    await schedulerService!.start({ config: api.config, getCron: () => replacementService });
+
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "second" } as never);
+    await expect(executeReminderDispatch({
+      agentId: "tasks",
+      sessionKey: "agent:tasks:cron:job-1:trigger",
+    } as never)).resolves.toMatchObject({ count: 1 });
+    expect(replacementService.list).toHaveBeenCalledTimes(1);
+    expect(runInternal).toHaveBeenLastCalledWith("dispatch", {
+      claim_token: "reminder:job-1:1789549260000",
+      boundary: "2026-09-16T09:01:00.000Z",
+    }, { signal: undefined });
+  });
+
+  it("does not fall back to a stale reconciled snapshot when service-bound owner validation fails", async () => {
+    const { controller, job, service, hooks, services } = fixture({ reconcile: false });
+    const schedulerService = services.find((entry) => entry.id === "taskctl-reminder-scheduler-access");
+    expect(schedulerService).toBeDefined();
+
+    hooks.get("cron_reconciled")?.(
+      { enabled: true },
+      { getCron: () => service, abortSignal: controller.signal },
+    );
+    await schedulerService!.start({
+      config: { channels: { telegram: { accounts: { tasks: { allowFrom: [] } } } } },
+      getCron: () => service,
+    });
+
+    runInternal.mockResolvedValueOnce({ ok: true, count: 1, message: "must not send" } as never);
+    await expect(executeReminderDispatch({
+      agentId: "tasks",
+      sessionKey: `agent:tasks:cron:${job.id}:trigger`,
+    } as never)).rejects.toThrow("projection is unavailable or stale");
+    expect(runInternal).not.toHaveBeenCalled();
   });
 
   it("exposes the scheduler-only tool only to tasks cron sessions and validates the registered job", async () => {
