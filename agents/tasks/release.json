@@ -10,31 +10,31 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.25",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.25.tgz",
-    "sha256": "d0615d8f627bc56895a41e057965d5931e51e30b94a81975eb6fcebd589c4d5b"
+    "version": "0.4.26",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.26.tgz",
+    "sha256": "e80c57821d070fe186b3052d043c99951546caddeaba4d29c54be4fa8582dd0e"
   },
   "from": {
-    "source_revision": "ed2103380d144d8001e91388cc7b16674c46b92e",
-    "workspace_source_revision": "ed2103380d144d8001e91388cc7b16674c46b92e",
+    "source_revision": "b7ad499485f147d6b7e1db97e260d29e600db823",
+    "workspace_source_revision": "b7ad499485f147d6b7e1db97e260d29e600db823",
     "sqlite_schemas": [
-      8
+      9
     ],
     "taskctl_versions": [
-      "0.4.11"
+      "0.4.12"
     ],
     "plugin_versions": [
-      "0.4.22"
+      "0.4.25"
     ],
     "workspace_sha256": {
-      "AGENTS.md": "ea7a340d088b88c9710d221b4ca7dee7f72761c561130b4d1e2b5e96941f2eea",
+      "AGENTS.md": "cb0331cd8f2ce1f90e48a5c6ba7aea08372c9149722d16bebbdbbb8b9b5d3a3f",
       "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
       "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
       "USER.md": "f88ac7bd8acfb48becff9598d1912a9a1cfb45becc44db5bac6e8a252e680306",
       "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
       "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
     },
-    "tools_sha256": "5c50911478b79df83ce499c7925060820c99f4dbc9a8c35d6bb8831077d96862"
+    "tools_sha256": "178af22b8a5300dbe57a0ac93ab36293e5cab9b9ebb89242168cc22e4b746681"
   },
   "calendar_materializer": {
     "kind": "openclaw-command-automation-v1",

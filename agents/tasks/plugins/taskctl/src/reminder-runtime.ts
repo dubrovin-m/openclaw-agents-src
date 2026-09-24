@@ -35,12 +35,18 @@ type SchedulerService = {
 
 type SchedulerGeneration = {
   service: SchedulerService;
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
+  expectedRecipient: string;
+};
+
+type SchedulerServiceBinding = {
+  getService: () => SchedulerService | undefined;
   expectedRecipient: string;
 };
 
 type JsonRecord = Record<string, unknown>;
 let schedulerGeneration: SchedulerGeneration | undefined;
+let schedulerServiceBinding: SchedulerServiceBinding | undefined;
 type ActiveClaim = { token: string; runAtMs: number };
 const activeClaims = new Map<string, ActiveClaim[]>();
 const knownReminderJobIds = new Set<string>();
@@ -57,8 +63,21 @@ function claimToken(jobId: string, runAtMs: number): string {
 }
 
 function requireSchedulerGeneration(): SchedulerGeneration {
+  const serviceBinding = schedulerServiceBinding;
+  if (serviceBinding) {
+    try {
+      const service = serviceBinding.getService();
+      if (service) {
+        return { service, expectedRecipient: serviceBinding.expectedRecipient };
+      }
+    } catch {
+      // A revoked service-bound scheduler must fail closed rather than fall back
+      // to a potentially stale cron_reconciled snapshot.
+    }
+    throw new Error("Reminder scheduler projection is unavailable or stale");
+  }
   const generation = schedulerGeneration;
-  if (!generation || generation.abortSignal.aborted) {
+  if (!generation || generation.abortSignal?.aborted) {
     throw new Error("Reminder scheduler projection is unavailable or stale");
   }
   return generation;
@@ -162,7 +181,7 @@ export async function executeReminderDispatch(
   const generation = requireSchedulerGeneration();
   const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
   if (!job) throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to the registered Reminder dispatcher`);
-  generation.abortSignal.throwIfAborted();
+  generation.abortSignal?.throwIfAborted();
   const runAtMs = runningAtMs(job);
   const result = requireSuccessfulTaskctl(await runReminderInternal("dispatch", {
     claim_token: claimToken(jobId, runAtMs),
@@ -250,6 +269,32 @@ async function handleCronChanged(event: {
 }
 
 export function registerReminderRuntime(api: OpenClawPluginApi): void {
+  api.registerService({
+    id: "taskctl-reminder-scheduler-access",
+    start: (context) => {
+      const serviceContext = context as typeof context & {
+        getCron?: () => SchedulerService | undefined;
+      };
+      const getService = serviceContext.getCron;
+      if (!getService) {
+        schedulerServiceBinding = undefined;
+        return;
+      }
+      try {
+        schedulerServiceBinding = {
+          getService,
+          expectedRecipient: resolveExpectedReminderRecipient(context.config),
+        };
+      } catch {
+        schedulerServiceBinding = undefined;
+      }
+    },
+    stop: () => {
+      schedulerServiceBinding = undefined;
+      activeClaims.clear();
+      knownReminderJobIds.clear();
+    },
+  });
   api.on("cron_reconciled", (event, context) => {
     if (!event.enabled) {
       schedulerGeneration = undefined;
@@ -283,7 +328,7 @@ export const reminderRuntimeInternals = {
   findReminderJob,
   handleReplyPayloadSending,
   handleCronChanged,
-  resetState: () => { schedulerGeneration = undefined; activeClaims.clear(); knownReminderJobIds.clear(); },
+  resetState: () => { schedulerGeneration = undefined; schedulerServiceBinding = undefined; activeClaims.clear(); knownReminderJobIds.clear(); },
   activeClaims,
   knownReminderJobIds,
 };
