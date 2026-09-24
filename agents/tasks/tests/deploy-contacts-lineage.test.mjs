@@ -76,7 +76,9 @@ test("Task recovery validation covers the current schema 9 physical shape", () =
   const fn = recover.slice(start, end);
 
   assert.match(fn, /\[4,5,6,7,8,9\]\.includes\(uv\)/, "schema 9 must be an accepted recovery generation");
-  assert.match(fn, /uv===8\|\|uv===9/, "schema 9 must retain Reminder-table validation");
+  assert.match(fn, /const physicalV7=physicalV5&&recurrenceShape/, "schema 9 must inherit the project and recurrence shape");
+  assert.match(fn, /const physicalV8=physicalV7&&reminderShape/, "schema 9 must inherit the Reminder shape");
+  assert.match(fn, /const physicalV9=physicalV8&&governanceShape/, "schema 9 must inherit all prior shapes before governance validation");
   assert.match(fn, /task_domain_bindings/, "schema 9 recovery must validate Task governance bindings");
   assert.match(fn, /deadline_change_requests/, "schema 9 recovery must validate deadline change requests");
 });
