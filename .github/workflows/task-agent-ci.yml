@@ -232,6 +232,7 @@ jobs:
           bash -n agents/tasks/tests/recurrence-gateway-e2e.sh
           bash -n agents/tasks/tests/reminders.sh
           bash -n agents/tasks/tests/deadline-governance.sh
+          node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
           timeout 120s bash agents/tasks/tests/smoke.sh agents/tasks/taskctl
           timeout 120s bash agents/tasks/tests/batch4.sh
           timeout 120s bash agents/tasks/tests/batch6.sh agents/tasks/taskctl
