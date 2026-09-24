@@ -40,3 +40,28 @@ test("Task deploy validates Shared Contacts against its own predecessor lineage"
     "Contacts predecessor must remain fingerprint-verified",
   );
 });
+
+
+test("Task deploy accepts Shared Contacts that are already at the target generation", () => {
+  const start = deploy.indexOf("contacts_starting_eligible(){");
+  const end = deploy.indexOf("\n\ntaskctl_target_exact(){", start);
+  assert.notEqual(start, -1, "contacts_starting_eligible is missing");
+  assert.notEqual(end, -1, "contacts_starting_eligible boundary is missing");
+  const fn = deploy.slice(start, end);
+
+  assert.match(
+    fn,
+    /contacts_runtime_exact/,
+    "already-target Shared Contacts must be an eligible Task deployment starting state",
+  );
+  assert.match(
+    fn,
+    /contacts_predecessor_exact/,
+    "exact Shared Contacts predecessor validation must remain supported",
+  );
+  assert.match(
+    fn,
+    /contacts_predecessor_absent/,
+    "absent Shared Contacts predecessor validation must remain supported",
+  );
+});
