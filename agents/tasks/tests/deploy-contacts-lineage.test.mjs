@@ -39,4 +39,19 @@ test("Task deploy validates Shared Contacts against its own predecessor lineage"
     /CONTACTS_FROM_RELEASE_SHA/,
     "Contacts predecessor must remain fingerprint-verified",
   );
+  const startingStart = deploy.indexOf("contacts_starting_eligible(){");
+  const startingEnd = deploy.indexOf("\ntaskctl_target_exact(){", startingStart);
+  assert.notEqual(startingStart, -1, "contacts_starting_eligible is missing");
+  assert.notEqual(startingEnd, -1, "contacts_starting_eligible boundary is missing");
+  const starting = deploy.slice(startingStart, startingEnd);
+  assert.match(
+    starting,
+    /CONTACTS_PREDECESSOR_MODE" = "exact" \] && contacts_runtime_exact/,
+    "Task-only releases with exact Shared Contacts must validate the pinned current Contacts runtime",
+  );
+  assert.doesNotMatch(
+    starting,
+    /CONTACTS_PREDECESSOR_MODE" = "exact" \] && contacts_predecessor_exact/,
+    "Task deploy must not require the Shared Contacts release predecessor for an already-pinned exact Contacts runtime",
+  );
 });
