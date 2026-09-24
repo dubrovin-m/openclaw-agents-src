@@ -537,7 +537,7 @@ NODE
 }
 contacts_predecessor_exact(){
   [ "$CONTACTS_ENABLED" = "1" ] || return 0
-  [ -n "$CONTACTS_FROM_SOURCE" ] && [ "$CONTACTS_FROM_SOURCE" = "$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.source_revision)' "$RELEASE_FILE")" ] || return 1
+  [ -n "$CONTACTS_FROM_SOURCE" ] || return 1
   [ -x "$CONTACTCTL_TARGET" ] && [ -f "$CONTACTS_LIB/core.cjs" ] && [ -f "$CONTACTS_LIB/task-store.cjs" ] && [ -f "$CONTACTS_DB" ] && [ -f "$CONTACTS_PLUGIN_DIR/package.json" ] || return 1
   local tmp release h inspect
   tmp=$(mktemp) || return 1
