@@ -78,10 +78,12 @@ try{
   const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
   const fk=db.prepare('PRAGMA foreign_key_check').all().length;
   const uv=Number(db.prepare('PRAGMA user_version').get().user_version);
-  if(integrity!=='ok'||fk!==0||![4,5,6,7,8].includes(uv))process.exit(2);
-  if(uv===6||uv===7){const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');if(!['id','status','mode','title','assignee_id','rule_json','calendar_cursor_date'].every(x=>rec.includes(x))||!['recurrence_id','label_id'].every(x=>rl.includes(x))||!['recurrence_id','occurrence_key','task_id','template_json'].every(x=>ro.includes(x))||!['recurrence_id','event_type','occurred_at'].every(x=>re.includes(x)))process.exit(2);}
-  if(uv===7||uv===8){const names=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").all();if(names.length!==0)process.exit(2);}
-  if(uv===8){const cols=db.prepare('PRAGMA table_info(reminders)').all().map(x=>x.name);if(!['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>cols.includes(x)))process.exit(2);}
+  if(integrity!=='ok'||fk!==0||![4,5,6,7,8,9].includes(uv))process.exit(2);
+  const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];
+  if(uv===6||uv===7){const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');if(!['id','status','mode','title','assignee_id','rule_json','calendar_cursor_date'].every(x=>rec.includes(x))||!['recurrence_id','label_id'].every(x=>rl.includes(x))||!['recurrence_id','occurrence_key','task_id','template_json'].every(x=>ro.includes(x))||!['recurrence_id','event_type','occurred_at'].every(x=>re.includes(x)))process.exit(2);}
+  if(uv===7||uv===8||uv===9){const names=db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").all();if(names.length!==0)process.exit(2);}
+  if(uv===8||uv===9){const reminderCols=cols('reminders');if(!['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>reminderCols.includes(x)))process.exit(2);}
+  if(uv===9){const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests');if(!['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))||!['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x)))process.exit(2);}
   process.stdout.write(String(uv));
 } finally {db.close();}
 NODE
