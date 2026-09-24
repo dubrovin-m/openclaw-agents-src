@@ -555,7 +555,7 @@ const {execFileSync}=require('child_process'),x=JSON.parse(process.argv[2]),p=x?
 NODE
 }
 contacts_predecessor_absent(){ [ "$CONTACTS_ENABLED" != "1" ] || { [ ! -e "$CONTACTS_DB" ] && [ ! -e "$CONTACTS_LIB" ] && [ ! -e "$CONTACTCTL_TARGET" ] && [ ! -e "$CONTACTS_PLUGIN_DIR" ]; }; }
-contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || { [ "$CONTACTS_PREDECESSOR_MODE" = "exact" ] && contacts_predecessor_exact || { [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ] && contacts_predecessor_absent; }; }; }
+contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_runtime_exact || { [ "$CONTACTS_PREDECESSOR_MODE" = "exact" ] && contacts_predecessor_exact || { [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ] && contacts_predecessor_absent; }; }; }
 
 taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
 taskctl_starting_eligible(){ local identity current schema found_v=0 found_s=0 v; identity=$(taskctl_runtime_identity) || return 1; current=${identity%% *}; schema=${identity##* }; for v in $FROM_TASKCTL_VERSIONS; do [ "$current" = "$v" ] && found_v=1; done; for v in $FROM_SQLITE_SCHEMAS; do [ "$schema" = "$v" ] && found_s=1; done; [ "$found_v" -eq 1 ] && [ "$found_s" -eq 1 ]; }
