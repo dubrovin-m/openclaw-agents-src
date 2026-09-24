@@ -33,17 +33,31 @@ type SchedulerService = {
   list: (opts?: { includeDisabled?: boolean }) => Promise<SchedulerJob[]>;
 };
 
-type SchedulerGeneration = {
-  service: SchedulerService;
-  abortSignal: AbortSignal;
+type DispatcherProjection = {
+  kind: "dispatcher";
+  jobId: string;
   expectedRecipient: string;
 };
 
+type RunProjection = {
+  kind: "run";
+  jobId: string;
+  runAtMs: number;
+  expectedRecipient: string;
+  projectedAtMs: number;
+};
+
+type ReminderStateValue = DispatcherProjection | RunProjection;
+
+type ReminderStateStore = {
+  register: (key: string, value: ReminderStateValue, opts?: { ttlMs?: number }) => Promise<void>;
+  lookup: (key: string) => Promise<ReminderStateValue | undefined>;
+  delete: (key: string) => Promise<boolean>;
+  clear: () => Promise<void>;
+};
+
 type JsonRecord = Record<string, unknown>;
-let schedulerGeneration: SchedulerGeneration | undefined;
-type ActiveClaim = { token: string; runAtMs: number };
-const activeClaims = new Map<string, ActiveClaim[]>();
-const knownReminderJobIds = new Set<string>();
+let reminderStateStore: ReminderStateStore | undefined;
 
 function parseCurrentCronJobId(sessionKey: string | undefined, agentId?: string): string | null {
   if (agentId !== undefined && agentId !== REMINDER_AGENT_ID) return null;
@@ -56,12 +70,25 @@ function claimToken(jobId: string, runAtMs: number): string {
   return `reminder:${jobId}:${Math.trunc(runAtMs)}`;
 }
 
-function requireSchedulerGeneration(): SchedulerGeneration {
-  const generation = schedulerGeneration;
-  if (!generation || generation.abortSignal.aborted) {
+const REMINDER_STATE_NAMESPACE = "reminder-runtime-v2";
+const REMINDER_RUN_TTL_MS = 2 * 60 * 1000;
+const REMINDER_RUN_FRESH_MS = 30 * 1000;
+const REMINDER_RUN_WAIT_MS = 3 * 1000;
+const REMINDER_RUN_POLL_MS = 25;
+
+function dispatcherProjectionKey(jobId: string): string {
+  return `dispatcher:${jobId}`;
+}
+
+function runProjectionKey(jobId: string): string {
+  return `run:${jobId}`;
+}
+
+function requireReminderStateStore(): ReminderStateStore {
+  if (!reminderStateStore) {
     throw new Error("Reminder scheduler projection is unavailable or stale");
   }
-  return generation;
+  return reminderStateStore;
 }
 
 function resolveExpectedReminderRecipient(config: unknown): string {
@@ -146,6 +173,81 @@ function runningAtMs(job: SchedulerJob): number {
   return value;
 }
 
+function isFreshRunProjection(value: ReminderStateValue | undefined, jobId: string, nowMs: number): value is RunProjection {
+  if (!value || value.kind !== "run" || value.jobId !== jobId) return false;
+  if (!Number.isFinite(value.runAtMs) || !Number.isFinite(value.projectedAtMs)) return false;
+  const runAge = nowMs - value.runAtMs;
+  const projectionAge = nowMs - value.projectedAtMs;
+  return runAge >= -1_000 && runAge <= REMINDER_RUN_FRESH_MS && projectionAge >= -1_000 && projectionAge <= REMINDER_RUN_FRESH_MS;
+}
+
+async function waitForRunProjection(
+  store: ReminderStateStore,
+  jobId: string,
+  options: { now?: () => number; sleep?: (ms: number) => Promise<void>; waitMs?: number } = {},
+): Promise<RunProjection> {
+  const now = options.now ?? Date.now;
+  const sleep = options.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const deadline = now() + (options.waitMs ?? REMINDER_RUN_WAIT_MS);
+  do {
+    const currentNow = now();
+    const projection = await store.lookup(runProjectionKey(jobId));
+    if (isFreshRunProjection(projection, jobId, currentNow)) return projection;
+    if (currentNow >= deadline) break;
+    await sleep(REMINDER_RUN_POLL_MS);
+  } while (true);
+  throw new Error("Reminder scheduler projection is unavailable or stale");
+}
+
+async function refreshDispatcherProjection(
+  jobId: string,
+  context: { config?: unknown; getCron?: () => unknown },
+  apiConfig: unknown,
+  store: ReminderStateStore,
+): Promise<SchedulerJob | null> {
+  const key = dispatcherProjectionKey(jobId);
+  try {
+    const service = context.getCron?.() as SchedulerService | undefined;
+    if (!service) throw new Error("Reminder scheduler is unavailable");
+    const expectedRecipient = resolveExpectedReminderRecipient(context.config ?? apiConfig);
+    const job = await findReminderJob(service, jobId, expectedRecipient);
+    if (!job) throw new Error("Reminder dispatcher is not registered");
+    await store.register(key, { kind: "dispatcher", jobId, expectedRecipient });
+    return job;
+  } catch {
+    await store.delete(key);
+    return null;
+  }
+}
+
+async function projectStartedRun(
+  event: { action: string; jobId: string; runAtMs?: number },
+  context: { config?: unknown; getCron?: () => unknown },
+  apiConfig: unknown,
+  store: ReminderStateStore,
+  now: () => number = Date.now,
+): Promise<boolean> {
+  if (event.action !== "started" || typeof event.runAtMs !== "number" || !Number.isFinite(event.runAtMs)) return false;
+  const job = await refreshDispatcherProjection(event.jobId, context, apiConfig, store);
+  if (!job || runningAtMs(job) !== event.runAtMs) {
+    await store.delete(runProjectionKey(event.jobId));
+    return false;
+  }
+  const dispatcher = await store.lookup(dispatcherProjectionKey(event.jobId));
+  if (!dispatcher || dispatcher.kind !== "dispatcher") {
+    await store.delete(runProjectionKey(event.jobId));
+    return false;
+  }
+  await store.register(runProjectionKey(event.jobId), {
+    kind: "run",
+    jobId: event.jobId,
+    runAtMs: event.runAtMs,
+    expectedRecipient: dispatcher.expectedRecipient,
+    projectedAtMs: now(),
+  }, { ttlMs: REMINDER_RUN_TTL_MS });
+  return true;
+}
+
 export function buildReminderDispatchScript(): string {
   return [
     `const dispatch = await ${TASK_REMINDER_DISPATCH_TOOL}({});`,
@@ -155,34 +257,36 @@ export function buildReminderDispatchScript(): string {
 
 export async function executeReminderDispatch(
   toolContext: OpenClawPluginToolContext,
-  deps: { signal?: AbortSignal } = {},
+  deps: {
+    signal?: AbortSignal;
+    store?: ReminderStateStore;
+    now?: () => number;
+    sleep?: (ms: number) => Promise<void>;
+    waitMs?: number;
+  } = {},
 ): Promise<JsonRecord> {
   const jobId = parseCurrentCronJobId(toolContext.sessionKey, toolContext.agentId);
   if (!jobId) throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to a tasks cron session`);
-  const generation = requireSchedulerGeneration();
-  const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
-  if (!job) throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to the registered Reminder dispatcher`);
-  generation.abortSignal.throwIfAborted();
-  const runAtMs = runningAtMs(job);
+  const store = deps.store ?? requireReminderStateStore();
+  const projection = await waitForRunProjection(store, jobId, { now: deps.now, sleep: deps.sleep, waitMs: deps.waitMs });
+  const dispatcher = await store.lookup(dispatcherProjectionKey(jobId));
+  if (!dispatcher || dispatcher.kind !== "dispatcher" || dispatcher.expectedRecipient !== projection.expectedRecipient) {
+    throw new Error(`${TASK_REMINDER_DISPATCH_TOOL} is available only to the registered Reminder dispatcher`);
+  }
+  const runtimeConfig = (toolContext as OpenClawPluginToolContext & { runtimeConfig?: unknown; config?: unknown }).runtimeConfig
+    ?? (toolContext as OpenClawPluginToolContext & { config?: unknown }).config;
+  if (runtimeConfig !== undefined && resolveExpectedReminderRecipient(runtimeConfig) !== projection.expectedRecipient) {
+    throw new Error("Reminder dispatcher delivery route drift detected");
+  }
   const result = requireSuccessfulTaskctl(await runReminderInternal("dispatch", {
-    claim_token: claimToken(jobId, runAtMs),
-    boundary: new Date(runAtMs).toISOString(),
+    claim_token: claimToken(jobId, projection.runAtMs),
+    boundary: new Date(projection.runAtMs).toISOString(),
   }, { signal: deps.signal }), "Reminder dispatch");
   if (!Number.isSafeInteger(result.count) || Number(result.count) < 0 || typeof result.message !== "string") {
     throw new Error("Reminder dispatch returned an invalid result");
   }
-  knownReminderJobIds.add(jobId);
-  if (Number(result.count) > 0) {
-    const claims = activeClaims.get(jobId) ?? [];
-    const token = claimToken(jobId, runAtMs);
-    if (!claims.some((claim) => claim.token === token)) {
-      claims.push({ token, runAtMs });
-      activeClaims.set(jobId, claims);
-    }
-  }
   return result;
 }
-
 export function createReminderDispatchTool(
   toolContext: OpenClawPluginToolContext,
 ): AnyAgentTool | null {
@@ -202,21 +306,26 @@ export function createReminderDispatchTool(
 async function handleReplyPayloadSending(
   event: { payload: JsonRecord; sessionKey?: string },
   context: { channelId: string; accountId?: string; sessionKey?: string },
+  deps: { store?: ReminderStateStore; now?: () => number } = {},
 ) {
   const jobId = parseCurrentCronJobId(event.sessionKey ?? context.sessionKey);
   if (!jobId) return undefined;
-  const claims = activeClaims.get(jobId) ?? [];
-  if (claims.length === 0) return undefined;
-  const claim = claims.length === 1 ? claims[0] : undefined;
-  if (!claim) return { cancel: true, reason: "reminder_claim_identity_ambiguous" };
+  const store = deps.store ?? requireReminderStateStore();
+  const run = await store.lookup(runProjectionKey(jobId));
+  if (!run || run.kind !== "run") return undefined;
+  const dispatcher = await store.lookup(dispatcherProjectionKey(jobId));
+  if (!dispatcher || dispatcher.kind !== "dispatcher" || dispatcher.expectedRecipient !== run.expectedRecipient ||
+      !isFreshRunProjection(run, jobId, (deps.now ?? Date.now)())) {
+    return { cancel: true, reason: "reminder_pre_send_revalidation_failed" };
+  }
+  if (context.channelId !== REMINDER_CHANNEL_ID || context.accountId !== REMINDER_ACCOUNT_ID) {
+    return { cancel: true, reason: "reminder_delivery_route_mismatch" };
+  }
   try {
-    const generation = requireSchedulerGeneration();
-    const job = await findReminderJob(generation.service, jobId, generation.expectedRecipient);
-    if (!job) return { cancel: true, reason: "reminder_dispatcher_drift" };
-    if (context.channelId !== REMINDER_CHANNEL_ID || context.accountId !== REMINDER_ACCOUNT_ID) {
-      return { cancel: true, reason: "reminder_delivery_route_mismatch" };
-    }
-    const rendered = requireSuccessfulTaskctl(await runReminderInternal("render", { claim_token: claim.token }), "Reminder pre-send render");
+    const rendered = requireSuccessfulTaskctl(
+      await runReminderInternal("render", { claim_token: claimToken(jobId, run.runAtMs) }),
+      "Reminder pre-send render",
+    );
     const count = Number(rendered.count);
     const message = rendered.message;
     if (!Number.isSafeInteger(count) || count < 0 || typeof message !== "string") {
@@ -229,50 +338,85 @@ async function handleReplyPayloadSending(
   }
 }
 
-async function handleCronChanged(event: {
-  action: string;
-  jobId: string;
-  runAtMs?: number;
-  completionStatus?: string;
-  delivered?: boolean;
-  deliveryStatus?: string;
-}) {
+async function handleCronChanged(
+  event: {
+    action: string;
+    jobId: string;
+    runAtMs?: number;
+    completionStatus?: string;
+    delivered?: boolean;
+    deliveryStatus?: string;
+  },
+  context: { config?: unknown; getCron?: () => unknown } = {},
+  deps: { store?: ReminderStateStore; apiConfig?: unknown; now?: () => number } = {},
+) {
+  const store = deps.store ?? requireReminderStateStore();
+  if (event.action === "started") {
+    await projectStartedRun(event, context, deps.apiConfig, store, deps.now);
+    return;
+  }
+  if (event.action === "added" || event.action === "updated" || event.action === "scheduled") {
+    await refreshDispatcherProjection(event.jobId, context, deps.apiConfig, store);
+    return;
+  }
+  if (event.action === "removed") {
+    await store.delete(dispatcherProjectionKey(event.jobId));
+    await store.delete(runProjectionKey(event.jobId));
+    return;
+  }
   if (event.action !== "finished" || typeof event.runAtMs !== "number" || !Number.isFinite(event.runAtMs)) return;
-  if (!knownReminderJobIds.has(event.jobId)) return;
+  const run = await store.lookup(runProjectionKey(event.jobId));
+  const dispatcher = await store.lookup(dispatcherProjectionKey(event.jobId));
+  if (!run || run.kind !== "run" || run.runAtMs !== event.runAtMs || !dispatcher ||
+      dispatcher.kind !== "dispatcher" || dispatcher.expectedRecipient !== run.expectedRecipient) return;
   const token = claimToken(event.jobId, event.runAtMs);
   const delivered = event.completionStatus === "succeeded" && event.delivered === true && event.deliveryStatus === "delivered";
   try {
     await runReminderInternal("settle", { claim_token: token, delivered });
   } finally {
-    const remaining = (activeClaims.get(event.jobId) ?? []).filter((claim) => claim.token !== token);
-    if (remaining.length) activeClaims.set(event.jobId, remaining); else activeClaims.delete(event.jobId);
+    await store.delete(runProjectionKey(event.jobId));
+  }
+}
+
+async function handleCronReconciled(
+  event: { enabled: boolean },
+  context: { config?: unknown; getCron?: () => unknown },
+  apiConfig: unknown,
+  store: ReminderStateStore,
+): Promise<void> {
+  await store.clear();
+  if (!event.enabled) return;
+  try {
+    const service = context.getCron?.() as SchedulerService | undefined;
+    if (!service) return;
+    const expectedRecipient = resolveExpectedReminderRecipient(context.config ?? apiConfig);
+    const jobs = await service.list({ includeDisabled: true });
+    const matches = jobs.filter((job) => job.declarationKey === REMINDER_DISPATCH_DECLARATION);
+    if (matches.length !== 1) return;
+    const job = validateReminderJob(matches[0]!, expectedRecipient);
+    await store.register(dispatcherProjectionKey(job.id), { kind: "dispatcher", jobId: job.id, expectedRecipient });
+  } catch {
+    await store.clear();
   }
 }
 
 export function registerReminderRuntime(api: OpenClawPluginApi): void {
-  api.on("cron_reconciled", (event, context) => {
-    if (!event.enabled) {
-      schedulerGeneration = undefined;
-      return;
-    }
-    const service = context.getCron?.();
-    if (!service) {
-      schedulerGeneration = undefined;
-      return;
-    }
+  const store = api.runtime.state.openKeyedStore<ReminderStateValue>({
+    namespace: REMINDER_STATE_NAMESPACE,
+    maxEntries: 16,
+    overflowPolicy: "reject-new",
+  }) as ReminderStateStore;
+  reminderStateStore = store;
+  api.on("cron_reconciled", (event, context) => handleCronReconciled(event, context, api.config, store));
+  api.on("reply_payload_sending", (event, context) => handleReplyPayloadSending(event as never, context, { store }));
+  api.on("cron_changed", (event, context) => handleCronChanged(event, context, { store, apiConfig: api.config }));
+  api.on("gateway_stop", async () => {
     try {
-      schedulerGeneration = {
-        service: service as SchedulerService,
-        abortSignal: context.abortSignal,
-        expectedRecipient: resolveExpectedReminderRecipient(api.config),
-      };
-    } catch {
-      schedulerGeneration = undefined;
+      await store.clear();
+    } finally {
+      if (reminderStateStore === store) reminderStateStore = undefined;
     }
   });
-  api.on("reply_payload_sending", (event, context) => handleReplyPayloadSending(event as never, context));
-  api.on("cron_changed", (event) => handleCronChanged(event));
-  api.on("gateway_stop", () => { schedulerGeneration = undefined; activeClaims.clear(); knownReminderJobIds.clear(); });
 }
 
 export const reminderRuntimeInternals = {
@@ -281,9 +425,14 @@ export const reminderRuntimeInternals = {
   resolveExpectedReminderRecipient,
   validateReminderJob,
   findReminderJob,
+  isFreshRunProjection,
+  waitForRunProjection,
+  refreshDispatcherProjection,
+  projectStartedRun,
   handleReplyPayloadSending,
   handleCronChanged,
-  resetState: () => { schedulerGeneration = undefined; activeClaims.clear(); knownReminderJobIds.clear(); },
-  activeClaims,
-  knownReminderJobIds,
+  handleCronReconciled,
+  dispatcherProjectionKey,
+  runProjectionKey,
+  resetLocalState: () => { reminderStateStore = undefined; },
 };
