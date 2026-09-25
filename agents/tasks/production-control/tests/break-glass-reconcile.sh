@@ -167,7 +167,7 @@ reset_runtime(){
   git show "$FROM:agents/tasks/production-control/openclaw-task-production-control.timer" > "$SYSTEMD/openclaw-task-production-control.timer"
   chmod 644 "$SYSTEMD"/*
   cat > "$STATE/state.json" <<JSON
-{"version":1,"mode":"ACTIVE","controller_revision":"$FROM","protected_path_baseline_sha":"$FROM","production_baseline_sha":"$BASELINE","deployment_blocked":false,"last_diagnostic":{"ok":true},"requests":{"77":{"type":"diagnose","state":"SUCCESS","completed_at":"old"}},"watermark":100,"minimum_comment_id":50}
+{"version":1,"mode":"ACTIVE","control_repository":"$CONTROL_REPOSITORY","implementation_repository":"$IMPLEMENTATION_REPOSITORY","control_issue":$CONTROL_ISSUE,"owner_login":"$OWNER_LOGIN","owner_id":$OWNER_ID,"controller_revision":"$FROM","protected_path_baseline_sha":"$FROM","production_baseline_sha":"$BASELINE","deployment_blocked":false,"last_diagnostic":{"ok":true},"requests":{"77":{"type":"diagnose","state":"SUCCESS","completed_at":"old"}},"watermark":100,"minimum_comment_id":50}
 JSON
   chmod 600 "$STATE/state.json"
   git clone -q --no-hardlinks --no-checkout "$REPO" "$SOURCE"
@@ -183,16 +183,15 @@ JSON
 }
 
 run_reconcile(){
-  "$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --deploy-result "$DELIVERABLES/task-result.json" \
-    --control-repository "$CONTROL_REPOSITORY" --implementation-repository "$IMPLEMENTATION_REPOSITORY" \
-    --control-issue "$CONTROL_ISSUE" --owner-login "$OWNER_LOGIN" --owner-id "$OWNER_ID" --apply
+  "$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --deploy-result "$DELIVERABLES/task-result.json" --apply
 }
 
 assert_old_state(){
   test "$(cat "$LIB/installed-revision")" = "$FROM"
-  node - "$STATE/state.json" "$FROM" "$BASELINE" <<'NODE'
-const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],baseline=process.argv[4];
+  node - "$STATE/state.json" "$FROM" "$BASELINE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
+const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],baseline=process.argv[4],control=process.argv[5],implementation=process.argv[6],issue=Number(process.argv[7]),login=process.argv[8],ownerId=Number(process.argv[9]);
 if(s.mode!=='ACTIVE'||s.controller_revision!==from||s.protected_path_baseline_sha!==from||s.production_baseline_sha!==baseline||s.watermark!==100||s.minimum_comment_id!==50)process.exit(2);
+if(s.control_repository!==control||s.implementation_repository!==implementation||s.control_issue!==issue||s.owner_login!==login||s.owner_id!==ownerId)process.exit(2);
 if(s.requests?.['77']?.state!=='SUCCESS'||s.last_diagnostic?.ok!==true)process.exit(2);
 NODE
   test "$(git -C "$SOURCE" rev-parse HEAD)" = "$FROM"
@@ -224,6 +223,15 @@ NODE
 }
 
 cd "$REPO"
+
+echo STAGE=legacy-binding-arg-rejected
+reset_runtime
+set +e
+"$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --deploy-result "$DELIVERABLES/task-result.json" --owner-login "$OWNER_LOGIN" --apply >/dev/null 2>&1
+code=$?
+set -e
+test "$code" -eq 2
+assert_old_state
 
 echo STAGE=noop-success
 reset_runtime

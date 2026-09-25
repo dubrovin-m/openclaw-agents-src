@@ -13,11 +13,6 @@ export PATH="$HOME/.npm-global/bin${PATH:+:$PATH}"
 FROM=""
 TO=""
 DEPLOY_RESULT=""
-CONTROL_REPOSITORY=""
-IMPLEMENTATION_REPOSITORY=""
-CONTROL_ISSUE=""
-OWNER_LOGIN=""
-OWNER_ID=""
 TEST_ROOT=""
 APPLY=0
 while [ "$#" -gt 0 ]; do
@@ -25,25 +20,13 @@ while [ "$#" -gt 0 ]; do
     --from) [ "$#" -ge 2 ] || { echo "--from requires SHA" >&2; exit 2; }; FROM=$2; shift 2 ;;
     --to) [ "$#" -ge 2 ] || { echo "--to requires SHA" >&2; exit 2; }; TO=$2; shift 2 ;;
     --deploy-result) [ "$#" -ge 2 ] || { echo "--deploy-result requires path" >&2; exit 2; }; DEPLOY_RESULT=$2; shift 2 ;;
-    --control-repository) [ "$#" -ge 2 ] || { echo "--control-repository requires OWNER/REPO" >&2; exit 2; }; CONTROL_REPOSITORY=$2; shift 2 ;;
-    --implementation-repository) [ "$#" -ge 2 ] || { echo "--implementation-repository requires OWNER/REPO" >&2; exit 2; }; IMPLEMENTATION_REPOSITORY=$2; shift 2 ;;
-    --control-issue) [ "$#" -ge 2 ] || { echo "--control-issue requires number" >&2; exit 2; }; CONTROL_ISSUE=$2; shift 2 ;;
-    --owner-login) [ "$#" -ge 2 ] || { echo "--owner-login requires login" >&2; exit 2; }; OWNER_LOGIN=$2; shift 2 ;;
-    --owner-id) [ "$#" -ge 2 ] || { echo "--owner-id requires numeric id" >&2; exit 2; }; OWNER_ID=$2; shift 2 ;;
     --test-root) [ "$#" -ge 2 ] || { echo "--test-root requires path" >&2; exit 2; }; TEST_ROOT=$2; shift 2 ;;
     --apply) APPLY=1; shift ;;
-    *) echo "Usage: $0 [--test-root /absolute/path] --from OLD_CONTROLLER_SHA --to EXACT_IMPLEMENTATION_MAIN_SHA --deploy-result /absolute/result.json --control-repository OWNER/REPO --implementation-repository OWNER/REPO --control-issue N --owner-login LOGIN --owner-id ID --apply" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--test-root /absolute/path] --from OLD_CONTROLLER_SHA --to EXACT_IMPLEMENTATION_MAIN_SHA --deploy-result /absolute/result.json --apply" >&2; exit 2 ;;
   esac
 done
 [[ "$FROM" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid --from SHA" >&2; exit 2; }
 [[ "$TO" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid --to SHA" >&2; exit 2; }
-[[ "$CONTROL_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid control repository" >&2; exit 2; }
-[[ "$IMPLEMENTATION_REPOSITORY" =~ ^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$ ]] || { echo "Invalid implementation repository" >&2; exit 2; }
-[ "$CONTROL_REPOSITORY" != "$IMPLEMENTATION_REPOSITORY" ] || { echo "Control and implementation repositories must be distinct" >&2; exit 2; }
-[[ "$CONTROL_ISSUE" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid control issue" >&2; exit 2; }
-[[ "$OWNER_LOGIN" =~ ^[A-Za-z0-9-]+$ ]] || { echo "Invalid owner login" >&2; exit 2; }
-[[ "$OWNER_ID" =~ ^[1-9][0-9]*$ ]] || { echo "Invalid owner id" >&2; exit 2; }
-REPO_URL="https://github.com/${IMPLEMENTATION_REPOSITORY}.git"
 case "$DEPLOY_RESULT" in /*) ;; *) echo "--deploy-result must be absolute" >&2; exit 2;; esac
 [ "$APPLY" -eq 1 ] || { echo "--apply is required" >&2; exit 2; }
 
@@ -97,18 +80,33 @@ readarray -t PRIOR_PROVENANCE < <(node - "$STATE_FILE" "$FROM" <<'NODE'
 const fs=require('fs');
 const s=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const from=process.argv[3];
+const repoRe=/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/;
+const loginRe=/^[A-Za-z0-9-]+$/;
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true)process.exit(2);
 if(typeof s.production_baseline_sha!=='string'||!/^[0-9a-f]{40}$/.test(s.production_baseline_sha))process.exit(2);
 const protectedBaseline=Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision;
 if(typeof protectedBaseline!=='string'||!/^[0-9a-f]{40}$/.test(protectedBaseline))process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(!Number.isSafeInteger(Number(s.watermark))||!Number.isSafeInteger(Number(s.minimum_comment_id)))process.exit(2);
-process.stdout.write(`${s.production_baseline_sha}\n${protectedBaseline}\n`);
+const controlRepository=String(s.control_repository??'');
+const implementationRepository=String(s.implementation_repository??'');
+const controlIssue=Number(s.control_issue);
+const ownerLogin=String(s.owner_login??'');
+const ownerId=Number(s.owner_id);
+if(!repoRe.test(controlRepository)||!repoRe.test(implementationRepository)||controlRepository===implementationRepository)process.exit(2);
+if(!Number.isSafeInteger(controlIssue)||controlIssue<1||!loginRe.test(ownerLogin)||!Number.isSafeInteger(ownerId)||ownerId<1)process.exit(2);
+process.stdout.write(`${s.production_baseline_sha}\n${protectedBaseline}\n${controlRepository}\n${implementationRepository}\n${controlIssue}\n${ownerLogin}\n${ownerId}\n`);
 NODE
 ) || { echo "Controller state is not eligible for break-glass reconciliation" >&2; exit 2; }
-[ "${#PRIOR_PROVENANCE[@]}" -eq 2 ] || { echo "Controller provenance state is incomplete" >&2; exit 2; }
+[ "${#PRIOR_PROVENANCE[@]}" -eq 7 ] || { echo "Controller provenance or operational binding state is incomplete" >&2; exit 2; }
 PRIOR_BASELINE=${PRIOR_PROVENANCE[0]}
 PRIOR_PROTECTED_BASELINE=${PRIOR_PROVENANCE[1]}
+CONTROL_REPOSITORY=${PRIOR_PROVENANCE[2]}
+IMPLEMENTATION_REPOSITORY=${PRIOR_PROVENANCE[3]}
+CONTROL_ISSUE=${PRIOR_PROVENANCE[4]}
+OWNER_LOGIN=${PRIOR_PROVENANCE[5]}
+OWNER_ID=${PRIOR_PROVENANCE[6]}
+REPO_URL="https://github.com/${IMPLEMENTATION_REPOSITORY}.git"
 
 DEPLOY_RESULT=$(realpath -e "$DEPLOY_RESULT")
 [ -f "$DEPLOY_RESULT" ] && [ ! -L "$DEPLOY_RESULT" ] || { echo "Task deploy result must be a real file" >&2; exit 2; }
@@ -216,7 +214,8 @@ const controlRepository=process.argv[8],implementationRepository=process.argv[9]
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
-Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
+if(s.control_repository!==controlRepository||s.implementation_repository!==implementationRepository||Number(s.control_issue)!==controlIssue||s.owner_login!==ownerLogin||Number(s.owner_id)!==ownerId)process.exit(2);
+Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
 fs.writeFileSync(out,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 fs.chmodSync(out,0o600);
 NODE
@@ -231,7 +230,8 @@ const controlRepository=process.argv[8],implementationRepository=process.argv[9]
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
-Object.assign(s,{control_repository:controlRepository,implementation_repository:implementationRepository,control_issue:controlIssue,owner_login:ownerLogin,owner_id:ownerId,controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
+if(s.control_repository!==controlRepository||s.implementation_repository!==implementationRepository||Number(s.control_issue)!==controlIssue||s.owner_login!==ownerLogin||Number(s.owner_id)!==ownerId)process.exit(2);
+Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
 s.last_diagnostic=null;
 s.last_break_glass_reconciliation={from_controller:from,from_protected_path_baseline:protectedBaseline,from_production_baseline:baseline,deploy_stage:deployStage,to,reconciled_at:new Date().toISOString()};
 const tmp=`${p}.tmp.${process.pid}`;
@@ -240,10 +240,10 @@ fs.renameSync(tmp,p);
 fs.chmodSync(p,0o600);
 NODE
 
-node - "$STATE_FILE" "$TO" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" <<'NODE' || { echo "Reconciled controller state validation failed" >&2; false; }
-const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),to=process.argv[3],control=process.argv[4],implementation=process.argv[5];
+node - "$STATE_FILE" "$TO" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE' || { echo "Reconciled controller state validation failed" >&2; false; }
+const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),to=process.argv[3],control=process.argv[4],implementation=process.argv[5],issue=Number(process.argv[6]),login=process.argv[7],ownerId=Number(process.argv[8]);
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
-if(s.control_repository!==control||s.implementation_repository!==implementation||control===implementation)process.exit(2);
+if(s.control_repository!==control||s.implementation_repository!==implementation||Number(s.control_issue)!==issue||s.owner_login!==login||Number(s.owner_id)!==ownerId||control===implementation)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 NODE
 [ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$TO" ] || { echo "Reconciled controller source validation failed" >&2; false; }

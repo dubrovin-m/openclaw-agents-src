@@ -24,6 +24,8 @@ The target `deploy.sh --preflight` must also return `start_is_target=1`. That fl
 
 ## Apply
 
+Operational binding is immutable during reconciliation. The runner reads `control_repository`, `implementation_repository`, `control_issue`, `owner_login`, and `owner_id` from the existing controller state, validates them, and preserves them unchanged. These values are not accepted as reconciliation CLI arguments.
+
 From the exact approved target checkout:
 
 ```bash
