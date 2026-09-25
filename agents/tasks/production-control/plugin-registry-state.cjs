@@ -59,35 +59,6 @@ function restore(dbPath,snapshotPath){
     } else if(actual) fail('plugin registry row unexpectedly exists after restore');
   } finally{db.close()}
 }
-function normalizeInitial(dbPath,hostVersion,taskctlVersion){
-  if(!fs.existsSync(dbPath)) fail('OpenClaw state database missing during registry normalization');
-  const db=new DatabaseSync(dbPath); try{
-    if(!tableColumns(db)) fail('config_machine_state missing during registry normalization');
-    db.exec('BEGIN IMMEDIATE');
-    try{
-      const row=db.prepare('SELECT value_json FROM config_machine_state WHERE state_key=?').get(KEY); if(!row) fail('plugin registry row missing during normalization');
-      const w=parseWrapper(row.value_json),i=w.index;
-      if(i.hostContractVersion!==hostVersion) fail(`plugin registry host version ${i.hostContractVersion} != ${hostVersion}`);
-      const taskRows=i.plugins.filter(p=>p?.pluginId==='taskctl'&&p?.enabled===true);
-      if(taskRows.length!==1||taskRows[0].packageVersion!==taskctlVersion) fail('plugin registry does not describe the effective predecessor taskctl');
-      if(i.plugins.some(p=>p?.pluginId==='contacts'&&p?.enabled===true)) fail('Contacts plugin is unexpectedly active in predecessor registry');
-      delete i.installRecords.contacts; delete i.installRecords.taskctl;
-      const now=Date.now(); w.revision=now; i.generatedAtMs=now;
-      db.prepare('UPDATE config_machine_state SET value_json=?,updated_at_ms=? WHERE state_key=?').run(JSON.stringify(w),now,KEY);
-      db.exec('COMMIT');
-    }catch(e){try{db.exec('ROLLBACK')}catch{};throw e}
-  } finally{db.close()}
-}
-function verifyNormalized(dbPath,hostVersion,taskctlVersion){
-  const db=new DatabaseSync(dbPath,{readOnly:true}); try{
-    const row=readRow(db); if(!row) fail('normalized plugin registry row missing'); const i=parseWrapper(row.value_json).index;
-    if(i.hostContractVersion!==hostVersion) fail('normalized registry host mismatch');
-    if(i.installRecords.contacts||i.installRecords.taskctl) fail('normalized registry retained target-owned install records');
-    const taskRows=i.plugins.filter(p=>p?.pluginId==='taskctl'&&p?.enabled===true);
-    if(taskRows.length!==1||taskRows[0].packageVersion!==taskctlVersion) fail('normalized registry taskctl mismatch');
-    if(i.plugins.some(p=>p?.pluginId==='contacts'&&p?.enabled===true)) fail('normalized registry retained Contacts plugin');
-  } finally{db.close()}
-}
 function verifyTarget(dbPath,hostVersion,taskctlVersion,contactsVersion){
   const db=new DatabaseSync(dbPath,{readOnly:true}); try{
     const row=readRow(db); if(!row) fail('target plugin registry row missing'); const i=parseWrapper(row.value_json).index;
@@ -103,8 +74,6 @@ try{
   if(cmd==='snapshot'&&args.length===2)snapshot(...args);
   else if(cmd==='validate-snapshot'&&args.length===1)validateSnapshot(...args);
   else if(cmd==='restore'&&args.length===2)restore(...args);
-  else if(cmd==='normalize-initial'&&args.length===3)normalizeInitial(...args);
-  else if(cmd==='verify-normalized'&&args.length===3)verifyNormalized(...args);
   else if(cmd==='verify-target'&&args.length===4)verifyTarget(...args);
-  else fail('usage: plugin-registry-state.cjs snapshot|validate-snapshot|restore|normalize-initial|verify-normalized|verify-target ...');
+  else fail('usage: plugin-registry-state.cjs snapshot|validate-snapshot|restore|verify-target ...');
 }catch(e){console.error(e?.message||String(e));process.exit(2)}
