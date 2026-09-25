@@ -7,12 +7,8 @@ REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 RUNTIME_CONTRACT=""
 RUNTIME_HELPER=""
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
-LEGACY_RECOVERY_FORMAT="task-agent-recovery-v1"
-MIGRATED_RECOVERY_FORMAT="task-agent-recovery-v2"
-LEGACY_CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v3"
 CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v4"
-LEGACY_WORKSPACE_FILES=(AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md)
-MIGRATED_WORKSPACE_FILES=(AGENTS.md SOUL.md USER.md IDENTITY.md HEARTBEAT.md)
+CURRENT_WORKSPACE_FILES=(AGENTS.md SOUL.md USER.md IDENTITY.md HEARTBEAT.md)
 EXPECTED_OPENCLAW_VERSION=""
 
 fail() {
@@ -63,11 +59,8 @@ verify_archive_prefix() {
 }
 
 recovery_workspace_files() {
-  case "$1" in
-    "$LEGACY_RECOVERY_FORMAT") printf '%s\n' "${LEGACY_WORKSPACE_FILES[*]}" ;;
-    "$MIGRATED_RECOVERY_FORMAT"|"$LEGACY_CONTACTS_RECOVERY_FORMAT"|"$CONTACTS_RECOVERY_FORMAT") printf '%s\n' "${MIGRATED_WORKSPACE_FILES[*]}" ;;
-    *) fail "Unsupported recovery format" ;;
-  esac
+  [ "$1" = "$CONTACTS_RECOVERY_FORMAT" ] || fail "Unsupported recovery format"
+  printf '%s\n' "${CURRENT_WORKSPACE_FILES[*]}"
 }
 
 recovery_db_schema() {
@@ -78,23 +71,16 @@ try{
   const integrity=db.prepare('PRAGMA integrity_check').get().integrity_check;
   const fk=db.prepare('PRAGMA foreign_key_check').all().length;
   const uv=Number(db.prepare('PRAGMA user_version').get().user_version);
-  if(integrity!=='ok'||fk!==0||![4,5,6,7,8,9].includes(uv))process.exit(2);
+  if(integrity!=='ok'||fk!==0||uv!==9)process.exit(2);
   const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];
-  const labels=cols('labels'),tasks=cols('tasks'),projects=cols('projects'),ev=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_events'").get()?.sql||'',base=labels.includes('emoji')&&tasks.includes('assignee_id')&&ev.includes('DUE_TIME_CHANGED');
-  const physicalV4=base&&!tasks.includes('project_id')&&projects.length===0;
-  const physicalV5=base&&tasks.includes('project_id')&&['id','title','status','created_at','completed_at'].every(x=>projects.includes(x));
-  const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events'),people=cols('people'),aliases=cols('person_aliases');
+  const labels=cols('labels'),tasks=cols('tasks'),projects=cols('projects'),ev=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_events'").get()?.sql||'';
+  const base=labels.includes('emoji')&&tasks.includes('assignee_id')&&tasks.includes('project_id')&&['id','title','status','created_at','completed_at'].every(x=>projects.includes(x))&&ev.includes('DUE_TIME_CHANGED');
+  const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events');
   const recurrenceShape=['id','status','mode','title','assignee_id','due_time','target_project_id','rule_json','calendar_cursor_date','created_at','updated_at','cancelled_at'].every(x=>rec.includes(x))&&['recurrence_id','label_id'].every(x=>rl.includes(x))&&['id','recurrence_id','occurrence_key','occurrence_date','predecessor_task_id','task_id','template_json','generated_at'].every(x=>ro.includes(x))&&['id','recurrence_id','event_type','old_value','new_value','reason','occurred_at'].every(x=>re.includes(x));
-  const physicalV6=physicalV5&&recurrenceShape&&people.includes('id')&&aliases.includes('person_id');
-  const physicalV7=physicalV5&&recurrenceShape&&people.length===0&&aliases.length===0;
   const reminders=cols('reminders'),reminderShape=['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>reminders.includes(x));
-  const physicalV8=physicalV7&&reminderShape;
-  const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests');
-  const governanceShape=['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))&&['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x));
-  const physicalV9=physicalV8&&governanceShape;
-  const valid=(uv===4&&physicalV4)||(uv===5&&physicalV5)||(uv===6&&physicalV6)||(uv===7&&physicalV7)||(uv===8&&physicalV8)||(uv===9&&physicalV9);
-  if(!valid)process.exit(2);
-  process.stdout.write(String(uv));
+  const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests'),governanceShape=['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))&&['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x));
+  if(!base||!recurrenceShape||cols('people').length!==0||cols('person_aliases').length!==0||!reminderShape||!governanceShape)process.exit(2);
+  process.stdout.write('9');
 } finally {db.close();}
 NODE
 }
@@ -106,60 +92,33 @@ validate_recovery_set() {
     test -f "$backup/$f" || fail "Missing $f"
   done
   format=$(cat "$backup/RECOVERY_FORMAT")
+  [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ] || fail "Unsupported recovery format"
   workspace_files=$(recovery_workspace_files "$format")
-  if [ "$format" = "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-    test -f "$backup/contacts-state.json" || fail "Missing contacts-state.json"
-    if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-      test -f "$backup/plugin-registry.before.json" || fail "Missing plugin-registry.before.json"
-      node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$backup/plugin-registry.before.json" || fail "Plugin registry recovery snapshot is invalid"
-    fi
-    node - "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery state is invalid"
-const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8")),v1=x?.format==="shared-contacts-recovery-v1",v2=x?.format==="shared-contacts-recovery-v2";if((!v1&&!v2)||typeof x.db_present!=="boolean"||typeof x.lib_present!=="boolean"||typeof x.contactctl_present!=="boolean"||typeof x.plugin_present!=="boolean")process.exit(2);if(v2&&((x.db_present&&(!Number.isSafeInteger(x.schema_version)||x.schema_version<1))||(!x.db_present&&x.schema_version!==null)))process.exit(2);
+  test -f "$backup/contacts-state.json" || fail "Missing contacts-state.json"
+  test -f "$backup/plugin-registry.before.json" || fail "Missing plugin-registry.before.json"
+  node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$backup/plugin-registry.before.json" || fail "Plugin registry recovery snapshot is invalid"
+  node - "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery state is invalid"
+const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));if(x?.format!=="shared-contacts-recovery-v2"||typeof x.db_present!=="boolean"||typeof x.lib_present!=="boolean"||typeof x.contactctl_present!=="boolean"||typeof x.plugin_present!=="boolean"||(x.db_present&&(!Number.isSafeInteger(x.schema_version)||x.schema_version<1))||(!x.db_present&&x.schema_version!==null))process.exit(2);
 NODE
-  fi
   (cd "$backup" && sha256sum -c SHA256SUMS >/dev/null) || fail "Recovery checksum verification failed"
   for f in RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz; do
     grep -Eq "^[0-9a-f]{64}  ${f//./\\.}$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: $f"
   done
-  if [ "$format" = "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
     grep -Eq "^[0-9a-f]{64}  contacts-state\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: contacts-state.json"
-    if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-      grep -Eq "^[0-9a-f]{64}  plugin-registry\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: plugin-registry.before.json"
-    fi
+    grep -Eq "^[0-9a-f]{64}  plugin-registry\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: plugin-registry.before.json"
     local cstate; cstate=$(cat "$backup/contacts-state.json")
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then test -f "$backup/contacts.sqlite3" || fail "Missing Contacts database backup"; grep -Eq "^[0-9a-f]{64}  contacts\.sqlite3$" "$backup/SHA256SUMS" || fail "Missing Contacts database checksum"; fi
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then test -f "$backup/contacts-lib.before.tar.gz" || fail "Missing Contacts library backup"; grep -Eq "^[0-9a-f]{64}  contacts-lib\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts library checksum"; fi
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then test -f "$backup/contactctl.before" || fail "Missing contactctl backup"; grep -Eq "^[0-9a-f]{64}  contactctl\.before$" "$backup/SHA256SUMS" || fail "Missing contactctl checksum"; fi
     if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then test -f "$backup/contacts-plugin.before.tar.gz" || fail "Missing Contacts plugin backup"; grep -Eq "^[0-9a-f]{64}  contacts-plugin\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts plugin checksum"; fi
-  fi
-  if [ -f "$backup/calendar-materializer.before.json" ]; then
-    grep -Eq "^[0-9a-f]{64}  calendar-materializer\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: calendar-materializer.before.json"
-    node - "$backup/calendar-materializer.before.json" <<'NODE' || fail "Recovery calendar materializer snapshot is invalid"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(x?.format!=='task-agent-calendar-materializer-recovery-v1'||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||x.jobs.length!==0)process.exit(2);
-NODE
-  fi
-  if [ -f "$backup/reminder-dispatcher.before.json" ]; then
-    grep -Eq "^[0-9a-f]{64}  reminder-dispatcher\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: reminder-dispatcher.before.json"
-    node - "$backup/reminder-dispatcher.before.json" <<'NODE' || fail "Recovery Reminder dispatcher snapshot is invalid"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),v1=x?.format==='task-agent-reminder-dispatcher-recovery-v1',v2=x?.format==='task-agent-reminder-dispatcher-recovery-v2';if((!v1&&!v2)||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||(v1&&x.jobs.length!==0)||(v2&&(x.jobs.length>1||x.jobs.some(j=>j?.declarationKey!==x.declaration_key||typeof j?.id!=='string'||!j.id))))process.exit(2);
-NODE
-  fi
 
-  if [ -f "$backup/important-date-dispatcher.before.json" ]; then
-    grep -Eq "^[0-9a-f]{64}  important-date-dispatcher\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: important-date-dispatcher.before.json"
-    node - "$backup/important-date-dispatcher.before.json" <<'NODE' || fail "Recovery Important Dates dispatcher snapshot is invalid"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(x?.format!=='contacts-important-date-dispatcher-recovery-v1'||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||x.jobs.length!==0)process.exit(2);
+  local cstate; cstate=$(cat "$backup/contacts-state.json")
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-lib.before.tar.gz" "openclaw-contacts"; fi
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-plugin.before.tar.gz" "contacts"; fi
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then
+    node - "$backup/contacts.sqlite3" "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery database validation failed"
+const fs=require('fs'),{DatabaseSync}=require('node:sqlite'),state=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),expected=state.schema_version,db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('PRAGMA user_version').get().user_version)!==expected||db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||db.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(2);}finally{db.close();}
 NODE
-  fi
-  if [ "$format" = "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-    local cstate; cstate=$(cat "$backup/contacts-state.json")
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-lib.before.tar.gz" "openclaw-contacts"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-plugin.before.tar.gz" "contacts"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then
-      node - "$backup/contacts.sqlite3" "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery database validation failed"
-const fs=require('fs'),{DatabaseSync}=require('node:sqlite'),state=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),expected=state.format==='shared-contacts-recovery-v2'?state.schema_version:1,db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('PRAGMA user_version').get().user_version)!==expected||db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||db.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(2);}finally{db.close();}
-NODE
-    fi
   fi
   verify_archive_prefix "$backup/taskctl-managed.before.tar.gz" "taskctl"
   verify_archive_prefix "$backup/workspace-tasks.before.tar.gz" "workspace-tasks"
@@ -194,95 +153,8 @@ resolve_host_openclaw_root() {
   fail "Unable to locate host OpenClaw package root"
 }
 
-reconcile_calendar_materializer_before() {
-  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/calendar-materializer.before.json" key current ids id
-  [ -f "$snapshot" ] || return 0
-  key=$(node -e 'const x=require(process.argv[1]);if(x.format!=="task-agent-calendar-materializer-recovery-v1"||!Array.isArray(x.jobs)||x.jobs.length!==0)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery materializer snapshot unsupported"
-  if [ -n "${TEST_ROOT:-}" ]; then
-    current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to inspect current Automations before recovery"
-  else
-    current=$("$openclaw_bin" automations list --all --json) || fail "Unable to inspect current Automations before recovery"
-  fi
-  ids=$(node - "$key" "$current" <<'NODE'
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);for(const j of jobs)if(j?.declarationKey===key&&typeof j?.id==='string')process.stdout.write(j.id+'\n');
-NODE
-) || fail "Unable to resolve Recurrence materializer jobs"
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    if [ -n "${TEST_ROOT:-}" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Recurrence materializer Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Recurrence materializer Automation"; fi
-  done <<<"$ids"
-  if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Automations after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Automations after cleanup"; fi
-  node - "$key" "$current" <<'NODE' || fail "Recurrence materializer Automation remains after cleanup"
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);if(jobs.some(j=>j?.declarationKey===key))process.exit(1);
-NODE
-}
 
-reconcile_reminder_dispatcher_before() {
-  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/reminder-dispatcher.before.json"
-  local key format count current ids id script tools timeout budget channel account to enabled restored
-  [ -f "$snapshot" ] || return 0
-  key=$(node -e 'const x=require(process.argv[1]);if(!["task-agent-reminder-dispatcher-recovery-v1","task-agent-reminder-dispatcher-recovery-v2"].includes(x.format)||!Array.isArray(x.jobs)||x.jobs.length>1)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery Reminder dispatcher snapshot unsupported"
-  format=$(node -e 'process.stdout.write(require(process.argv[1]).format)' "$snapshot") || fail "Recovery Reminder dispatcher format unavailable"
-  count=$(node -e 'process.stdout.write(String(require(process.argv[1]).jobs.length))' "$snapshot") || fail "Recovery Reminder dispatcher count unavailable"
-  if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; fi
-  ids=$(node - "$key" "$current" <<'NODE'
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);for(const j of jobs)if(j?.declarationKey===key&&typeof j?.id==='string')process.stdout.write(j.id+'\n');
-NODE
-) || fail "Unable to resolve Reminder dispatcher jobs"
-  if [ "$count" = "0" ]; then
-    while IFS= read -r id; do
-      [ -n "$id" ] || continue
-      if [ -n "${TEST_ROOT:-}" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; fi
-    done <<<"$ids"
-    if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; fi
-    node - "$key" "$current" <<'NODE' || fail "Reminder dispatcher Automation remains after cleanup"
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);if(jobs.some(j=>j?.declarationKey===key))process.exit(1);
-NODE
-    return 0
-  fi
-  [ "$format" = "task-agent-reminder-dispatcher-recovery-v2" ] || fail "Recovery Reminder dispatcher snapshot cannot restore a pre-existing job"
-  id=$(node -e 'const j=require(process.argv[1]).jobs[0];if(typeof j?.id!=="string"||!j.id)process.exit(2);process.stdout.write(j.id)' "$snapshot") || fail "Recovery Reminder dispatcher id unavailable"
-  node - "$key" "$id" "$current" <<'NODE' || fail "Recovery Reminder dispatcher identity changed"
-const key=process.argv[2],id=process.argv[3],x=JSON.parse(process.argv[4]),jobs=(Array.isArray(x)?x:(x.jobs||[])).filter(j=>j?.declarationKey===key);if(jobs.length!==1||jobs[0]?.id!==id)process.exit(1);
-NODE
-  script=$(node -e 'const j=require(process.argv[1]).jobs[0];if(j?.payload?.kind!=="script"||typeof j.payload.script!=="string")process.exit(2);process.stdout.write(j.payload.script)' "$snapshot") || fail "Recovery Reminder script unavailable"
-  tools=$(node -e 'const a=require(process.argv[1]).jobs[0]?.payload?.toolsAllow;if(!Array.isArray(a)||a.length!==1||a[0]!=="task_reminder_dispatch")process.exit(2);process.stdout.write(a.join(","))' "$snapshot") || fail "Recovery Reminder tools unavailable"
-  timeout=$(node -e 'const x=require(process.argv[1]).jobs[0]?.payload?.timeoutSeconds;if(!Number.isSafeInteger(x)||x<1)process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder timeout unavailable"
-  budget=$(node -e 'const x=require(process.argv[1]).jobs[0]?.payload?.toolBudget;if(!Number.isSafeInteger(x)||x<1)process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder tool budget unavailable"
-  channel=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.channel;if(typeof x!=="string"||!x)process.exit(2);process.stdout.write(x)' "$snapshot") || fail "Recovery Reminder channel unavailable"
-  account=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.accountId;if(typeof x!=="string"||!x)process.exit(2);process.stdout.write(x)' "$snapshot") || fail "Recovery Reminder account unavailable"
-  to=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.to;if(x===undefined||x===null||String(x).trim()==="")process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder recipient unavailable"
-  enabled=$(node -e 'process.stdout.write(require(process.argv[1]).jobs[0]?.enabled===true?"1":"0")' "$snapshot") || fail "Recovery Reminder enabled state unavailable"
-  if [ -n "${TEST_ROOT:-}" ]; then
-    printf '%s\n' "$script" | HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations edit "$id" --script - --tools "$tools" --script-timeout-seconds "$timeout" --script-tool-budget "$budget" --announce --channel "$channel" --account "$account" --to "$to" --no-best-effort-deliver $([ "$enabled" = "1" ] && printf '%s' --enable || printf '%s' --disable) --json >/dev/null || fail "Failed to restore Reminder dispatcher Automation"
-    restored=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify restored Reminder Automation"
-  else
-    printf '%s\n' "$script" | "$openclaw_bin" automations edit "$id" --script - --tools "$tools" --script-timeout-seconds "$timeout" --script-tool-budget "$budget" --announce --channel "$channel" --account "$account" --to "$to" --no-best-effort-deliver $([ "$enabled" = "1" ] && printf '%s' --enable || printf '%s' --disable) --json >/dev/null || fail "Failed to restore Reminder dispatcher Automation"
-    restored=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify restored Reminder Automation"
-  fi
-  node - "$snapshot" "$restored" <<'NODE' || fail "Restored Reminder dispatcher does not match recovery snapshot"
-const snap=require(process.argv[2]),x=JSON.parse(process.argv[3]),want=snap.jobs[0],jobs=(Array.isArray(x)?x:(x.jobs||[])).filter(j=>j?.declarationKey===snap.declaration_key);if(jobs.length!==1)process.exit(1);const got=jobs[0],same=got.id===want.id&&got.name===want.name&&got.enabled===want.enabled&&got.agentId===want.agentId&&JSON.stringify(got.schedule)===JSON.stringify(want.schedule)&&got.sessionTarget===want.sessionTarget&&got.payload?.kind==='script'&&got.payload.script===want.payload.script&&JSON.stringify(got.payload.toolsAllow)===JSON.stringify(want.payload.toolsAllow)&&got.payload.timeoutSeconds===want.payload.timeoutSeconds&&got.payload.toolBudget===want.payload.toolBudget&&got.delivery?.mode===want.delivery?.mode&&got.delivery?.channel===want.delivery?.channel&&String(got.delivery?.to)===String(want.delivery?.to)&&got.delivery?.accountId===want.delivery?.accountId&&(got.delivery?.bestEffort??false)===(want.delivery?.bestEffort??false)&&JSON.stringify(got.scheduledToolPolicy??null)===JSON.stringify(want.scheduledToolPolicy??null);if(!same)process.exit(1);
-NODE
-}
 
-reconcile_important_date_dispatcher_before() {
-  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/important-date-dispatcher.before.json" key current ids id
-  [ -f "$snapshot" ] || return 0
-  key=$(node -e 'const x=require(process.argv[1]);if(x.format!=="contacts-important-date-dispatcher-recovery-v1"||!Array.isArray(x.jobs)||x.jobs.length!==0)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery Important Dates dispatcher snapshot unsupported"
-  if [ -n "$TEST_ROOT" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to inspect Important Dates Automation before recovery"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to inspect Important Dates Automation before recovery"; fi
-  ids=$(node - "$key" "$current" <<'NODE'
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);for(const j of jobs)if(j?.declarationKey===key&&typeof j?.id==='string')process.stdout.write(j.id+'\n');
-NODE
-) || fail "Unable to resolve Important Dates dispatcher jobs"
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    if [ -n "$TEST_ROOT" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Important Dates dispatcher Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Important Dates dispatcher Automation"; fi
-  done <<<"$ids"
-  if [ -n "$TEST_ROOT" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Automations after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Automations after cleanup"; fi
-  node - "$key" "$current" <<'NODE' || fail "Important Dates dispatcher Automation remains after cleanup"
-const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);if(jobs.some(j=>j?.declarationKey===key))process.exit(1);
-NODE
-}
 
 restore_state() {
   local test_root=$1 backup=$2 manage_gateway=$3
@@ -321,24 +193,14 @@ restore_state() {
   peer_dir="$plugin_dir/node_modules"
   peer_link="$peer_dir/openclaw"
   format=$(cat "$backup/RECOVERY_FORMAT")
+  [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ] || fail "Unsupported recovery format"
   workspace_files=$(recovery_workspace_files "$format")
   expected_db_schema=$(recovery_db_schema "$backup/tasks.sqlite3") || fail "Recovery database validation failed"
-  if [ "$format" != "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] && [ "$format" != "$CONTACTS_RECOVERY_FORMAT" ] && { [ -e "$contacts_db" ] || [ -e "$contacts_lib" ] || [ -e "$contactctl_target" ] || [ -e "$contacts_plugin_dir" ]; }; then fail "Legacy recovery set cannot be applied while Shared Contacts runtime state exists"; fi
 
   systemctl_bin=""
   if [ "$manage_gateway" -eq 1 ]; then
     systemctl_bin=$(command -v systemctl || true)
     [ -n "$systemctl_bin" ] || fail "systemctl unavailable"
-    if [ -f "$backup/calendar-materializer.before.json" ] || [ -f "$backup/reminder-dispatcher.before.json" ] || [ -f "$backup/important-date-dispatcher.before.json" ]; then
-      if [ -n "$test_root" ]; then
-        if ! TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user is-active --quiet openclaw-gateway.service; then TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user start openclaw-gateway.service || fail "Failed to start test Gateway for Automation recovery"; fi
-      else
-        if ! "$systemctl_bin" --user is-active --quiet openclaw-gateway.service; then "$systemctl_bin" --user start openclaw-gateway.service || fail "Failed to start Gateway for Automation recovery"; fi
-      fi
-      reconcile_calendar_materializer_before "$backup" "$openclaw_bin" "$home_dir" "$state_dir" "$config_path"
-      reconcile_reminder_dispatcher_before "$backup" "$openclaw_bin" "$home_dir" "$state_dir" "$config_path"
-      reconcile_important_date_dispatcher_before "$backup" "$openclaw_bin" "$home_dir" "$state_dir" "$config_path"
-    fi
     if [ -n "$test_root" ]; then
       TASK_AGENT_TEST_ROOT="$test_root" "$systemctl_bin" --user stop openclaw-gateway.service || fail "Failed to stop test Gateway"
     else
@@ -350,19 +212,17 @@ restore_state() {
   install -m 600 "$backup/openclaw.json.before" "$config_path" || fail "Config restore failed"
   install -m 700 "$backup/taskctl.before" "$taskctl_target" || fail "taskctl restore failed"
   rm -f "$db_path-wal" "$db_path-shm"
-  if [ "$format" = "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-    local cstate; cstate=$(cat "$backup/contacts-state.json")
-    rm -f "$contacts_db" "$contacts_db-wal" "$contacts_db-shm" "$contactctl_target"; rm -rf "$contacts_lib" "$contacts_plugin_dir"
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_db")"; install -m 600 "$backup/contacts.sqlite3" "$contacts_db" || fail "Contacts database restore failed"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_lib")"; tar -xzf "$backup/contacts-lib.before.tar.gz" -C "$(dirname "$contacts_lib")" || fail "Contacts library restore failed"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then install -m 700 "$backup/contactctl.before" "$contactctl_target" || fail "contactctl restore failed"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then
-      tar -xzf "$backup/contacts-plugin.before.tar.gz" -C "$(dirname "$contacts_plugin_dir")" || fail "Contacts plugin restore failed"
-      test -d "$contacts_plugin_dir" || fail "Contacts plugin directory missing after restore"
-      if find "$contacts_plugin_dir" -type l -print -quit | grep -q .; then fail "Unexpected symlink in restored Contacts plugin archive"; fi
-      install -d -m 700 "$contacts_plugin_dir/node_modules"
-      ln -s "$host_openclaw_root" "$contacts_plugin_dir/node_modules/openclaw" || fail "Contacts OpenClaw peer link recreation failed"
-    fi
+  local cstate; cstate=$(cat "$backup/contacts-state.json")
+  rm -f "$contacts_db" "$contacts_db-wal" "$contacts_db-shm" "$contactctl_target"; rm -rf "$contacts_lib" "$contacts_plugin_dir"
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_db")"; install -m 600 "$backup/contacts.sqlite3" "$contacts_db" || fail "Contacts database restore failed"; fi
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_lib")"; tar -xzf "$backup/contacts-lib.before.tar.gz" -C "$(dirname "$contacts_lib")" || fail "Contacts library restore failed"; fi
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then install -m 700 "$backup/contactctl.before" "$contactctl_target" || fail "contactctl restore failed"; fi
+  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then
+    tar -xzf "$backup/contacts-plugin.before.tar.gz" -C "$(dirname "$contacts_plugin_dir")" || fail "Contacts plugin restore failed"
+    test -d "$contacts_plugin_dir" || fail "Contacts plugin directory missing after restore"
+    if find "$contacts_plugin_dir" -type l -print -quit | grep -q .; then fail "Unexpected symlink in restored Contacts plugin archive"; fi
+    install -d -m 700 "$contacts_plugin_dir/node_modules"
+    ln -s "$host_openclaw_root" "$contacts_plugin_dir/node_modules/openclaw" || fail "Contacts OpenClaw peer link recreation failed"
   fi
   install -m 600 "$backup/tasks.sqlite3" "$db_path" || fail "Database restore failed"
 
@@ -375,20 +235,16 @@ restore_state() {
   ln -s "$host_openclaw_root" "$peer_link" || fail "OpenClaw peer link recreation failed"
   [ "$(readlink -f "$peer_link")" = "$host_openclaw_root" ] || fail "OpenClaw peer link target mismatch"
 
-  for f in "${LEGACY_WORKSPACE_FILES[@]}"; do rm -f "$workspace/$f"; done
+  for f in "${CURRENT_WORKSPACE_FILES[@]}"; do rm -f "$workspace/$f"; done
   tar -xzf "$backup/workspace-tasks.before.tar.gz" -C "$(dirname "$workspace")" || fail "Workspace restore failed"
   for f in $workspace_files; do
     test -f "$workspace/$f" || fail "Missing restored workspace file: $f"
     chmod 644 "$workspace/$f"
   done
-  if [ "$format" = "$MIGRATED_RECOVERY_FORMAT" ] || [ "$format" = "$LEGACY_CONTACTS_RECOVERY_FORMAT" ] || [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-    [ ! -e "$workspace/TOOLS.md" ] || fail "Retired TOOLS.md unexpectedly restored"
-  fi
+  [ ! -e "$workspace/TOOLS.md" ] || fail "Retired TOOLS.md unexpectedly restored"
   chmod 600 "$config_path" "$db_path"
   chmod 700 "$taskctl_target" "$plugin_dir"
-  if [ "$format" = "$CONTACTS_RECOVERY_FORMAT" ]; then
-    node "$PLUGIN_REGISTRY_HELPER" restore "$state_db" "$backup/plugin-registry.before.json" || fail "Plugin registry restore failed"
-  fi
+  node "$PLUGIN_REGISTRY_HELPER" restore "$state_db" "$backup/plugin-registry.before.json" || fail "Plugin registry restore failed"
 
   if [ -n "$test_root" ]; then
     HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" config validate || fail "Restored config invalid"
