@@ -112,13 +112,19 @@ JSON
 cat >"$DFAKE" <<'JS'
 #!/usr/bin/env node
 'use strict';
-const fs=require('node:fs');
+const fs=require('node:fs'),{spawnSync}=require('node:child_process');
 const args=process.argv.slice(2),value=(name)=>{const i=args.indexOf(name);return i>=0?args[i+1]:null;};
 if(args[0]!=='message'||args[1]!=='send')process.exit(64);
+const mode=process.env.TASKCTL_TEST_SEND_MODE||'success';
+if(mode==='task-close-race'){
+  const taskId=process.env.TASKCTL_TEST_RACE_TASK,taskctl=process.env.TASKCTL_TEST_TASKCTL;
+  if(!taskId||!taskctl)process.exit(65);
+  const complete=spawnSync(process.execPath,[taskctl,'task','complete'],{encoding:'utf8',env:{...process.env,TASKCTL_PAYLOAD:JSON.stringify({operation_key:'send-race-complete',id:taskId})}});
+  if(complete.status===0||!String(complete.stdout??'').includes('"code":"REMINDER_IN_FLIGHT"'))process.exit(66);
+}
 fs.appendFileSync(process.env.TASKCTL_TEST_SEND_CAPTURE,JSON.stringify({
   channel:value('--channel'),account:value('--account'),target:value('--target'),message:value('--message')
 })+'\n');
-const mode=process.env.TASKCTL_TEST_SEND_MODE||'success';
 if(mode==='failure'){process.stdout.write(JSON.stringify({ok:false,error:{type:'cli_error',message:'synthetic definite failure'}})+'\n');process.exit(1);}
 if(mode==='unknown')process.exit(75);
 process.stdout.write(JSON.stringify({
@@ -132,10 +138,11 @@ drun(){
   TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" TASKCTL_TEST_NOW="$now" TASKCTL_PAYLOAD="$payload" node "$TASKCTL" "$scope" "$action"
 }
 dsend(){
-  local now=$1 mode=$2
+  local now=$1 mode=$2 race_task=${3:-}
   TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" TASKCTL_TEST_NOW="$now" \
     TASKCTL_TEST_OPENCLAW_CONFIG="$DCONFIG" TASKCTL_TEST_OPENCLAW_BIN="$DFAKE" \
     TASKCTL_TEST_SEND_MODE="$mode" TASKCTL_TEST_SEND_CAPTURE="$DCAPTURE" \
+    TASKCTL_TEST_TASKCTL="$TASKCTL" TASKCTL_TEST_RACE_TASK="$race_task" \
     node "$TASKCTL" reminder-internal dispatch-send
 }
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" node "$TASKCTL" init >/dev/null
@@ -189,6 +196,35 @@ set -e
 [ "$rc" -ne 0 ]; contains "$a" 'REMINDER_DELIVERY_UNCONFIRMED'
 a=$(dsend '2026-09-16T09:07:00Z' success); contains "$a" '"count":0'
 a=$(dsend '2026-09-16T09:11:00Z' success); contains "$a" '"count":1'; contains "$a" '"delivered":1'
+
+# Final send decision is serialized against Task closure. A concurrent completion
+# after SEND_STARTED must roll back, delivery settles exactly, and retry then succeeds.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"send-race-task","title":"Гонка закрытия","assignee":"Дубровин М."}' task create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"send-race-rem","task_id":"T-3","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+a=$(dsend '2026-09-16T09:12:00Z' task-close-race T-3); contains "$a" '"count":1'; contains "$a" '"delivered":1'
+a=$(drun '2026-09-16T09:12:00Z' '{"id":"T-3"}' task get); contains "$a" '"status":"OPEN"'
+node - "$DDB" <<'JS'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
+try{const r=db.prepare('select status,close_reason,claim_token from reminders where task_id=3').get();if(!r||r.status!=='CLOSED'||r.close_reason!=='DELIVERED'||r.claim_token!==null)process.exit(2);}finally{db.close();}
+JS
+a=$(drun '2026-09-16T09:12:01Z' '{"operation_key":"send-race-complete-retry","id":"T-3"}' task complete); contains "$a" '"changed":true'
+
+# An ambiguous/failed send can defer Task closure only for the bounded claim lease.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"lease-task","title":"Закрыть после lease","assignee":"Дубровин М."}' task create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"lease-rem","task_id":"T-4","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+set +e
+a=$(dsend '2026-09-16T09:13:00Z' failure 2>&1); rc=$?
+set -e
+[ "$rc" -ne 0 ]; contains "$a" 'REMINDER_DELIVERY_UNCONFIRMED'
+set +e
+a=$(drun '2026-09-16T09:14:00Z' '{"operation_key":"lease-complete-too-soon","id":"T-4"}' task complete 2>&1); rc=$?
+set -e
+[ "$rc" -ne 0 ]; contains "$a" 'REMINDER_IN_FLIGHT'
+a=$(drun '2026-09-16T09:18:00Z' '{"operation_key":"lease-complete-after-expiry","id":"T-4"}' task complete); contains "$a" '"changed":true'
+node - "$DDB" <<'JS'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
+try{const r=db.prepare('select status,close_reason,claim_token from reminders where task_id=4').get();if(!r||r.status!=='CLOSED'||r.close_reason!=='TASK_COMPLETED'||r.claim_token!==null)process.exit(2);}finally{db.close();}
+JS
 
 # Owner route ambiguity fails closed before outbound send and leaves the claim retryable.
 node - "$DCONFIG" <<'JS'
