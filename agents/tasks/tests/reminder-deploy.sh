@@ -16,6 +16,7 @@ for(const [k,v] of Object.entries({
   PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],
   TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,
   CONTACTS_VERSION:r.shared_contacts.implementation_version,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,
+  GOV_BOOTSTRAP:r.task_governance.bootstrap_path,
   REMINDER_KEY:m.declaration_key,REMINDER_NAME:m.name,REMINDER_CRON:m.cron,REMINDER_TZ:m.timezone,
   REMINDER_TIMEOUT:m.timeout_seconds,REMINDER_SUFFIX:JSON.stringify(m.command_argv_suffix)
 }))console.log(`${k}=${q(v)}`);
@@ -148,6 +149,20 @@ oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENC
 oc "$BASE" plugins registry --refresh --json >/dev/null
 OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$OPENCLAW_VERSION" "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
+
+SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{const p=db.prepare("select id from people where is_self=1 and status='ACTIVE' and merged_into is null").all();if(p.length!==1)process.exit(2);process.stdout.write('P-'+p[0].id);}finally{db.close();}
+NODE
+) || fail "predecessor self identity unavailable"
+PERSONAL_RESULT=$(HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{"operation_key":"reminder-governance-personal-fixture","display_name":"Bootstrap Personal","emoji":"🏠"}' "$BASE/bin/taskctl" label create) || fail "unable to create predecessor personal Label fixture"
+PERSONAL_LABEL=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.label?.id;if(!/^L-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$PERSONAL_RESULT") || fail "invalid personal Label fixture"
+BOOTSTRAP="$BASE/state/$GOV_BOOTSTRAP"
+mkdir -p "$(dirname "$BOOTSTRAP")"
+node - "$BOOTSTRAP" "$SELF_PERSON" "$PERSONAL_LABEL" <<'NODE'
+const fs=require('fs'),out={format:'task-governance-bootstrap-v1',office_ceo_members:[process.argv[3]],personal_label_id:process.argv[4]};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
+NODE
+chmod 600 "$BOOTSTRAP"
+
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
 stable_tools_sha(){ node - "$1" <<'NODE'
