@@ -4,6 +4,7 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 TASKCTL="$ROOT/taskctl"
+EXPECTED_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 CONTACTCTL="$REPO_ROOT/shared/contacts/contactctl"
 TMP=$(mktemp -d /tmp/task-deadline-governance.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
