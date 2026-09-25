@@ -81,6 +81,19 @@ ln -s "$OPENCLAW_BIN" "$TMP/shims/openclaw-real"
 cat > "$TMP/shims/openclaw" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
+if [ "${1:-}" = gateway ] && [ "${2:-}" = call ] && [ "${3:-}" = cron.update ]; then
+  STATE=${OPENCLAW_STATE_DIR:?}; FILE="$STATE/automations-test.json"; [ -f "$FILE" ] || printf '{"jobs":[]}\n' > "$FILE"
+  shift 3; PARAMS=""; while [ "$#" -gt 0 ]; do if [ "$1" = --params ]; then PARAMS=${2:-}; shift 2; else shift; fi; done
+  node - "$FILE" "$PARAMS" <<'NODE'
+const fs=require('fs'),p=process.argv[2],req=JSON.parse(process.argv[3]||'{}'),x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.id===req.id);if(!j)process.exit(2);
+if(typeof req.expectedConfigRevision!=='string'||req.expectedConfigRevision!==j.configRevision)process.exit(3);
+const patch=req.patch??{};if(typeof patch.enabled==='boolean')j.enabled=patch.enabled;
+if(patch.payload?.kind==='command'){if(patch.payload.toolsAllow!==null)process.exit(4);j.payload={kind:'command',argv:patch.payload.argv,timeoutSeconds:patch.payload.timeoutSeconds};j.scheduledToolPolicy=null;}
+if(patch.delivery?.mode==='none')j.delivery={mode:'none'};
+j.configRevision='rev-reminder-target';fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');process.stdout.write(JSON.stringify({job:j})+'\n');
+NODE
+  exit 0
+fi
 if [ "${1:-}" = automations ]; then
   STATE=${OPENCLAW_STATE_DIR:?}; FILE="$STATE/automations-test.json"; [ -f "$FILE" ] || printf '{"jobs":[]}\n' > "$FILE"
   case "${2:-}" in
@@ -147,7 +160,7 @@ const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3],matKey=process.
 if(idr?.kind!=='openclaw-script-automation-v1'||idr?.predecessor_mode!=='exact')process.exit(2);
 const jobs=[
  {id:'recurrence-predecessor',declarationKey:matKey,name:'Task Recurrence Calendar Materializer',enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:'0 * * * *',tz:'Europe/Moscow',staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:30},delivery:{mode:'none'}},
- {id:'reminder-predecessor',declarationKey:key,name,enabled:false,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script,toolsAllow:['task_reminder_dispatch'],timeoutSeconds:30,toolBudget:1},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'},scheduledToolPolicy:{version:1,mode:'trusted'},state:{consecutiveErrors:5,lastStatus:'error'}},
+ {id:'reminder-predecessor',declarationKey:key,name,enabled:false,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script,toolsAllow:['task_reminder_dispatch'],timeoutSeconds:30,toolBudget:1},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'},scheduledToolPolicy:{version:1,mode:'trusted'},state:{consecutiveErrors:5,lastStatus:'error'},configRevision:'rev-reminder-predecessor'},
  {id:'important-date-predecessor',declarationKey:idr.declaration_key,name:idr.name,enabled:true,agentId:'main',schedule:{kind:'cron',expr:idr.cron,tz:idr.timezone,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:idr.script,toolsAllow:[idr.tool],timeoutSeconds:idr.timeout_seconds,toolBudget:idr.tool_budget},delivery:{mode:'announce',channel:idr.delivery_channel,to:'111',accountId:idr.delivery_account},scheduledToolPolicy:{version:1,mode:'trusted'}}
 ];
 fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
