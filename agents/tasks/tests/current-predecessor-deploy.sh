@@ -218,7 +218,13 @@ CONTACTS_BEFORE=$(contacts_state "$BASE")
 
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "current predecessor deploy failed"
+DEPLOY_LOG="$TMP/current-predecessor-deploy.log"
+if ! HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >"$DEPLOY_LOG" 2>&1; then
+  cat "$DEPLOY_LOG" >&2
+  result=$(find "$R/deliverables" -maxdepth 1 -type f -name 'task-agent-deploy-*-result.json' -print -quit 2>/dev/null || true)
+  [ -z "$result" ] || { echo "deploy-result=$result" >&2; cat "$result" >&2; }
+  fail "current predecessor deploy failed"
+fi
 assert_target "$R"; assert_important_shape "$R"
 node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "exact predecessor deploy changed Task logical state"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
