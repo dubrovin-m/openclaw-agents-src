@@ -12,7 +12,7 @@
     "name": "openclaw-plugin-taskctl",
     "version": "0.4.27",
     "artifact": "artifacts/openclaw-plugin-taskctl-0.4.27.tgz",
-    "sha256": "af636d6bfcec67205df32f01de46c0162185688657ad7bf85421fb450a6c5ac1"
+    "sha256": "5e921e93da453b5ba74d56449b523f4e4ef61ef9033283e5ed24d5b82403f0f5"
   },
   "from": {
     "source_revision": "31d32153c40c82fe67bd03f31fca3054de53458a",
