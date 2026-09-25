@@ -216,7 +216,7 @@ NODE
 ) || fail "real OpenClaw did not create exact disabled Reminder command job"
 
 MIGRATION_ADD=$(printf '%s\n' 'json({ok:true});' | automation add --name reminder-migration-provider-probe --declaration-key tasks.reminder-migration-provider-probe.v1 --cron "$CRON" --tz "$TZ_NAME" --exact --agent tasks --session isolated --script - --tools read --script-timeout-seconds 30 --script-tool-budget 1 --disabled --no-deliver --json)
-MIGRATION_ID=$(node -e 'const x=JSON.parse(process.argv[1]),j=x?.job;if(x?.created!==true||typeof j?.id!=="string"||j.payload?.kind!=="script"||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify(["read"])||j.scheduledToolPolicy?.version!==1)process.exit(1);process.stdout.write(j.id)' "$MIGRATION_ADD") || fail "real OpenClaw did not create tool-bearing script migration probe"
+MIGRATION_ID=$(node -e 'const x=JSON.parse(process.argv[1]),j=x?.job;if(x?.created!==true||typeof j?.id!=="string"||typeof j?.configRevision!=="string"||!j.configRevision||j.payload?.kind!=="script"||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify(["read"])||j.scheduledToolPolicy?.version!==1)process.exit(1);process.stdout.write(j.id)' "$MIGRATION_ADD") || fail "real OpenClaw did not create tool-bearing script migration probe"
 MIGRATION_EDIT=$(automation edit "$MIGRATION_ID" --disable --command-argv "$COMMAND_JSON" --timeout-seconds "$TIMEOUT" --no-deliver --json)
 node - "$MIGRATION_EDIT" "$MIGRATION_ID" "$COMMAND_JSON" "$TIMEOUT" <<'NODE' || fail "real OpenClaw script-to-command migration retains tool authority"
 const x=JSON.parse(process.argv[2]),id=process.argv[3],argv=JSON.parse(process.argv[4]),timeout=Number(process.argv[5]),j=x?.job??x;
