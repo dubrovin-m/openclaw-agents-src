@@ -13,8 +13,12 @@ NOW=2026-09-22T09:00:00Z
 t(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TDB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$1" "$TASKCTL" "$2" "$3"; }
 c(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
 
+read -r TARGET_TASKCTL TARGET_SCHEMA <<<"$(node - "$ROOT/release.json" <<'NODE'
+const r=require(process.argv[2]);process.stdout.write([r.generation.taskctl_version,r.generation.sqlite_schema].join(' '));
+NODE
+)"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TDB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init |
-  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.implementation_version!=="0.4.14"||x.schema_version!==9)process.exit(1)})'
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.implementation_version!==process.argv[1]||x.schema_version!==Number(process.argv[2]))process.exit(1)})' "$TARGET_TASKCTL" "$TARGET_SCHEMA"
 c '{"operation_key":"g","display_name":"Office CEO"}' group_create >/dev/null
 c '{"operation_key":"p","display_name":"Иванов И."}' create >/dev/null
 c '{"operation_key":"gm","group_id":"PG-1","person":"P-1"}' group_member_add >/dev/null

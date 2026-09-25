@@ -138,7 +138,7 @@ jobs:
           const fs = require('node:fs');
           const release = JSON.parse(fs.readFileSync('agents/tasks/release.json', 'utf8'));
           const pkg = JSON.parse(fs.readFileSync('agents/tasks/plugins/taskctl/package.json', 'utf8'));
-          const files = ['AGENTS.md','SOUL.md','TOOLS.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
+          const files = ['AGENTS.md','SOUL.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
           const version = /^0\.4\.[0-9]+$/;
           const sha256 = /^[0-9a-f]{64}$/;
           const bad = (message) => { throw new Error(message); };
@@ -159,20 +159,15 @@ jobs:
           if (release?.generation?.typebox_version !== pkg.dependencies?.typebox) bad('TypeBox version mismatch');
           if (!sha256.test(release?.plugin?.sha256 || '')) bad('invalid artifact sha256');
           const from = release?.from;
-          if (!from || !Array.isArray(from.plugin_versions)) bad('invalid predecessor metadata');
+          if (!from || !Array.isArray(from.plugin_versions) || from.plugin_versions.length !== 1 || !from.plugin_versions.every((v) => version.test(v))) bad('invalid predecessor plugin identity');
           const fromSchemas = from.sqlite_schemas;
-          if (!Array.isArray(fromSchemas) || fromSchemas.length === 0 || !fromSchemas.every((v) => Number.isSafeInteger(v) && v >= 1) || new Set(fromSchemas).size !== fromSchemas.length) bad('invalid predecessor SQLite schemas');
-          const fromTaskctl = from.taskctl_versions ?? [release.generation.taskctl_version];
-          if (!Array.isArray(fromTaskctl) || fromTaskctl.length === 0 || !fromTaskctl.every((v) => version.test(v)) || new Set(fromTaskctl).size !== fromTaskctl.length) bad('invalid predecessor taskctl identities');
-          if (!from.plugin_versions.every((v) => version.test(v)) || new Set(from.plugin_versions).size !== from.plugin_versions.length) bad('invalid predecessor plugin identities');
-          if (from.plugin_versions.length === 0) {
-            if (Object.keys(from.workspace_sha256 || {}).length !== 0 || from.tools_sha256 !== null) bad('retired predecessor fingerprints remain');
-          } else {
-            const workspace = from.workspace_sha256;
-            if (!workspace || Object.keys(workspace).sort().join(',') !== files.slice().sort().join(',')) bad('bounded predecessor workspace fingerprint set is incomplete');
-            if (!files.every((file) => sha256.test(workspace[file] || ''))) bad('invalid bounded predecessor workspace fingerprint');
-            if (!sha256.test(from.tools_sha256 || '')) bad('invalid bounded predecessor tool-policy fingerprint');
-          }
+          if (!Array.isArray(fromSchemas) || fromSchemas.length !== 1 || !fromSchemas.every((v) => Number.isSafeInteger(v) && v >= 1)) bad('invalid predecessor SQLite schema');
+          const fromTaskctl = from.taskctl_versions;
+          if (!Array.isArray(fromTaskctl) || fromTaskctl.length !== 1 || !fromTaskctl.every((v) => version.test(v))) bad('invalid predecessor taskctl identity');
+          const workspace = from.workspace_sha256;
+          if (!workspace || Object.keys(workspace).sort().join(',') !== files.slice().sort().join(',')) bad('bounded predecessor workspace fingerprint set is incomplete');
+          if (!files.every((file) => sha256.test(workspace[file] || ''))) bad('invalid bounded predecessor workspace fingerprint');
+          if (!sha256.test(from.tools_sha256 || '')) bad('invalid bounded predecessor tool-policy fingerprint');
           console.log(`RELEASE_TASKCTL_VERSION=${release.generation.taskctl_version}`);
           console.log(`RELEASE_SQLITE_SCHEMA=${schema}`);
           console.log(`RELEASE_ARTIFACT=agents/tasks/${release.plugin.artifact}`);
@@ -226,7 +221,8 @@ jobs:
           bash -n agents/tasks/recover.sh
           bash -n agents/tasks/tests/batch6.sh
           bash -n agents/tasks/tests/health-readonly.sh
-          bash -n agents/tasks/tests/deploy.sh
+          bash -n agents/tasks/tests/compatibility-window.sh
+          bash -n agents/tasks/tests/current-predecessor-deploy.sh
           bash -n agents/tasks/tests/isolated-runtime.sh
           bash -n agents/tasks/tests/batch7.sh
           bash -n agents/tasks/tests/batch8.sh
@@ -234,13 +230,13 @@ jobs:
           bash -n agents/tasks/tests/recurrence-qualification.sh
           bash -n agents/tasks/tests/recurrence-gateway-e2e.sh
           bash -n agents/tasks/tests/reminder-gateway-e2e.sh
-          bash -n agents/tasks/tests/reminder-deploy.sh
           bash -n agents/tasks/tests/reminders.sh
           bash -n agents/tasks/tests/deadline-governance.sh
           node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
           timeout 120s bash agents/tasks/tests/smoke.sh agents/tasks/taskctl
           timeout 120s bash agents/tasks/tests/health-readonly.sh agents/tasks/taskctl
-          timeout 600s bash agents/tasks/tests/deploy.sh
+          timeout 120s bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
+          timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
           timeout 600s bash agents/tasks/tests/isolated-runtime.sh
           timeout 120s bash agents/tasks/tests/batch4.sh
           timeout 120s bash agents/tasks/tests/batch6.sh agents/tasks/taskctl
@@ -250,7 +246,6 @@ jobs:
           timeout 180s bash agents/tasks/tests/recurrence-qualification.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/reminders.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/deadline-governance.sh
-          timeout 600s bash agents/tasks/tests/reminder-deploy.sh
           timeout 240s bash agents/tasks/tests/recurrence-gateway-e2e.sh
           timeout 300s bash agents/tasks/tests/reminder-gateway-e2e.sh
 

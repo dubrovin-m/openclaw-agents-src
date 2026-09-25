@@ -67,20 +67,18 @@ function requireSchema(db, schema = 'main') {
   db.exec(schemaSql(s));
 }
 
-function ensureSchema(db, schema = 'main', options = {}) {
+function ensureSchema(db, schema = 'main') {
   const s = schemaName(schema);
   const version = schemaVersion(db,s);
-  if (![0,1,2,CONTACT_SCHEMA_VERSION].includes(version)) throw new Error(`Unsupported Contacts schema version ${version}`);
   if (version === CONTACT_SCHEMA_VERSION) {
     db.exec(schemaSql(s));
     return;
   }
+  if (version !== 0) throw new Error(`Unsupported Contacts schema version ${version}`);
   const ownsTransaction = !db.isTransaction;
   if (ownsTransaction) db.exec('BEGIN IMMEDIATE');
   try {
     db.exec(schemaSql(s));
-    if (version === 1 && options.fault === 'after-important-date-ddl') throw new Error('Synthetic Contacts migration fault');
-    if (version <= 2 && options.fault === 'after-person-group-ddl') throw new Error('Synthetic Contacts Person Group migration fault');
     db.exec(`PRAGMA ${s}.user_version=${CONTACT_SCHEMA_VERSION}`);
     if (ownsTransaction) db.exec('COMMIT');
   } catch (error) {

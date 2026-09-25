@@ -47,22 +47,11 @@ validate_source(){
 const fs=require('fs'),v=process.argv[5];const p=JSON.parse(fs.readFileSync(process.argv[2])),l=JSON.parse(fs.readFileSync(process.argv[3])),m=JSON.parse(fs.readFileSync(process.argv[4])),rel=JSON.parse(fs.readFileSync(process.argv[6])),r=l.packages?.[''],t=l.packages?.['node_modules/typebox'],build=rel?.generation?.openclaw_build_version,compat=rel?.generation?.openclaw_compat;if(p.version!==v||m.version!==v||l.version!==v||r?.version!==v||p.dependencies?.typebox!=='1.3.15'||r?.dependencies?.typebox!=='1.3.15'||t?.version!=='1.3.15'||p.devDependencies?.openclaw!==build||r?.devDependencies?.openclaw!==build||p.openclaw?.build?.openclawVersion!==build||p.peerDependencies?.openclaw!==compat||r?.peerDependencies?.openclaw!==compat||p.openclaw?.compat?.pluginApi!==compat)process.exit(2);
 NODE
   for f in $TARGET_WORKSPACE_FILES; do [ -f "$ROOT/workspace/$f" ] || fail "workspace source missing: $f"; done
-  if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then
-    [ -f "$ROOT/workspace/TOOLS.md" ] || fail "retired TOOLS.md migration source missing"
-  fi
 }
+
 validate_source
 
 normalize_test_root(){ local candidate=$1 resolved; case "$candidate" in /*) ;; *) fail "--test-root must be an absolute path";; esac; install -d -m 700 "$candidate"; resolved=$(realpath -e "$candidate"); case "$resolved" in /|/home/dubrovin|/home/dubrovin/.openclaw|/home/dubrovin/.openclaw/*|/home/dubrovin/.local|/home/dubrovin/.local/*|/home/dubrovin/.config/systemd|/home/dubrovin/.config/systemd/*) fail "Refusing unsafe test root: $resolved";; esac; printf '%s\n' "$resolved"; }
-
-effective_workspace_files(){
-  local test_root=$1
-  if [ -n "$test_root" ] && [ "${TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT:-0}" != "1" ]; then
-    printf '%s\n' 'AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md'
-  else
-    printf '%s\n' "$TARGET_WORKSPACE_FILES"
-  fi
-}
 
 run_isolated_install(){
   local test_root=$1; test_root=$(normalize_test_root "$test_root"); find "$test_root" -mindepth 1 -maxdepth 1 -print -quit | grep -q . && fail "Isolated install requires an empty test root: $test_root"
@@ -73,9 +62,7 @@ run_isolated_install(){
   test "$(env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow OPENCLAW_HOME="$test_home" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" --version|awk '{print $2}')" = "$EXPECTED_OPENCLAW_VERSION"
   node --check "$ROOT/taskctl"; bash "$ROOT/tests/smoke.sh" "$ROOT/taskctl"; bash "$ROOT/tests/batch4.sh"
   install -d -m 700 "$test_home" "$state_dir" "$workspace" "$agent_dir" "$bin_dir" "$(dirname "$db_path")" "$contacts_lib_dir"; install -m 600 "$CONTACTS_ROOT/core.cjs" "$contacts_lib_dir/core.cjs"; install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$contacts_lib_dir/task-store.cjs"; install -m 700 "$CONTACTS_ROOT/contactctl" "$contactctl_target"; install -m 700 "$ROOT/taskctl" "$taskctl_target"
-  workspace_files=$(effective_workspace_files "$test_root")
-  if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ] && [ "${TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT:-0}" = "1" ]; then rm -f "$workspace/TOOLS.md"; fi
-  for f in $workspace_files; do install -m 644 "$ROOT/workspace/$f" "$workspace/$f"; done
+  for f in $TARGET_WORKSPACE_FILES; do install -m 644 "$ROOT/workspace/$f" "$workspace/$f"; done
   agent_json=$(node - "$ROOT/config/tasks-agent.fragment.json" "$workspace" "$agent_dir" <<'NODE'
 const fs=require('fs'),a=JSON.parse(fs.readFileSync(process.argv[2]));delete a.id;a.workspace=process.argv[3];a.agentDir=process.argv[4];process.stdout.write(JSON.stringify(a));
 NODE
@@ -109,7 +96,6 @@ install -m 600 "$CONTACTS_ROOT/core.cjs" /home/dubrovin/.local/lib/openclaw-cont
 install -m 600 "$CONTACTS_ROOT/task-store.cjs" /home/dubrovin/.local/lib/openclaw-contacts/task-store.cjs
 install -m 700 "$CONTACTS_ROOT/contactctl" /home/dubrovin/.local/bin/contactctl
 install -m 700 "$ROOT/taskctl" /home/dubrovin/.local/bin/taskctl
-if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then rm -f /home/dubrovin/.openclaw/workspace-tasks/TOOLS.md; fi
 for f in $TARGET_WORKSPACE_FILES; do install -m 644 "$ROOT/workspace/$f" "/home/dubrovin/.openclaw/workspace-tasks/$f"; done
 openclaw plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; openclaw plugins install "$ARTIFACT" --force --accept-capabilities; openclaw config set "agents.entries.tasks.tools" "$TOOLS_JSON" --strict-json; openclaw config set "agents.entries.main.tools" "$MAIN_CONTACTS_TOOLS_JSON" --strict-json
 openclaw config validate

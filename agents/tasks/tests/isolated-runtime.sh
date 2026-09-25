@@ -76,7 +76,6 @@ snapshot_production() {
     /home/dubrovin/.config/systemd/user/openclaw-gateway.service \
     /home/dubrovin/.openclaw/workspace-tasks/AGENTS.md \
     /home/dubrovin/.openclaw/workspace-tasks/SOUL.md \
-    /home/dubrovin/.openclaw/workspace-tasks/TOOLS.md \
     /home/dubrovin/.openclaw/workspace-tasks/USER.md \
     /home/dubrovin/.openclaw/workspace-tasks/IDENTITY.md \
     /home/dubrovin/.openclaw/workspace-tasks/HEARTBEAT.md; do
@@ -295,11 +294,9 @@ PEER_LINK="$RUNTIME/state/extensions/taskctl/node_modules/openclaw"
 test -L "$PEER_LINK" || fail "Expected OpenClaw peer link was not created by plugin install"
 test "$(readlink -f "$PEER_LINK")" = "$HOST_OPENCLAW_ROOT" || fail "Installed OpenClaw peer link target mismatch"
 
-# Recovery qualification is intentionally predecessor-specific after the schema 5 boundary.
-# Exact schema 4 predecessor recovery, including workspace retirement and post-mutation
-# rollback, is exercised by workspace-retirement.sh and deploy.sh. This isolated harness
-# remains focused on reconstructing and validating the exact target runtime without access
-# to production state.
+# Deployment and recovery qualification is covered by current-predecessor-deploy.sh.
+# This isolated harness remains focused on reconstructing and validating the exact
+# target runtime without access to production state.
 assert_no_production_trace
 snapshot_production "$AFTER"
 cmp -s "$BEFORE" "$AFTER" || { diff -u "$BEFORE" "$AFTER" >&2 || true; fail "Production artifacts changed during isolated target runtime test"; }

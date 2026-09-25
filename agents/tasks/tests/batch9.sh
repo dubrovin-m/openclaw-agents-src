@@ -2,12 +2,13 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASKCTL=${1:-$ROOT/taskctl}
+EXPECTED_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d /tmp/task-agent-batch9.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/tasks.sqlite3"
 run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$1" TASKCTL_PAYLOAD="$2" "$TASKCTL" "$3" "$4"; }
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW=2026-09-08T07:00:00Z "$TASKCTL" init)
-node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==9||x.implementation_version!=="0.4.14")process.exit(1)' "$init"
+node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==9||x.implementation_version!==process.argv[2])process.exit(1)' "$init" "$EXPECTED_TASKCTL_VERSION"
 
 # Existing entities.
 SELF=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD='{}' "$TASKCTL" person list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);process.stdout.write(x.people.find(p=>p.display_name==="Дубровин М.").id)})')
@@ -102,22 +103,5 @@ set -e
 node - "$ROOT/plugins/taskctl/src/contract.ts" <<'NODE'
 const fs=require('fs'),s=fs.readFileSync(process.argv[2],'utf8');if(s.includes('recurrence_materialize'))process.exit(1);
 NODE
-
-# TA-REC-039: exact historical schema-v5 predecessor migrates additively with no synthetic Recurrences.
-PRE="$TMP/predecessor.sqlite3"
-BASE=d6dbae6848989f8611ca8931dd200bbc63868b35
-REPO=$(cd "$ROOT/../.." && pwd)
-if ! git -C "$REPO" cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" schema5_source_revision "${BASE}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
-  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "TASK_AGENT_BATCH9_RECURRING_PASS" "${BASE}"
-  exit 0
-fi
-
-git -C "$REPO" cat-file -e "$BASE^{commit}"
-git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TMP/old-taskctl" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" TASKCTL_PAYLOAD='{"operation_key":"old-row","title":"Existing v5 Task","assignee":"Дубровин М."}' "$TMP/old-taskctl" task create >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
 
 printf 'TASK_AGENT_BATCH9_RECURRING_PASS\n'

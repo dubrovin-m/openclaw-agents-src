@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASKCTL=${1:-$ROOT/taskctl}
-PREDECESSOR_SHA=${TASK_BATCH7_PREDECESSOR_SHA:-c8fc1df5d77cb15a8dfd567ca76fb29bcb6fec8a}
+EXPECTED_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 NOW="2026-09-03T12:00:00Z"
@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.14"'; contains "$a" '"schema_version":9'
+a=$(plain init); contains "$a" "\"implementation_version\":\"$EXPECTED_TASKCTL_VERSION\""; contains "$a" '"schema_version":9'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'
@@ -104,59 +104,4 @@ labels_after=$(run '{"id":"T-2"}' task detail)
 json_assert 'const a=JSON.parse(process.argv[1]);if(a.labels.length!==0||a.task.status!=="OPEN"||a.task.project_id!=="PRJ-1")process.exit(1)' "$labels_after"
 json_assert 'const a=JSON.parse(process.argv[1]);if(a.labels.length!==0||a.task.status!=="OPEN")process.exit(1)' "$labels_before"
 
-# TA-MIG-004..007: build the migration fixture with the exact historical
-# schema-v4 source when that private predecessor history is present. The initial
-# clean public bootstrap may omit only this historical fixture after the exact
-# bootstrap bridge and the pinned fixture revision are both verified.
-REPO=$(cd "$ROOT/../.." && pwd)
-if ! git -C "$REPO" cat-file -e "${PREDECESSOR_SHA}^{commit}" 2>/dev/null; then
-  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" batch7_schema4_source_revision "${PREDECESSOR_SHA}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
-  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "BATCH7_OK" "${PREDECESSOR_SHA}"
-  exit 0
-fi
-PREDECESSOR="$TMP/taskctl-predecessor"
-git show "$PREDECESSOR_SHA:agents/tasks/taskctl" > "$PREDECESSOR"
-chmod 700 "$PREDECESSOR"
-MIGDB="$TMP/migration.sqlite3"
-MIGCDB="$TMP/migration-contacts.sqlite3"
-prun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_PAYLOAD="$1" node "$PREDECESSOR" "$2" "$3"; }
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_TEST_NOW="$NOW" node "$PREDECESSOR" init >/dev/null
-prun '{"operation_key":"mp","display_name":"Иванов И."}' person create >/dev/null
-prun '{"operation_key":"ml","display_name":"Legacy","emoji":"🧪"}' label create >/dev/null
-prun '{"operation_key":"mt","title":"Legacy task","assignee":"Иванов И.","due_date":"2026-09-04","labels":["L-1"]}' task create >/dev/null
-prun '{"operation_key":"mc","task_id":"T-1","content":"legacy comment"}' comment add >/dev/null
-prun '{"operation_key":"mterm","alias":"ЛГ","expansion":"legacy"}' term set >/dev/null
-prun '{"operation_key":"mi","content":"legacy inbox","capture_key":"legacy-capture"}' inbox add >/dev/null
-
-before=$(node - "$MIGDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});
-try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at FROM tasks ORDER BY id').all()};for(const t of tables)out.rows[t]=Number(d.prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();}
-NODE
-)
-contains "$before" '"uv":4'
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" init >/dev/null
-health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":9'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
-after=$(node - "$MIGDB" "$MIGCDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});
-try{const tables=['inbox_items','capture_receipts','people','person_aliases','labels','label_aliases','term_aliases','tasks','task_labels','task_comments','task_events','operation_results'];const out={uv:Number(d.prepare('PRAGMA user_version').get().user_version),cuv:Number(c.prepare('PRAGMA user_version').get().user_version),rows:{},task:d.prepare('SELECT id,title,assignee_id,status,due_date,due_time,created_at,completed_at,project_id FROM tasks ORDER BY id').all(),projects:Number(d.prepare('SELECT count(*) n FROM projects').get().n),local_people:Number(d.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").get().n),self:Number(c.prepare("SELECT count(*) n FROM people WHERE is_self=1 AND status='ACTIVE'").get().n),integrity:d.prepare('PRAGMA integrity_check').get().integrity_check,fk:d.prepare('PRAGMA foreign_key_check').all().length,cintegrity:c.prepare('PRAGMA integrity_check').get().integrity_check,cfk:c.prepare('PRAGMA foreign_key_check').all().length};for(const t of tables)out.rows[t]=Number((t==='people'||t==='person_aliases'?c:d).prepare(`SELECT count(*) n FROM ${t}`).get().n);process.stdout.write(JSON.stringify(out));}finally{d.close();c.close();}
-NODE
-)
-node - "$before" "$after" <<'NODE'
-const b=JSON.parse(process.argv[2]),a=JSON.parse(process.argv[3]);if(b.uv!==4||a.uv!==8||a.cuv!==1||a.projects!==0||a.local_people!==0||a.self!==1||a.integrity!=='ok'||a.cintegrity!=='ok'||a.fk!==0||a.cfk!==0)process.exit(2);if(JSON.stringify(b.rows)!==JSON.stringify(a.rows))process.exit(3);if(a.task.some(t=>t.project_id!==null))process.exit(4);const stripped=a.task.map(({project_id,...x})=>x);if(JSON.stringify(stripped)!==JSON.stringify(b.task))process.exit(5);
-NODE
-
-# Representative mid-migration failure rolls all DDL back to complete schema v4.
-FAULTDB="$TMP/fault.sqlite3"
-FAULTCDB="$TMP/fault-contacts.sqlite3"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_TEST_NOW="$NOW" node "$PREDECESSOR" init >/dev/null
-set +e
-fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_CONTACTS_DB="$FAULTCDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_TEST_MIGRATION_FAULT=after-task-column node "$TASKCTL" init); rc=$?
-set -e
-[ "$rc" -ne 0 ]; contains "$fault" '"code":"TEST_MIGRATION_FAULT"'
-[ ! -e "$FAULTCDB" ]
-node - "$FAULTDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});
-try{if(Number(d.prepare('PRAGMA user_version').get().user_version)!==4)process.exit(2);if(d.prepare("SELECT 1 FROM sqlite_master WHERE type='table' AND name='projects'").get())process.exit(3);if(d.prepare('PRAGMA table_info(tasks)').all().some(x=>x.name==='project_id'))process.exit(4);if(d.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||d.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(5);}finally{d.close();}
-NODE
-
-printf 'BATCH7_OK predecessor=%s\n' "$PREDECESSOR_SHA"
+printf 'BATCH7_OK\n'

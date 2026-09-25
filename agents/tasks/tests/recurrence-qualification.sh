@@ -82,26 +82,4 @@ run 2026-09-02T09:00:00Z "{\"operation_key\":\"cancel-calendar-task\",\"id\":\"T
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW=2026-09-03T08:00:00Z "$TASKCTL" recurrence materialize >/dev/null
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD="{\"id\":\"$RID\"}" "$TASKCTL" recurrence get | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{if(JSON.parse(s).recurrence.status!=="ACTIVE")process.exit(1)})'
 
-# Historical schema-v5 migration fault is all-or-nothing; a later successful migration preserves the row.
-PRE="$TMP/predecessor.sqlite3"; BASE=d6dbae6848989f8611ca8931dd200bbc63868b35
-REPO=$(cd "$ROOT/../.." && pwd)
-if ! git -C "$REPO" cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" schema5_source_revision "${BASE}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
-  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "TASK_AGENT_RECURRENCE_QUALIFICATION_PASS" "${BASE}"
-  exit 0
-fi
-
-git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TMP/old-taskctl" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" TASKCTL_PAYLOAD='{"operation_key":"old","title":"Preserve","assignee":"Дубровин М."}' "$TMP/old-taskctl" task create >/dev/null
-set +e
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_TEST_MIGRATION_FAULT=after-recurrence-ddl TASKCTL_DB="$PRE" "$TASKCTL" init >/dev/null
-[ $? -ne 0 ] || exit 1
-set -e
-node - "$PRE" <<'NODE'
-const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('pragma user_version').get().user_version)!==5||db.prepare("select count(*) n from tasks where title='Preserve'").get().n!==1||db.prepare("select name from sqlite_master where type='table' and name='recurrences'").get())process.exit(1);}finally{db.close();}
-NODE
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
-
 printf 'TASK_AGENT_RECURRENCE_QUALIFICATION_PASS\n'

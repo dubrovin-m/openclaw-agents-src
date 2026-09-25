@@ -14,7 +14,7 @@ const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_CONTACTS_LIB, 'core.cjs')) ?
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 const contactStore = require(path.join(CONTACTS_LIB, 'task-store.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.4.14';
+const IMPLEMENTATION_VERSION = '0.4.15';
 const SCHEMA_VERSION = 9;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = contacts.SELF_NAME;
@@ -98,21 +98,19 @@ const stable = (v) => v===null||typeof v!=='object'?JSON.stringify(v):Array.isAr
 const hash = (v) => crypto.createHash('sha256').update(stable(v)).digest('hex');
 const ci = (s) => String(s).normalize('NFKC').toLocaleLowerCase('ru-RU');
 
-const CREATE_V6_LEGACY = [
+const CREATE_CURRENT = [
   "CREATE TABLE IF NOT EXISTS inbox_items(id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL CHECK(length(trim(content))>0), received_at TEXT NOT NULL, capture_key TEXT NOT NULL UNIQUE) STRICT;",
   "CREATE TABLE IF NOT EXISTS capture_receipts(capture_key TEXT PRIMARY KEY, inbox_id INTEGER, state TEXT NOT NULL CHECK(state IN ('ACTIVE','RESOLVED','DISCARDED')), received_at TEXT NOT NULL) STRICT;",
-  "CREATE TABLE IF NOT EXISTS people(id INTEGER PRIMARY KEY AUTOINCREMENT, display_name TEXT NOT NULL CHECK(length(trim(display_name))>0), created_at TEXT NOT NULL) STRICT;",
-  "CREATE TABLE IF NOT EXISTS person_aliases(person_id INTEGER NOT NULL REFERENCES people(id) ON DELETE CASCADE, alias TEXT NOT NULL CHECK(length(trim(alias))>0), PRIMARY KEY(person_id,alias)) STRICT;",
   "CREATE TABLE IF NOT EXISTS labels(id INTEGER PRIMARY KEY AUTOINCREMENT, display_name TEXT NOT NULL CHECK(length(trim(display_name))>0), emoji TEXT, created_at TEXT NOT NULL) STRICT;",
   "CREATE TABLE IF NOT EXISTS label_aliases(label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE CASCADE, alias TEXT NOT NULL CHECK(length(trim(alias))>0), PRIMARY KEY(label_id,alias)) STRICT;",
   "CREATE TABLE IF NOT EXISTS term_aliases(alias TEXT PRIMARY KEY CHECK(length(trim(alias))>0), expansion TEXT NOT NULL CHECK(length(trim(expansion))>0), created_at TEXT NOT NULL) STRICT;",
   "CREATE TABLE IF NOT EXISTS projects(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL CHECK(length(trim(title))>0), status TEXT NOT NULL CHECK(status IN ('ACTIVE','DONE','CANCELLED')), created_at TEXT NOT NULL, completed_at TEXT, CHECK((status='DONE' AND completed_at IS NOT NULL) OR (status!='DONE' AND completed_at IS NULL))) STRICT;",
-  "CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL CHECK(length(trim(title))>0), assignee_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT, status TEXT NOT NULL CHECK(status IN ('OPEN','DONE','CANCELLED')), due_date TEXT, due_time TEXT CHECK(due_time IS NULL OR (due_date IS NOT NULL AND length(due_time)=5 AND due_time GLOB '[0-2][0-9]:[0-5][0-9]' AND CAST(substr(due_time,1,2) AS INTEGER)<=23)), created_at TEXT NOT NULL, completed_at TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT, CHECK((status='DONE' AND completed_at IS NOT NULL) OR (status!='DONE' AND completed_at IS NULL))) STRICT;",
+  "CREATE TABLE IF NOT EXISTS tasks(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL CHECK(length(trim(title))>0), assignee_id INTEGER NOT NULL CHECK(assignee_id>0), status TEXT NOT NULL CHECK(status IN ('OPEN','DONE','CANCELLED')), due_date TEXT, due_time TEXT CHECK(due_time IS NULL OR (due_date IS NOT NULL AND length(due_time)=5 AND due_time GLOB '[0-2][0-9]:[0-5][0-9]' AND CAST(substr(due_time,1,2) AS INTEGER)<=23)), created_at TEXT NOT NULL, completed_at TEXT, project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT, CHECK((status='DONE' AND completed_at IS NOT NULL) OR (status!='DONE' AND completed_at IS NULL))) STRICT;",
   "CREATE TABLE IF NOT EXISTS task_labels(task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE RESTRICT, PRIMARY KEY(task_id,label_id)) STRICT;",
   "CREATE TABLE IF NOT EXISTS task_comments(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, content TEXT NOT NULL CHECK(length(trim(content))>0), created_at TEXT NOT NULL) STRICT;",
   "CREATE TABLE IF NOT EXISTS task_events(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT, event_type TEXT NOT NULL CHECK(event_type IN ('CREATED','TITLE_CHANGED','ASSIGNEE_CHANGED','DUE_DATE_CHANGED','DUE_TIME_CHANGED','STATUS_CHANGED')), old_value TEXT, new_value TEXT, reason TEXT, occurred_at TEXT NOT NULL) STRICT;",
   "CREATE TABLE IF NOT EXISTS operation_results(operation_key TEXT PRIMARY KEY, operation_type TEXT NOT NULL, request_hash TEXT NOT NULL, result_json TEXT NOT NULL, created_at TEXT NOT NULL) STRICT;",
-  "CREATE TABLE IF NOT EXISTS recurrences(id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT NOT NULL CHECK(status IN ('ACTIVE','PAUSED','CANCELLED')), mode TEXT NOT NULL CHECK(mode IN ('CALENDAR','AFTER_COMPLETION')), title TEXT NOT NULL CHECK(length(trim(title))>0), assignee_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT, due_time TEXT CHECK(due_time IS NULL OR (length(due_time)=5 AND due_time GLOB '[0-2][0-9]:[0-5][0-9]' AND CAST(substr(due_time,1,2) AS INTEGER)<=23)), target_project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT, rule_json TEXT NOT NULL CHECK(length(trim(rule_json))>0), calendar_cursor_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, cancelled_at TEXT, CHECK((status='CANCELLED' AND cancelled_at IS NOT NULL) OR (status!='CANCELLED' AND cancelled_at IS NULL)), CHECK((mode='CALENDAR' AND calendar_cursor_date IS NOT NULL) OR (mode='AFTER_COMPLETION' AND calendar_cursor_date IS NULL))) STRICT;",
+  "CREATE TABLE IF NOT EXISTS recurrences(id INTEGER PRIMARY KEY AUTOINCREMENT, status TEXT NOT NULL CHECK(status IN ('ACTIVE','PAUSED','CANCELLED')), mode TEXT NOT NULL CHECK(mode IN ('CALENDAR','AFTER_COMPLETION')), title TEXT NOT NULL CHECK(length(trim(title))>0), assignee_id INTEGER NOT NULL CHECK(assignee_id>0), due_time TEXT CHECK(due_time IS NULL OR (length(due_time)=5 AND due_time GLOB '[0-2][0-9]:[0-5][0-9]' AND CAST(substr(due_time,1,2) AS INTEGER)<=23)), target_project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT, rule_json TEXT NOT NULL CHECK(length(trim(rule_json))>0), calendar_cursor_date TEXT, created_at TEXT NOT NULL, updated_at TEXT NOT NULL, cancelled_at TEXT, CHECK((status='CANCELLED' AND cancelled_at IS NOT NULL) OR (status!='CANCELLED' AND cancelled_at IS NULL)), CHECK((mode='CALENDAR' AND calendar_cursor_date IS NOT NULL) OR (mode='AFTER_COMPLETION' AND calendar_cursor_date IS NULL))) STRICT;",
   "CREATE TABLE IF NOT EXISTS recurrence_labels(recurrence_id INTEGER NOT NULL REFERENCES recurrences(id) ON DELETE CASCADE, label_id INTEGER NOT NULL REFERENCES labels(id) ON DELETE RESTRICT, PRIMARY KEY(recurrence_id,label_id)) STRICT;",
   "CREATE TABLE IF NOT EXISTS recurrence_occurrences(id INTEGER PRIMARY KEY AUTOINCREMENT, recurrence_id INTEGER NOT NULL REFERENCES recurrences(id) ON DELETE RESTRICT, occurrence_key TEXT NOT NULL CHECK(length(trim(occurrence_key))>0), occurrence_date TEXT, predecessor_task_id INTEGER REFERENCES tasks(id) ON DELETE RESTRICT, task_id INTEGER NOT NULL UNIQUE REFERENCES tasks(id) ON DELETE RESTRICT, template_json TEXT NOT NULL CHECK(length(trim(template_json))>0), generated_at TEXT NOT NULL, UNIQUE(recurrence_id,occurrence_key)) STRICT;",
   "CREATE TABLE IF NOT EXISTS recurrence_events(id INTEGER PRIMARY KEY AUTOINCREMENT, recurrence_id INTEGER NOT NULL REFERENCES recurrences(id) ON DELETE RESTRICT, event_type TEXT NOT NULL CHECK(event_type IN ('CREATED','RULE_CHANGED','TEMPLATE_CHANGED','PAUSED','RESUMED','CANCELLED','CYCLE_ANCHORED')), old_value TEXT, new_value TEXT, reason TEXT, occurred_at TEXT NOT NULL) STRICT;",
@@ -128,37 +126,17 @@ const CREATE_V6_LEGACY = [
   "CREATE INDEX IF NOT EXISTS idx_task_events_task ON task_events(task_id,id);",
   "CREATE INDEX IF NOT EXISTS idx_task_comments_task ON task_comments(task_id,id);",
   "CREATE INDEX IF NOT EXISTS idx_task_labels_label ON task_labels(label_id,task_id);",
-  "CREATE INDEX IF NOT EXISTS idx_person_aliases_alias ON person_aliases(alias);",
   "CREATE INDEX IF NOT EXISTS idx_label_aliases_alias ON label_aliases(alias);",
-].join('\n');
-
-const CREATE_V7 = CREATE_V6_LEGACY.split('\n')
-  .filter((line) => !line.includes('CREATE TABLE IF NOT EXISTS people(') && !line.includes('CREATE TABLE IF NOT EXISTS person_aliases(') && !line.includes('idx_person_aliases_alias'))
-  .map((line) => line.replaceAll('assignee_id INTEGER NOT NULL REFERENCES people(id) ON DELETE RESTRICT','assignee_id INTEGER NOT NULL CHECK(assignee_id>0)'))
-  .join('\n');
-
-const CREATE_V8 = [CREATE_V7,
   "CREATE TABLE IF NOT EXISTS reminders(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER REFERENCES tasks(id) ON DELETE RESTRICT, text TEXT, trigger_at TEXT NOT NULL CHECK(length(trim(trigger_at))>0), status TEXT NOT NULL CHECK(status IN ('ACTIVE','CLOSED')), close_reason TEXT CHECK(close_reason IS NULL OR close_reason IN ('DELIVERED','TASK_COMPLETED','TASK_CANCELLED','USER_CANCELLED')), created_at TEXT NOT NULL, closed_at TEXT, claim_token TEXT, claimed_at TEXT, claim_expires_at TEXT, CHECK((task_id IS NOT NULL AND text IS NULL) OR (task_id IS NULL AND text IS NOT NULL AND length(trim(text))>0)), CHECK((status='ACTIVE' AND close_reason IS NULL AND closed_at IS NULL) OR (status='CLOSED' AND close_reason IS NOT NULL AND closed_at IS NOT NULL)), CHECK((claim_token IS NULL AND claimed_at IS NULL AND claim_expires_at IS NULL) OR (status='ACTIVE' AND claim_token IS NOT NULL AND claimed_at IS NOT NULL AND claim_expires_at IS NOT NULL))) STRICT;",
   "CREATE INDEX IF NOT EXISTS idx_reminders_status_trigger ON reminders(status,trigger_at,id);",
   "CREATE INDEX IF NOT EXISTS idx_reminders_task_status ON reminders(task_id,status,id);",
   "CREATE INDEX IF NOT EXISTS idx_reminders_claim ON reminders(claim_token,status,id);",
-].join('\n');
-
-
-const CREATE_V9 = [CREATE_V8,
   "CREATE TABLE IF NOT EXISTS task_domain_bindings(binding_key TEXT PRIMARY KEY CHECK(binding_key IN ('OFFICE_CEO_GROUP','PERSONAL_LABEL')), entity_id INTEGER NOT NULL CHECK(entity_id>0), created_at TEXT NOT NULL, updated_at TEXT NOT NULL) STRICT;",
   "CREATE TABLE IF NOT EXISTS deadline_change_requests(id INTEGER PRIMARY KEY AUTOINCREMENT, task_id INTEGER NOT NULL REFERENCES tasks(id) ON DELETE RESTRICT, base_due_date TEXT, base_due_time TEXT, requested_due_date TEXT, requested_due_time TEXT, reason TEXT NOT NULL CHECK(length(trim(reason))>0), status TEXT NOT NULL CHECK(status IN ('PENDING','APPROVED','REJECTED','SUPERSEDED')), approved_due_date TEXT, approved_due_time TEXT, created_at TEXT NOT NULL, resolved_at TEXT) STRICT;",
   "CREATE UNIQUE INDEX IF NOT EXISTS idx_deadline_change_requests_pending_task ON deadline_change_requests(task_id) WHERE status='PENDING';",
   "CREATE INDEX IF NOT EXISTS idx_deadline_change_requests_task ON deadline_change_requests(task_id,id);",
 ].join('\n');
 
-
-function ensureLegacySelf(db, at=now()) {
-  const rows=db.prepare('SELECT id FROM people WHERE display_name=? ORDER BY id').all(SELF_NAME);
-  if(rows.length>1) throw new AppError('INTEGRITY_ERROR','Multiple canonical self Person rows exist');
-  if(rows.length===1) return rows[0].id;
-  return Number(db.prepare('INSERT INTO people(display_name,created_at) VALUES(?,?)').run(SELF_NAME,at).lastInsertRowid);
-}
 function ensureSelf(db){return contacts.ensureSingleSelf(db,'contacts',SELF_NAME).id;}
 function createOrReusePerson(db,name,at=now()){
   const result=contacts.createOrReuse(db,{display_name:name},{schema:'contacts',at});
@@ -175,30 +153,17 @@ function createOrReuseLabel(db, name, at=now()) {
 }
 
 function migrate(db){
-  let version=Number(db.prepare('PRAGMA main.user_version').get().user_version);
+  const version=Number(db.prepare('PRAGMA main.user_version').get().user_version);
   if(version===0){
     contactStore.attachContacts(db,contactStore.contactsDbPath(),{create:true});contactStore.configureJournals(db);db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
-    try{contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts',SELF_NAME);db.exec(CREATE_V9);db.exec('PRAGMA main.user_version=9; COMMIT;');}
+    try{contacts.ensureSchema(db,'contacts');contacts.ensureSingleSelf(db,'contacts',SELF_NAME);db.exec(CREATE_CURRENT);db.exec(`PRAGMA main.user_version=${SCHEMA_VERSION}; COMMIT;`);}
     catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}
     return;
   }
-  if(version===4){
-    db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
-    try{db.exec("CREATE TABLE projects(id INTEGER PRIMARY KEY AUTOINCREMENT, title TEXT NOT NULL CHECK(length(trim(title))>0), status TEXT NOT NULL CHECK(status IN ('ACTIVE','DONE','CANCELLED')), created_at TEXT NOT NULL, completed_at TEXT, CHECK((status='DONE' AND completed_at IS NOT NULL) OR (status!='DONE' AND completed_at IS NULL))) STRICT;");if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_MIGRATION_FAULT==='after-projects')throw new AppError('TEST_MIGRATION_FAULT','Synthetic migration fault after projects table creation');db.exec('ALTER TABLE tasks ADD COLUMN project_id INTEGER REFERENCES projects(id) ON DELETE RESTRICT;');if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_MIGRATION_FAULT==='after-task-column')throw new AppError('TEST_MIGRATION_FAULT','Synthetic migration fault after Task project column creation');db.exec('CREATE INDEX idx_tasks_project_status ON tasks(project_id,status,id);');db.exec(CREATE_V6_LEGACY);ensureLegacySelf(db);db.exec('PRAGMA main.user_version=6; COMMIT;');}
-    catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=6;
-  }
-  if(version===5){
-    db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');
-    try{db.exec(CREATE_V6_LEGACY);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_MIGRATION_FAULT==='after-recurrence-ddl')throw new AppError('TEST_MIGRATION_FAULT','Synthetic migration fault after recurrence DDL');ensureLegacySelf(db);db.exec('PRAGMA main.user_version=6; COMMIT;');}
-    catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=6;
-  }
-  if(version===6){contactStore.migrateV6ToV7(db);version=7;}
-  if(version===7){db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');try{db.exec(CREATE_V8);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_REMINDER_MIGRATION_FAULT==='after-reminder-ddl')throw new AppError('TEST_REMINDER_MIGRATION_FAULT','Synthetic Reminder migration fault after Reminder DDL');db.exec('PRAGMA main.user_version=8; COMMIT;');}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=8;}
-  if(version===8){db.exec('PRAGMA foreign_keys=ON; BEGIN IMMEDIATE;');try{db.exec(CREATE_V9);if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_DEADLINE_REQUEST_MIGRATION_FAULT==='after-deadline-request-ddl')throw new AppError('TEST_DEADLINE_REQUEST_MIGRATION_FAULT','Synthetic Deadline Change Request migration fault');db.exec('PRAGMA main.user_version=9; COMMIT;');}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}version=9;}
   if(version!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Unsupported schema version ${version}; target schema is ${SCHEMA_VERSION}`);
-  db.exec(CREATE_V9);contactStore.prepareV7(db);
+  contactStore.prepareCurrent(db);
 }
-function openDb(){const dir=path.dirname(DB_PATH);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}const db=new DatabaseSync(DB_PATH,{timeout:5000});db.function('task_ci',{deterministic:true},ci);migrate(db);db.exec('PRAGMA foreign_keys=ON;');contactStore.prepareV7(db);try{fs.chmodSync(DB_PATH,0o600);}catch{}return db;}
+function openDb(){const dir=path.dirname(DB_PATH);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}const db=new DatabaseSync(DB_PATH,{timeout:5000});db.function('task_ci',{deterministic:true},ci);migrate(db);db.exec('PRAGMA foreign_keys=ON;');try{fs.chmodSync(DB_PATH,0o600);}catch{}return db;}
 function openReadDb(){const db=new DatabaseSync(DB_PATH,{readOnly:true,timeout:5000});db.function('task_ci',{deterministic:true},ci);db.exec('PRAGMA foreign_keys=ON;');return db;}
 function healthSnapshot(){
   if(!fs.existsSync(DB_PATH))throw new AppError('DATABASE_NOT_FOUND','Task database is missing',{database:DB_PATH},3);
