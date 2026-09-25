@@ -341,10 +341,16 @@ NODE
 migrate_reminder_dispatcher_predecessor(){
   [ "$REMINDER_ENABLED" = "1" ] || return 0
   reminder_dispatcher_predecessor_exact || return 1
-  local jobs id
+  local jobs update_params
   jobs=$(reminder_dispatcher_jobs_json) || return 1
-  id=$(node -e 'const x=JSON.parse(process.argv[1]);if(x.length!==1||typeof x[0]?.id!=="string"||!x[0].id)process.exit(2);process.stdout.write(x[0].id)' "$jobs") || return 1
-  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --no-deliver --json >/dev/null || return 1
+  update_params=$(node - "$jobs" "$REMINDER_COMMAND_JSON" "$REMINDER_TIMEOUT" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),argv=JSON.parse(process.argv[3]),timeout=Number(process.argv[4]);
+if(jobs.length!==1)process.exit(2);const j=jobs[0];
+if(typeof j?.id!=='string'||!j.id||typeof j?.configRevision!=='string'||!j.configRevision)process.exit(2);
+process.stdout.write(JSON.stringify({id:j.id,patch:{enabled:false,payload:{kind:'command',argv,timeoutSeconds:timeout,toolsAllow:null},delivery:{mode:'none'}},expectedConfigRevision:j.configRevision}));
+NODE
+) || return 1
+  oc gateway call cron.update --params "$update_params" --json >/dev/null || return 1
   reminder_dispatcher_exact
 }
 resolve_important_date_delivery_to(){
