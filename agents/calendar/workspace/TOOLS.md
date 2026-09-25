@@ -5,7 +5,7 @@ Use only the model-visible tools admitted by the effective Calendar runtime.
 OpenClaw-owned deterministic tools:
 
 - `calendar_config_get` — current operational taxonomy, target model, designated calendar, provider labels, and admitted provider-tool identities;
-- `calendar_review_window` — deterministic Daily/Biweekly date and provider-query window;
+- `calendar_review_window` — deterministic Daily/Next-Workday/Biweekly date and provider-query window;
 - `calendar_analyze` — deterministic time arithmetic, overlap handling, classification coverage, and target comparison.
 
 OpenClaw-owned Google Calendar provider tools:

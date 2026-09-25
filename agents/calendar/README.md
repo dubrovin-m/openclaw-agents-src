@@ -76,6 +76,6 @@ Activation additionally requires:
 - owner-authorized Google ADC with the minimum required scopes;
 - representative provider read and label-write validation against the designated calendar;
 - owner-only Telegram account and route;
-- Daily and Biweekly native OpenClaw Automations;
+- Daily, Next Workday, and Biweekly native OpenClaw Automations;
 - representative allowed and forbidden behavior tests;
 - post-activation Nexus runtime reconciliation.

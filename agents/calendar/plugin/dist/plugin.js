@@ -40,7 +40,7 @@ const calendarConfigSchema = Type.Object({
 }, { additionalProperties: false });
 const configGetParameters = Type.Object({}, { additionalProperties: false });
 const reviewWindowParameters = Type.Object({
-    kind: Type.Union([Type.Literal("daily"), Type.Literal("biweekly")]),
+    kind: Type.Union([Type.Literal("daily"), Type.Literal("next_workday"), Type.Literal("biweekly")]),
     boundary: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 const eventParameters = Type.Object({
@@ -84,7 +84,7 @@ const entry = defineToolPlugin({
         tool({
             name: "calendar_review_window",
             label: "Calendar review window",
-            description: "Resolve the canonical Daily or Biweekly Calendar analysis window in Europe/Moscow.",
+            description: "Resolve the canonical Daily, Next-Workday, or Biweekly Calendar review window in Europe/Moscow.",
             parameters: reviewWindowParameters,
             optional: true,
             execute: async (params) => reviewWindow(params.kind, params.boundary),
