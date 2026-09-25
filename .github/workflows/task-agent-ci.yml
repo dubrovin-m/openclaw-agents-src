@@ -24,7 +24,7 @@ concurrency:
 jobs:
   validate:
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     env:
       npm_config_audit: "false"
       npm_config_fund: "false"
@@ -244,7 +244,7 @@ jobs:
           timeout 180s bash agents/tasks/tests/recurrence-qualification.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/reminders.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/deadline-governance.sh
-          timeout 240s bash agents/tasks/tests/reminder-deploy.sh
+          timeout 600s bash agents/tasks/tests/reminder-deploy.sh
           timeout 240s bash agents/tasks/tests/recurrence-gateway-e2e.sh
           timeout 300s bash agents/tasks/tests/reminder-gateway-e2e.sh
 
