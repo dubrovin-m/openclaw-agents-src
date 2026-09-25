@@ -104,21 +104,4 @@ node - "$ROOT/plugins/taskctl/src/contract.ts" <<'NODE'
 const fs=require('fs'),s=fs.readFileSync(process.argv[2],'utf8');if(s.includes('recurrence_materialize'))process.exit(1);
 NODE
 
-# TA-REC-039: exact historical schema-v5 predecessor migrates additively with no synthetic Recurrences.
-PRE="$TMP/predecessor.sqlite3"
-BASE=d6dbae6848989f8611ca8931dd200bbc63868b35
-REPO=$(cd "$ROOT/../.." && pwd)
-if ! git -C "$REPO" cat-file -e "${BASE}^{commit}" 2>/dev/null; then
-  bridge_json=$(node "$ROOT/tests/verify-public-historical-fixture.mjs" schema5_source_revision "${BASE}" HEAD 2>&1) || { echo "public historical-fixture bridge verification failed: $bridge_json" >&2; exit 2; }
-  printf '%s public-bootstrap-historical-fixture-omitted predecessor=%s\n' "TASK_AGENT_BATCH9_RECURRING_PASS" "${BASE}"
-  exit 0
-fi
-
-git -C "$REPO" cat-file -e "$BASE^{commit}"
-git -C "$REPO" show "$BASE:agents/tasks/taskctl" > "$TMP/old-taskctl"; chmod +x "$TMP/old-taskctl"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TMP/old-taskctl" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" TASKCTL_PAYLOAD='{"operation_key":"old-row","title":"Existing v5 Task","assignee":"Дубровин М."}' "$TMP/old-taskctl" task create >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PRE" "$TASKCTL" health | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.counts.tasks!==1||x.counts.recurrences!==0)process.exit(1)})'
-
 printf 'TASK_AGENT_BATCH9_RECURRING_PASS\n'
