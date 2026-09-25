@@ -47,6 +47,7 @@ validate_source(){
 const fs=require('fs'),v=process.argv[5];const p=JSON.parse(fs.readFileSync(process.argv[2])),l=JSON.parse(fs.readFileSync(process.argv[3])),m=JSON.parse(fs.readFileSync(process.argv[4])),rel=JSON.parse(fs.readFileSync(process.argv[6])),r=l.packages?.[''],t=l.packages?.['node_modules/typebox'],build=rel?.generation?.openclaw_build_version,compat=rel?.generation?.openclaw_compat;if(p.version!==v||m.version!==v||l.version!==v||r?.version!==v||p.dependencies?.typebox!=='1.3.15'||r?.dependencies?.typebox!=='1.3.15'||t?.version!=='1.3.15'||p.devDependencies?.openclaw!==build||r?.devDependencies?.openclaw!==build||p.openclaw?.build?.openclawVersion!==build||p.peerDependencies?.openclaw!==compat||r?.peerDependencies?.openclaw!==compat||p.openclaw?.compat?.pluginApi!==compat)process.exit(2);
 NODE
   for f in $TARGET_WORKSPACE_FILES; do [ -f "$ROOT/workspace/$f" ] || fail "workspace source missing: $f"; done
+}
 
 validate_source
 
