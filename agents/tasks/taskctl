@@ -500,9 +500,11 @@ function reminderDispatchSend(db){
   const claimToken=`reminder-dispatch:${crypto.randomUUID()}`,boundary=now();
   const claimed=reminderDispatch(db,{claim_token:claimToken,boundary,limit:100});
   if(claimed.count===0)return{ok:true,count:0,delivered:0};
+  let route;
+  try{route=reminderDeliveryRoute();}catch(e){reminderSettle(db,{claim_token:claimToken,delivered:false});throw e;}
   const rendered=reminderRenderClaim(db,{claim_token:claimToken});
-  if(rendered.count===0)return{ok:true,count:0,delivered:0,suppressed:claimed.count};
-  const route=reminderDeliveryRoute(),args=['message','send','--channel',route.channel,'--account',route.account,'--target',route.target,'--message',rendered.message,'--json'];
+  if(rendered.count===0){reminderSettle(db,{claim_token:claimToken,delivered:false});return{ok:true,count:0,delivered:0,suppressed:claimed.count};}
+  const args=['message','send','--channel',route.channel,'--account',route.account,'--target',route.target,'--message',rendered.message,'--json'];
   let child;
   try{child=spawnSync(reminderOpenClawBin(),args,{encoding:'utf8',timeout:40000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
   catch{throw new AppError('REMINDER_DELIVERY_UNCONFIRMED','Reminder delivery was not confirmed; claim remains retryable',{count:rendered.count},1);}
