@@ -528,37 +528,26 @@ create_recovery_set(){
   node - "$DB" "$RECOVERY_SET/tasks.sqlite3" <<'NODE' || return 1
 const {DatabaseSync,backup}=require('node:sqlite');const fs=require('fs');(async()=>{const db=new DatabaseSync(process.argv[2],{readOnly:true});try{await backup(db,process.argv[3]);}finally{db.close();}fs.chmodSync(process.argv[3],0o600);})().catch(e=>{console.error(e);process.exit(2)});
 NODE
-  local contacts_db_present=0 contacts_lib_present=0 contactctl_present=0 contacts_plugin_present=0
-  [ ! -e "$CONTACTS_DB" ] || contacts_db_present=1
-  [ ! -e "$CONTACTS_LIB" ] || contacts_lib_present=1
-  [ ! -e "$CONTACTCTL_TARGET" ] || contactctl_present=1
-  [ ! -e "$CONTACTS_PLUGIN_DIR" ] || contacts_plugin_present=1
-  local contacts_schema_version=""
-  if [ "$contacts_db_present" -eq 1 ]; then
-    contacts_schema_version=$(node - "$CONTACTS_DB" <<'NODE'
+  [ -f "$CONTACTS_DB" ] && [ -d "$CONTACTS_LIB" ] && [ -x "$CONTACTCTL_TARGET" ] && [ -d "$CONTACTS_PLUGIN_DIR" ] || return 1
+  local contacts_schema_version
+  contacts_schema_version=$(node - "$CONTACTS_DB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});try{const v=Number(d.prepare('pragma user_version').get().user_version);if(!Number.isSafeInteger(v)||v<1)process.exit(2);process.stdout.write(String(v));}finally{d.close();}
 NODE
 ) || return 1
-  fi
-  node - "$RECOVERY_SET/contacts-state.json" "$contacts_db_present" "$contacts_lib_present" "$contactctl_present" "$contacts_plugin_present" "$contacts_schema_version" <<'NODE' || return 1
-const fs=require('fs'),present=process.argv[3]==='1',schema=present?Number(process.argv[7]):null;if(present&&(!Number.isSafeInteger(schema)||schema<1))process.exit(2);const out={format:'shared-contacts-recovery-v2',db_present:present,lib_present:process.argv[4]==='1',contactctl_present:process.argv[5]==='1',plugin_present:process.argv[6]==='1',schema_version:schema};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+String.fromCharCode(10),{mode:0o600});
+  node - "$RECOVERY_SET/contacts-state.json" "$contacts_schema_version" <<'NODE' || return 1
+const fs=require('fs'),schema=Number(process.argv[3]);if(!Number.isSafeInteger(schema)||schema<1)process.exit(2);const out={format:'shared-contacts-recovery-v2',db_present:true,lib_present:true,contactctl_present:true,plugin_present:true,schema_version:schema};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+String.fromCharCode(10),{mode:0o600});
 NODE
-  if [ "$contacts_db_present" -eq 1 ]; then
-    node - "$CONTACTS_DB" "$RECOVERY_SET/contacts.sqlite3" <<'NODE' || return 1
+  node - "$CONTACTS_DB" "$RECOVERY_SET/contacts.sqlite3" <<'NODE' || return 1
 const {DatabaseSync,backup}=require('node:sqlite');const fs=require('fs');(async()=>{const db=new DatabaseSync(process.argv[2],{readOnly:true});try{await backup(db,process.argv[3]);}finally{db.close();}fs.chmodSync(process.argv[3],0o600);})().catch(e=>{console.error(e);process.exit(2)});
 NODE
-  fi
-  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_lib_present" -eq 1 ]; then tar -czf "$RECOVERY_SET/contacts-lib.before.tar.gz" -C "$(dirname "$CONTACTS_LIB")" "$(basename "$CONTACTS_LIB")" || return 1; fi
-  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contactctl_present" -eq 1 ]; then install -m 700 "$CONTACTCTL_TARGET" "$RECOVERY_SET/contactctl.before" || return 1; fi
-  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$contacts_plugin_present" -eq 1 ]; then tar --exclude='contacts/node_modules/openclaw' -czf "$RECOVERY_SET/contacts-plugin.before.tar.gz" -C "$(dirname "$CONTACTS_PLUGIN_DIR")" contacts || return 1; fi
-  if [ "$RECOVERY_FORMAT" = "task-agent-recovery-v4" ]; then node "$PLUGIN_REGISTRY_HELPER" snapshot "$STATE_DB" "$RECOVERY_SET/plugin-registry.before.json" || return 1; fi
+  tar -czf "$RECOVERY_SET/contacts-lib.before.tar.gz" -C "$(dirname "$CONTACTS_LIB")" "$(basename "$CONTACTS_LIB")" || return 1
+  install -m 700 "$CONTACTCTL_TARGET" "$RECOVERY_SET/contactctl.before" || return 1
+  tar --exclude='contacts/node_modules/openclaw' -czf "$RECOVERY_SET/contacts-plugin.before.tar.gz" -C "$(dirname "$CONTACTS_PLUGIN_DIR")" contacts || return 1
+  node "$PLUGIN_REGISTRY_HELPER" snapshot "$STATE_DB" "$RECOVERY_SET/plugin-registry.before.json" || return 1
   tar --exclude='taskctl/node_modules/openclaw' -czf "$RECOVERY_SET/taskctl-managed.before.tar.gz" -C "$(dirname "$PLUGIN_DIR")" taskctl || return 1
   local args=() f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do args+=("workspace-tasks/$f"); done; tar -czf "$RECOVERY_SET/workspace-tasks.before.tar.gz" -C "$(dirname "$WORKSPACE")" "${args[@]}" || return 1
   printf '%s\n' "$RECOVERY_FORMAT" > "$RECOVERY_SET/RECOVERY_FORMAT"
-  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz); [ ! -f "$RECOVERY_SET/contacts-state.json" ] || checksum_files+=(contacts-state.json); [ ! -f "$RECOVERY_SET/contacts.sqlite3" ] || checksum_files+=(contacts.sqlite3); [ ! -f "$RECOVERY_SET/contacts-lib.before.tar.gz" ] || checksum_files+=(contacts-lib.before.tar.gz); [ ! -f "$RECOVERY_SET/contactctl.before" ] || checksum_files+=(contactctl.before); [ ! -f "$RECOVERY_SET/contacts-plugin.before.tar.gz" ] || checksum_files+=(contacts-plugin.before.tar.gz); [ ! -f "$RECOVERY_SET/plugin-registry.before.json" ] || checksum_files+=(plugin-registry.before.json)
-  [ ! -f "$RECOVERY_SET/calendar-materializer.before.json" ] || checksum_files+=(calendar-materializer.before.json)
-  [ ! -f "$RECOVERY_SET/reminder-dispatcher.before.json" ] || checksum_files+=(reminder-dispatcher.before.json)
-  [ ! -f "$RECOVERY_SET/important-date-dispatcher.before.json" ] || checksum_files+=(important-date-dispatcher.before.json)
+  local checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz contacts-state.json contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz plugin-registry.before.json)
   (cd "$RECOVERY_SET" && sha256sum "${checksum_files[@]}" > SHA256SUMS) || return 1; chmod 600 "$RECOVERY_SET"/* || return 1
   local a=(--inspect --from "$RECOVERY_SET") code=0; if [ -n "$TEST_ROOT" ]; then a=(--test-root "$TEST_ROOT" "${a[@]}"); fi; "$ROOT/recover.sh" "${a[@]}" >/dev/null 2>&1 || code=$?; [ "$code" -eq 3 ]
 }
