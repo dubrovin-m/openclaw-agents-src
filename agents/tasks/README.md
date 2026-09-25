@@ -35,13 +35,15 @@ Shared Nexus synchronization and shared media preprocessing are infrastructure-o
 
 ## Development and validation
 
-Run:
+The routine quality gate is `.github/workflows/task-agent-ci.yml`. Repository-bound build, test, packaging, isolated-runtime qualification, and dependency installation belong in GitHub Actions rather than on the production OpenClaw host.
+
+`validate.sh` and `install.sh` therefore fail closed outside GitHub Actions unless an explicit local qualification override is present. The override exists only for a disposable non-production workspace:
 
 ```bash
-./validate.sh
+TASK_AGENT_ALLOW_LOCAL_QUALIFICATION=1 ./validate.sh
 ```
 
-The routine GitHub quality gate is `.github/workflows/task-agent-ci.yml`. Tests use disposable state and must not access or mutate production Task data.
+Tests use disposable state and must not access or mutate production Task data. Production deployment uses the registered deployment/control path and frozen artifacts; it must not depend on repository `npm ci` or local build output.
 
 Plugin development lives under `plugins/taskctl/`. Build and package commands are defined by that package rather than repeated here. Generated outputs committed as part of the current release must reproduce cleanly under CI.
 
