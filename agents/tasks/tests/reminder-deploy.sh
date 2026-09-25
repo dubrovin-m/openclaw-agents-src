@@ -26,9 +26,18 @@ NODE
 [ "$PRED_PLUGIN" = "$TARGET_PLUGIN" ] || fail "Reminder simplification must not require a plugin release"
 git -C "$REPO_ROOT" cat-file -e "$PRED^{commit}" || fail "Declared predecessor unavailable"
 
+OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 OPENCLAW_BIN=$(command -v openclaw || true)
-[ -x "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || fail "OpenClaw executable unavailable"
+CURRENT_OPENCLAW_VERSION=""
+if [ -n "$OPENCLAW_BIN" ] && [ -x "$OPENCLAW_BIN" ]; then CURRENT_OPENCLAW_VERSION=$("$OPENCLAW_BIN" --version | awk '{print $2}') || true; fi
+if [ "$CURRENT_OPENCLAW_VERSION" != "$OPENCLAW_VERSION" ]; then
+  command -v npm >/dev/null 2>&1 || fail "npm is required to qualify exact OpenClaw $OPENCLAW_VERSION"
+  OPENCLAW_PREFIX="$TMP/openclaw-target"
+  npm install --prefix "$OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$OPENCLAW_VERSION" >/dev/null
+  OPENCLAW_BIN="$OPENCLAW_PREFIX/node_modules/.bin/openclaw"
+fi
+[ -x "$OPENCLAW_BIN" ] || fail "OpenClaw $OPENCLAW_VERSION executable unavailable"
+[ "$("$OPENCLAW_BIN" --version | awk '{print $2}')" = "$OPENCLAW_VERSION" ] || fail "Reminder deploy qualification selected the wrong OpenClaw version"
 OPENCLAW_ROOT=$(node - "$OPENCLAW_BIN" <<'NODE'
 const fs=require('fs'),path=require('path');let p=fs.realpathSync(process.argv[2]),d=path.dirname(p);while(d!=='/'){const f=path.join(d,'package.json');if(fs.existsSync(f)){const j=JSON.parse(fs.readFileSync(f,'utf8'));if(j.name==='openclaw'){process.stdout.write(d);process.exit(0)}}d=path.dirname(d)}process.exit(2);
 NODE
@@ -147,7 +156,6 @@ echo active > "$BASE/gateway.state"
 
 oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
 oc "$BASE" plugins registry --refresh --json >/dev/null
-OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$OPENCLAW_VERSION" "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
 
 SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
