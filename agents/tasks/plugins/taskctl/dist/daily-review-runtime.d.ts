@@ -42,11 +42,10 @@ type SchedulerService = {
 };
 type SchedulerGeneration = {
     service: SchedulerService;
-    abortSignal: AbortSignal;
-};
-type ProjectionDeps = SchedulerGeneration & {
+    abortSignal?: AbortSignal;
     isCurrent?: () => boolean;
 };
+type ProjectionDeps = SchedulerGeneration;
 type Receipt = {
     baseDescription: string;
     lastDeliveredRunAtMs: number | null;
@@ -128,6 +127,7 @@ export declare function prepareDailyReviewRuntimeProjection(params: DailyReviewP
     hasMore: boolean;
     nextOffset: number | null;
 } | undefined>>;
+declare function requireSchedulerGeneration(): SchedulerGeneration;
 export declare function registerDailyReviewSchedulerAccess(api: OpenClawPluginApi): void;
 export declare function createDailyReviewTool(api: OpenClawPluginApi, toolContext: OpenClawPluginToolContext): AnyAgentTool | null;
 export declare const dailyReviewRuntimeInternals: {
@@ -138,5 +138,7 @@ export declare const dailyReviewRuntimeInternals: {
     validatePair: typeof validatePair;
     promoteReceipt: typeof promoteReceipt;
     historyEntries: typeof historyEntries;
+    requireSchedulerGeneration: typeof requireSchedulerGeneration;
+    resetState: () => void;
 };
 export {};

@@ -5,6 +5,7 @@ const RECEIPT_TOKEN = "[taskctl.daily-review.receipt.v1";
 const RECEIPT_RE = /(?:\n\n)?\[taskctl\.daily-review\.receipt\.v1 last_delivered_run_at=([^\]\s]+)\]$/;
 const SYNTHETIC_ACTIVATION_VALIDATED_ROUTE = "task-daily-review-activation-validated-route";
 let schedulerGeneration;
+let schedulerServiceBinding;
 function parseInstant(value, label) {
     const date = new Date(value);
     if (!value.trim() || Number.isNaN(date.getTime())) {
@@ -13,7 +14,7 @@ function parseInstant(value, label) {
     return { iso: date.toISOString(), ms: date.getTime() };
 }
 function assertProjectionActive(deps) {
-    deps.abortSignal.throwIfAborted();
+    deps.abortSignal?.throwIfAborted();
     if (deps.isCurrent && !deps.isCurrent()) {
         throw new Error("Daily Review scheduler projection is stale");
     }
@@ -224,13 +225,40 @@ export async function prepareDailyReviewRuntimeProjection(params, toolContext, d
     };
 }
 function requireSchedulerGeneration() {
-    const generation = schedulerGeneration;
-    if (!generation || generation.abortSignal.aborted) {
+    const serviceBinding = schedulerServiceBinding;
+    if (serviceBinding) {
+        try {
+            const service = serviceBinding.getService();
+            if (service)
+                return { service };
+        }
+        catch {
+            // A revoked service-bound scheduler must fail closed rather than fall back
+            // to a potentially stale cron_reconciled snapshot.
+        }
         throw new Error("Daily Review scheduler projection is unavailable or stale");
     }
-    return generation;
+    const generation = schedulerGeneration;
+    if (!generation || generation.abortSignal?.aborted) {
+        throw new Error("Daily Review scheduler projection is unavailable or stale");
+    }
+    return {
+        ...generation,
+        isCurrent: () => schedulerGeneration === generation,
+    };
 }
 export function registerDailyReviewSchedulerAccess(api) {
+    api.registerService({
+        id: "taskctl-daily-review-scheduler-access",
+        start: (context) => {
+            const serviceContext = context;
+            const getService = serviceContext.getCron;
+            schedulerServiceBinding = getService ? { getService } : undefined;
+        },
+        stop: () => {
+            schedulerServiceBinding = undefined;
+        },
+    });
     api.on("cron_reconciled", (event, context) => {
         if (!event.enabled) {
             schedulerGeneration = undefined;
@@ -248,6 +276,7 @@ export function registerDailyReviewSchedulerAccess(api) {
     });
     api.on("gateway_stop", () => {
         schedulerGeneration = undefined;
+        schedulerServiceBinding = undefined;
     });
 }
 export function createDailyReviewTool(api, toolContext) {
@@ -261,10 +290,7 @@ export function createDailyReviewTool(api, toolContext) {
         execute: async (_toolCallId, rawParams, signal) => {
             const params = rawParams;
             const generation = requireSchedulerGeneration();
-            const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, {
-                ...generation,
-                isCurrent: () => schedulerGeneration === generation,
-            });
+            const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, generation);
             const result = await executeDailyReview(params, {
                 api,
                 toolContext,
@@ -286,4 +312,9 @@ export const dailyReviewRuntimeInternals = {
     validatePair,
     promoteReceipt,
     historyEntries,
+    requireSchedulerGeneration,
+    resetState: () => {
+        schedulerGeneration = undefined;
+        schedulerServiceBinding = undefined;
+    },
 };
