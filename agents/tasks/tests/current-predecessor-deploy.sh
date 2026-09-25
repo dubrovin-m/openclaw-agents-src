@@ -130,6 +130,7 @@ GROUP_ID=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.group?.id;if(!/^PG
 HOME="$BASE/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$BASE/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-member",group_id:process.argv[1],person:process.argv[2]}))' "$GROUP_ID" "$SELF_PERSON")" "$BASE/bin/contactctl" group_member_add >/dev/null
 HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-bind-group",key:"OFFICE_CEO_GROUP",entity_id:process.argv[1]}))' "$GROUP_ID")" "$BASE/bin/taskctl" config set >/dev/null
 HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-bind-personal",key:"PERSONAL_LABEL",entity_id:process.argv[1]}))' "$PERSONAL_LABEL")" "$BASE/bin/taskctl" config set >/dev/null
+HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-task-sentinel",title:"Wave 1 sentinel",assignee:process.argv[1],labels:[process.argv[2]]}))' "$SELF_PERSON" "$PERSONAL_LABEL")" "$BASE/bin/taskctl" task create >/dev/null
 
 automation_count(){ node - "$1/state/automations-test.json" "$2" <<'NODE'
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),key=process.argv[3];process.stdout.write(String((x.jobs||[]).filter(j=>j.declarationKey===key).length));
@@ -140,6 +141,16 @@ const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],
 try{const table=n=>db.prepare("select count(*) n from sqlite_master where type='table' and name=?").get(n).n>0;
 const out={uv:Number(db.prepare('pragma user_version').get().user_version),people:db.prepare('select id,display_name,organization,title,is_self,status,merged_into,created_at,updated_at from people order by id').all(),aliases:db.prepare('select person_id,alias,created_at from person_aliases order by person_id,alias').all(),important:table('important_dates')?Number(db.prepare('select count(*) n from important_dates').get().n):null,reminders:table('important_date_reminders')?Number(db.prepare('select count(*) n from important_date_reminders').get().n):null,groups:table('person_groups')?Number(db.prepare('select count(*) n from person_groups').get().n):null,group_members:table('person_group_members')?Number(db.prepare('select count(*) n from person_group_members').get().n):null,integrity:db.prepare('pragma integrity_check').get().integrity_check,fk:db.prepare('pragma foreign_key_check').all().length};process.stdout.write(JSON.stringify(out));}
 finally{db.close();}
+NODE
+}
+task_state(){ node - "$1/state/data/tasks/tasks.sqlite3" <<'NODE'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
+try{
+  const names=db.prepare("select name from sqlite_master where type='table' and name not like 'sqlite_%' order by name").all().map(x=>x.name),tables={};
+  for(const name of names){const q='"'+name.replaceAll('"','""')+'"';tables[name]=db.prepare(`select * from ${q} order by rowid`).all();}
+  const out={uv:Number(db.prepare('pragma user_version').get().user_version),integrity:db.prepare('pragma integrity_check').get().integrity_check,fk:db.prepare('pragma foreign_key_check').all().length,tables};
+  process.stdout.write(JSON.stringify(out));
+} finally {db.close();}
 NODE
 }
 assert_predecessor(){
@@ -202,12 +213,16 @@ NODE
 }
 
 assert_predecessor "$BASE"
+TASKS_BEFORE=$(task_state "$BASE")
 CONTACTS_BEFORE=$(contacts_state "$BASE")
 
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "current predecessor deploy failed"
 assert_target "$R"; assert_important_shape "$R"
+node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "exact predecessor deploy changed Task logical state"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
+NODE
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "exact predecessor deploy changed Contacts logical state"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
@@ -221,6 +236,9 @@ for f in calendar-materializer.before.json reminder-dispatcher.before.json impor
 done
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual current predecessor recovery failed"
 assert_predecessor "$R"
+node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "manual recovery changed Task predecessor data"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
+NODE
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "manual recovery changed Contacts predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
@@ -246,6 +264,9 @@ CODE=$?
 set -e
 [ "$CODE" -eq 1 ] || fail "post-install fault did not roll back"
 assert_predecessor "$R"
+node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "automatic rollback changed Task predecessor data"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
+NODE
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "automatic rollback changed Contacts predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
