@@ -108,7 +108,7 @@ NODE
 const fs=require('fs'),p=process.argv[2],id=process.argv[3],a=process.argv.slice(4),opt=n=>{const i=a.indexOf(n);return i>=0?a[i+1]:undefined};
 const x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.id===id);if(!j)process.exit(2);
 if(a.includes('--disable'))j.enabled=false;if(a.includes('--enable'))j.enabled=true;
-if(opt('--command-argv')){j.payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};j.scheduledToolPolicy=null;}
+if(opt('--command-argv')){const tools=a.includes('--clear-tools')?[String.fromCharCode(42)]:undefined;j.payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds')),...(tools?{toolsAllow:tools}:{})};j.scheduledToolPolicy=tools?{version:1,mode:'trusted'}:null;}
 if(opt('--script')==='-'){j.payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};j.scheduledToolPolicy={version:1,mode:'trusted'};}
 if(a.includes('--no-deliver'))j.delivery={mode:'none'};
 if(a.includes('--announce'))j.delivery={mode:'announce',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account')};
