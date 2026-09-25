@@ -142,7 +142,13 @@ automation(){ oc_env "$OPENCLAW_BIN" automations "$@" --url "$GATEWAY_URL" --tok
 
 start_gateway(){
   : >"$GATEWAY_LOG"
-  oc_env "$OPENCLAW_BIN" gateway run --bind loopback --port "$GATEWAY_PORT" --auth token --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
+  env -i \
+    HOME="$RUNTIME/home" PATH="$ISOLATED_PATH" LANG=C.UTF-8 TZ=Europe/Moscow \
+    OPENCLAW_HOME="$RUNTIME/home" OPENCLAW_STATE_DIR="$RUNTIME/state" OPENCLAW_CONFIG_PATH="$RUNTIME/state/openclaw.json" \
+    OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT" OPENCLAW_GATEWAY_URL="$GATEWAY_URL" OPENCLAW_GATEWAY_TOKEN="$TOKEN" \
+    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1 OPENCLAW_SKIP_GMAIL_WATCHER=1 OPENCLAW_SKIP_CANVAS_HOST=1 \
+    OPENCLAW_SKIP_ACPX_RUNTIME=1 OPENCLAW_SKIP_ACPX_RUNTIME_PROBE=1 \
+    "$OPENCLAW_BIN" gateway run --bind loopback --port "$GATEWAY_PORT" --auth token --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
   GATEWAY_PID=$!
   for _ in $(seq 1 160); do
     kill -0 "$GATEWAY_PID" 2>/dev/null || fail "isolated Gateway exited before readiness"
@@ -196,8 +202,12 @@ if(x?.created!==true||typeof j?.id!=='string'||!j.id||j.declarationKey!==key||j.
 NODE
 ) || fail "real OpenClaw did not create exact disabled Reminder command job"
 
-DIRECT=$(oc_env "$RUNTIME/bin/taskctl" reminder-internal dispatch-send)
-node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.count!==1||x.delivered!==1)process.exit(1)' "$DIRECT" || fail "direct frozen Reminder smoke did not confirm delivery"
+set +e
+DIRECT=$(oc_env "$RUNTIME/bin/taskctl" reminder-internal dispatch-send 2>&1)
+DIRECT_RC=$?
+set -e
+[ "$DIRECT_RC" -eq 0 ] || fail "direct frozen Reminder smoke failed rc=$DIRECT_RC output=$DIRECT"
+node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.count!==1||x.delivered!==1)process.exit(1)' "$DIRECT" || fail "direct frozen Reminder smoke did not confirm delivery: $DIRECT"
 node - "$CAPTURE" <<'NODE' || fail "direct frozen Reminder smoke did not hit Telegram route"
 const fs=require('node:fs'),rows=fs.readFileSync(process.argv[2],'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);if(rows.length!==1||rows[0].chat!=='111'||rows[0].text!=='🔔 Напоминание: Frozen direct smoke')process.exit(1);
 NODE
