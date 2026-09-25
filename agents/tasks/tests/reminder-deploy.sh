@@ -41,6 +41,13 @@ git -C "$PRED_SRC" checkout -q --detach "$PRED"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 
+# Production predecessor retains the retired TOOLS.md in the migration archive;
+# isolated install removes the active file but does not synthesize this durable history.
+TOOLS_SHA=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.workspace_sha256["TOOLS.md"])' "$RELEASE")
+mkdir -p "$BASE/state/backups/tools-md-migration"
+git -C "$PRED_SRC" show "$PRED:agents/tasks/workspace/TOOLS.md" > "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
+chmod 600 "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
+
 mkdir -p "$BASE/state/secrets"
 printf '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' > "$BASE/state/secrets/tasks.token"
 chmod 600 "$BASE/state/secrets/tasks.token"
