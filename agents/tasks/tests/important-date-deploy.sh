@@ -11,8 +11,8 @@ fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.from?.sqlite_schemas?.[0]!==8||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,TOOLS_SHA:r.from.workspace_sha256["TOOLS.md"],GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SCRIPT:r.reminder_dispatcher.script,REMINDER_TOOL:r.reminder_dispatcher.tool,REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,REMINDER_BUDGET:r.reminder_dispatcher.tool_budget,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
+if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
@@ -28,14 +28,9 @@ export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
 PRED_SRC="$TMP/predecessor-source"
 git clone -q --shared --no-checkout "$REPO_ROOT" "$PRED_SRC"
 git -C "$PRED_SRC" checkout -q --detach "$PRED"
-# Historical recovery qualification stays bound to the predecessor generation.
 export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$PRED_SRC"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
-mkdir -p "$BASE/state/backups/tools-md-migration"
-git -C "$REPO_ROOT" show "$PRED:agents/tasks/workspace/TOOLS.md" > "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
-chmod 600 "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
-
 mkdir -p "$BASE/state/secrets"
 printf '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' > "$BASE/state/secrets/tasks.token"
 chmod 600 "$BASE/state/secrets/tasks.token"
@@ -109,19 +104,19 @@ SHIM
 chmod 755 "$TMP/shims/systemctl"
 export PATH="$TMP/shims:$ROOT/plugins/taskctl/node_modules/.bin:$(dirname "$(command -v node)"):/usr/bin:/bin"
 oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
-node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TZ" "$MATERIALIZER_TIMEOUT" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$REMINDER_SCRIPT" "$REMINDER_TOOL" "$REMINDER_TIMEOUT" "$REMINDER_BUDGET" "$IMPORTANT_KEY" "$IMPORTANT_NAME" "$IMPORTANT_CRON" "$IMPORTANT_TZ" "$IMPORTANT_SCRIPT" "$IMPORTANT_TOOL" "$IMPORTANT_TIMEOUT" "$IMPORTANT_BUDGET" <<'NODE'
+node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TZ" "$MATERIALIZER_TIMEOUT" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$REMINDER_SUFFIX" "$REMINDER_TIMEOUT" "$IMPORTANT_KEY" "$IMPORTANT_NAME" "$IMPORTANT_CRON" "$IMPORTANT_TZ" "$IMPORTANT_SCRIPT" "$IMPORTANT_TOOL" "$IMPORTANT_TIMEOUT" "$IMPORTANT_BUDGET" <<'NODE'
 const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3];
-const [mk,mn,mc,mt,mto,rk,rn,rc,rt,rs,rtool,rtimeout,rbudget,ik,iname,ic,it,iscript,itool,itimeout,ibudget]=process.argv.slice(4);
+const [mk,mn,mc,mt,mto,rk,rn,rc,rt,rsuffix,rtimeout,ik,iname,ic,it,iscript,itool,itimeout,ibudget]=process.argv.slice(4);
 const jobs=[
 {id:'recurrence-predecessor',declarationKey:mk,name:mn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:mc,tz:mt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:Number(mto)},delivery:{mode:'none'}},
-{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:rs,toolsAllow:[rtool],timeoutSeconds:Number(rtimeout),toolBudget:Number(rbudget)},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'}},
+{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,...JSON.parse(rsuffix)],timeoutSeconds:Number(rtimeout)},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'}},
 {id:'important-date-predecessor',declarationKey:ik,name:iname,enabled:true,agentId:'main',schedule:{kind:'cron',expr:ic,tz:it,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:iscript,toolsAllow:[itool],timeoutSeconds:Number(itimeout),toolBudget:Number(ibudget)},delivery:{mode:'announce',channel:'telegram',to:'424242',accountId:'default'}}
 ];
 fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
 echo active > "$BASE/gateway.state"
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" 2026.8.2 "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")" "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
 SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
@@ -136,6 +131,12 @@ node - "$BOOTSTRAP" "$SELF_PERSON" "$PERSONAL_LABEL" <<'NODE'
 const fs=require('fs'),out={format:'task-governance-bootstrap-v1',office_ceo_members:[process.argv[3]],personal_label_id:process.argv[4]};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
 NODE
 chmod 600 "$BOOTSTRAP"
+
+GROUP_RESULT=$(HOME="$BASE/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$BASE/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{"operation_key":"wave1-group","display_name":"Office CEO"}' "$BASE/bin/contactctl" group_create) || fail "unable to create predecessor Office CEO group"
+GROUP_ID=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.group?.id;if(!/^PG-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$GROUP_RESULT") || fail "invalid predecessor group"
+HOME="$BASE/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$BASE/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-member",group_id:process.argv[1],person:process.argv[2]}))' "$GROUP_ID" "$SELF_PERSON")" "$BASE/bin/contactctl" group_member_add >/dev/null
+HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-bind-group",key:"OFFICE_CEO_GROUP",entity_id:process.argv[1]}))' "$GROUP_ID")" "$BASE/bin/taskctl" config set >/dev/null
+HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-bind-personal",key:"PERSONAL_LABEL",entity_id:process.argv[1]}))' "$PERSONAL_LABEL")" "$BASE/bin/taskctl" config set >/dev/null
 
 automation_count(){ node - "$1/state/automations-test.json" "$2" <<'NODE'
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),key=process.argv[3];process.stdout.write(String((x.jobs||[]).filter(j=>j.declarationKey===key).length));
@@ -158,6 +159,7 @@ assert_predecessor(){
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "predecessor materializer missing"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "predecessor Reminder dispatcher missing"
   [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "predecessor Important Dates dispatcher missing"
+  assert_reminder_shape "$r"
   assert_important_shape "$r"
 }
 assert_target(){
@@ -175,7 +177,13 @@ const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],
 NODE
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer changed"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "Task Reminder dispatcher changed"
-  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "Important Dates dispatcher missing"
+  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "Important Dates dispatcher missing"\n  assert_reminder_shape "$r"
+}
+assert_reminder_shape(){
+  node - "$1/state/automations-test.json" "$REMINDER_KEY" "$REMINDER_SUFFIX" "$1/bin/taskctl" <<'NODE' || fail "Reminder dispatcher shape mismatch"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]),suffix=JSON.parse(process.argv[4]),taskctl=process.argv[5];
+if(!j||j.agentId!=='tasks'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify([taskctl,...suffix])||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner')process.exit(1);
+NODE
 }
 assert_important_shape(){
   node - "$1/state/automations-test.json" "$IMPORTANT_KEY" "$IMPORTANT_SCRIPT" "$IMPORTANT_TOOL" <<'NODE' || fail "Important Dates dispatcher shape mismatch"
@@ -211,8 +219,8 @@ R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "Important Dates preflight failed"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Important Dates deploy failed"
 assert_target "$R"; assert_important_shape "$R"
-node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || fail "Contacts migration changed predecessor identity data beyond approved Person Group activation"
-const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]),schema=Number(process.argv[4]);if(JSON.stringify(a.people)!==JSON.stringify(b.people)||JSON.stringify(a.aliases)!==JSON.stringify(b.aliases)||b.uv!==schema||b.important!==0||b.reminders!==0||b.groups!==1||b.group_members!==1||b.integrity!=='ok'||b.fk!==0)process.exit(1);
+node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "exact predecessor deploy changed Contacts logical state"
+const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit)
 [ -n "$RECOVERY" ] || fail "recovery set missing"
@@ -226,34 +234,30 @@ node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "manual reco
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
 
+RETIRED="$TMP/retired-recovery"
+cp -a "$RECOVERY" "$RETIRED"
+printf '%s\n' task-agent-recovery-v3 > "$RETIRED/RECOVERY_FORMAT"
+(
+  cd "$RETIRED"
+  files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz contacts-state.json contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz plugin-registry.before.json)
+  sha256sum "${files[@]}" > SHA256SUMS
+)
+set +e
+bash "$ROOT/recover.sh" --test-root "$R" --inspect --from "$RETIRED" >/dev/null 2>&1
+RETIRED_CODE=$?
+set -e
+[ "$RETIRED_CODE" -eq 2 ] || fail "retired recovery format was not rejected"
+
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
 set +e
-TASK_AGENT_DEPLOY_FAULT=after-governance-activation HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
+TASK_AGENT_DEPLOY_FAULT=after-install HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
 CODE=$?
 set -e
-[ "$CODE" -eq 1 ] || fail "post-governance activation fault did not roll back"
+[ "$CODE" -eq 1 ] || fail "post-install fault did not roll back"
 assert_predecessor "$R"
-node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "post-governance rollback changed Contacts predecessor data"
+node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "automatic rollback changed Contacts predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
 NODE
 
-rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
-set +e
-CONTACTCTL_TEST_MIGRATION_FAULT=after-person-group-ddl HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
-CODE=$?
-set -e
-[ "$CODE" -eq 2 ] || fail "faulted Contacts Person Group migration did not fail closed before mutation"
-assert_predecessor "$R"
+echo TASK_AGENT_CURRENT_PREDECESSOR_DEPLOY_QUALIFICATION_PASS
 
-rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
-set +e
-TASK_AGENT_DEPLOY_FAULT=after-important-date-dispatcher HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
-CODE=$?
-set -e
-[ "$CODE" -eq 1 ] || fail "post-dispatcher fault did not roll back"
-assert_predecessor "$R"
-node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "post-dispatcher rollback changed Contacts predecessor data"
-const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
-NODE
-
-echo TASK_AGENT_IMPORTANT_DATE_DEPLOY_QUALIFICATION_PASS
