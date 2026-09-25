@@ -109,7 +109,7 @@ const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3];
 const [mk,mn,mc,mt,mto,rk,rn,rc,rt,rsuffix,rtimeout,ik,iname,ic,it,iscript,itool,itimeout,ibudget]=process.argv.slice(4);
 const jobs=[
 {id:'recurrence-predecessor',declarationKey:mk,name:mn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:mc,tz:mt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:Number(mto)},delivery:{mode:'none'}},
-{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,...JSON.parse(rsuffix)],timeoutSeconds:Number(rtimeout)},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'}},
+{id:'reminder-predecessor',declarationKey:rk,name:rn,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:rc,tz:rt,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,...JSON.parse(rsuffix)],timeoutSeconds:Number(rtimeout)},delivery:{mode:'none'}},
 {id:'important-date-predecessor',declarationKey:ik,name:iname,enabled:true,agentId:'main',schedule:{kind:'cron',expr:ic,tz:it,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:iscript,toolsAllow:[itool],timeoutSeconds:Number(itimeout),toolBudget:Number(ibudget)},delivery:{mode:'announce',channel:'telegram',to:'424242',accountId:'default'}}
 ];
 fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
@@ -155,6 +155,7 @@ assert_predecessor(){
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3]))process.exit(1)' "$th" "$PRED_TASKCTL" "$PRED_SCHEMA" || fail "predecessor Task generation drift"
   ch=$(HOME="$r/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$r/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{}' "$r/bin/contactctl" health) || fail "predecessor Contacts unhealthy"
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3]))process.exit(1)' "$ch" "$PRED_CONTACTS" "$PRED_CONTACTS_SCHEMA" || fail "predecessor Contacts drift"
+  [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$PRED_PLUGIN" ] || fail "predecessor Task plugin drift"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$PRED_CONTACTS_PLUGIN" ] || fail "predecessor Contacts plugin drift"
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "predecessor materializer missing"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "predecessor Reminder dispatcher missing"
@@ -182,7 +183,7 @@ NODE
 assert_reminder_shape(){
   node - "$1/state/automations-test.json" "$REMINDER_KEY" "$REMINDER_SUFFIX" "$1/bin/taskctl" <<'NODE' || fail "Reminder dispatcher shape mismatch"
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]),suffix=JSON.parse(process.argv[4]),taskctl=process.argv[5];
-if(!j||j.agentId!=='tasks'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify([taskctl,...suffix])||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner')process.exit(1);
+if(!j||j.enabled!==true||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify([taskctl,...suffix])||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
 NODE
 }
 assert_important_shape(){
