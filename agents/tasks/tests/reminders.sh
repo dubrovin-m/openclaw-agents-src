@@ -142,14 +142,14 @@ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" node "$TASKCTL" init >/dev/null
 
 # No due Reminder means no outbound invocation.
 drun '2026-09-16T08:00:00Z' '{"operation_key":"future","text":"Позже","trigger_date":"2026-09-16","trigger_time":"13:00"}' reminder create >/dev/null
-a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0"'; [ ! -e "$DCAPTURE" ]
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0'; [ ! -e "$DCAPTURE" ]
 
 # Standalone + Task-linked due Reminders are rendered deterministically using current Task title.
 drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-task","title":"Старое название","assignee":"Дубровин М."}' task create >/dev/null
 drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-linked","task_id":"T-1","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
 drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-standalone","text":"Отдельное","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
 drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-rename","id":"T-1","title":"Текущее название"}' task update >/dev/null
-a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":2"'; contains "$a" '"delivered":2'
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":2'; contains "$a" '"delivered":2'
 capture=$(tail -n 1 "$DCAPTURE")
 contains "$capture" '"channel":"telegram"'; contains "$capture" '"account":"tasks"'; contains "$capture" '"target":"test-owner"'
 contains "$capture" '🔔 Напоминание: Текущее название\n\n🔔 Напоминание: Отдельное'
@@ -166,7 +166,7 @@ drun '2026-09-16T08:00:00Z' '{"operation_key":"closed-before","title":"Не от
 drun '2026-09-16T08:00:00Z' '{"operation_key":"closed-before-rem","task_id":"T-2","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
 drun '2026-09-16T08:30:00Z' '{"operation_key":"closed-before-done","id":"T-2"}' task complete >/dev/null
 before_lines=$(wc -l <"$DCAPTURE")
-a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0"'
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0'
 [ "$(wc -l <"$DCAPTURE")" -eq "$before_lines" ]
 
 # Definite failure and unknown/crash are both conservative: claim stays leased, then expires and retries.
@@ -179,16 +179,16 @@ node - "$DDB" <<'JS'
 const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
 try{const r=db.prepare('select status,close_reason,claim_token,claim_expires_at from reminders where id=5').get();if(r.status!=='ACTIVE'||r.close_reason!==null||!r.claim_token||!r.claim_expires_at)process.exit(2);}finally{db.close();}
 JS
-a=$(dsend '2026-09-16T09:01:00Z' success); contains "$a" '"count":0"'
-a=$(dsend '2026-09-16T09:05:00Z' success); contains "$a" '"count":1"'; contains "$a" '"delivered":1'
+a=$(dsend '2026-09-16T09:01:00Z' success); contains "$a" '"count":0'
+a=$(dsend '2026-09-16T09:05:00Z' success); contains "$a" '"count":1'; contains "$a" '"delivered":1'
 
 drun '2026-09-16T08:00:00Z' '{"operation_key":"retry-unknown","text":"Повтор после неизвестного исхода","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
 set +e
 a=$(dsend '2026-09-16T09:06:00Z' unknown 2>&1); rc=$?
 set -e
 [ "$rc" -ne 0 ]; contains "$a" 'REMINDER_DELIVERY_UNCONFIRMED'
-a=$(dsend '2026-09-16T09:07:00Z' success); contains "$a" '"count":0"'
-a=$(dsend '2026-09-16T09:11:00Z' success); contains "$a" '"count":1"'; contains "$a" '"delivered":1'
+a=$(dsend '2026-09-16T09:07:00Z' success); contains "$a" '"count":0'
+a=$(dsend '2026-09-16T09:11:00Z' success); contains "$a" '"count":1'; contains "$a" '"delivered":1'
 
 # Owner route ambiguity fails closed before outbound send and leaves the claim retryable.
 node - "$DCONFIG" <<'JS'
