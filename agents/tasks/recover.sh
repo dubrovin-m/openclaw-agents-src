@@ -85,6 +85,75 @@ try{
 NODE
 }
 
+
+validate_exact_predecessor_identity() {
+  local backup=$1 source taskctl_version task_plugin contacts_version contacts_schema contacts_plugin
+  read -r source taskctl_version task_plugin contacts_version contacts_schema contacts_plugin < <(node - "$ROOT/release.json" "$REPO_ROOT/shared/contacts/release.json" <<'NODE'
+const task=require(process.argv[2]),contacts=require(process.argv[3]);
+const f=task?.from,cf=contacts?.from;
+if(!f||!cf||f.source_revision!==cf.source_revision||f.taskctl_versions?.length!==1||f.plugin_versions?.length!==1)process.exit(2);
+process.stdout.write([f.source_revision,f.taskctl_versions[0],f.plugin_versions[0],cf.implementation_version,cf.sqlite_schema,cf.plugin_version].join(' ')+'\n');
+NODE
+  ) || fail "Unable to resolve exact recovery predecessor identity"
+  git -C "$REPO_ROOT" cat-file -e "$source^{commit}" 2>/dev/null || fail "Recovery predecessor history is unavailable"
+
+  local expected actual
+  expected=$(git -C "$REPO_ROOT" show "$source:agents/tasks/taskctl" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint predecessor taskctl"
+  actual=$(sha256sum "$backup/taskctl.before" | awk '{print $1}')
+  [ "$actual" = "$expected" ] || fail "Recovery taskctl is not the exact declared predecessor"
+
+  node - "$backup/contacts-state.json" "$contacts_schema" <<'NODE' || fail "Recovery Contacts state is not the exact declared predecessor"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),schema=Number(process.argv[3]);
+if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.lib_present!==true||x.contactctl_present!==true||x.plugin_present!==true||x.schema_version!==schema)process.exit(2);
+NODE
+
+  local predecessor_contacts="$backup/.predecessor-contacts-release.$"
+  git -C "$REPO_ROOT" show "$source:shared/contacts/release.json" > "$predecessor_contacts" || fail "Unable to materialize predecessor Contacts release"
+  node - "$predecessor_contacts" "$contacts_version" "$contacts_schema" "$contacts_plugin" <<'NODE' || { rm -f "$predecessor_contacts"; fail "Predecessor Contacts release identity mismatch"; }
+const r=require(process.argv[2]);if(r.implementation_version!==process.argv[3]||r.sqlite_schema!==Number(process.argv[4])||r.plugin?.version!==process.argv[5])process.exit(2);
+NODE
+  for f in core.cjs task-store.cjs; do
+    expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.runtime_files[process.argv[2]])' "$predecessor_contacts" "$f") || { rm -f "$predecessor_contacts"; fail "Missing predecessor Contacts fingerprint: $f"; }
+    actual=$(tar -xOf "$backup/contacts-lib.before.tar.gz" "openclaw-contacts/$f" | sha256sum | awk '{print $1}') || { rm -f "$predecessor_contacts"; fail "Unable to fingerprint recovered Contacts library: $f"; }
+    [ "$actual" = "$expected" ] || { rm -f "$predecessor_contacts"; fail "Recovery Contacts library is not the exact declared predecessor: $f"; }
+  done
+  expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.runtime_files.contactctl)' "$predecessor_contacts")
+  actual=$(sha256sum "$backup/contactctl.before" | awk '{print $1}')
+  [ "$actual" = "$expected" ] || { rm -f "$predecessor_contacts"; fail "Recovery contactctl is not the exact declared predecessor"; }
+  rm -f "$predecessor_contacts"
+
+  actual=$(tar -xOf "$backup/taskctl-managed.before.tar.gz" taskctl/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version||"")))') || fail "Unable to inspect recovery Task plugin"
+  [ "$actual" = "$task_plugin" ] || fail "Recovery Task plugin is not the exact declared predecessor"
+  actual=$(tar -xOf "$backup/contacts-plugin.before.tar.gz" contacts/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version||"")))') || fail "Unable to inspect recovery Contacts plugin"
+  [ "$actual" = "$contacts_plugin" ] || fail "Recovery Contacts plugin is not the exact declared predecessor"
+
+  for f in "${CURRENT_WORKSPACE_FILES[@]}"; do
+    expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.workspace_sha256[process.argv[2]]||"")' "$ROOT/release.json" "$f")
+    actual=$(tar -xOf "$backup/workspace-tasks.before.tar.gz" "workspace-tasks/$f" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint recovery workspace file: $f"
+    [ -n "$expected" ] && [ "$actual" = "$expected" ] || fail "Recovery workspace is not the exact declared predecessor: $f"
+  done
+
+  expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.tools_sha256||"")' "$ROOT/release.json")
+  actual=$(node - "$backup/openclaw.json.before" <<'NODE'
+const fs=require('fs'),crypto=require('crypto'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),v=c?.agents?.entries?.tasks?.tools;
+if(!v)process.exit(2);const stable=x=>x===null||typeof x!=='object'?JSON.stringify(x):Array.isArray(x)?'['+x.map(stable).join(',')+']':'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}';process.stdout.write(crypto.createHash('sha256').update(stable(v)).digest('hex'));
+NODE
+  ) || fail "Unable to fingerprint recovery Task tool policy"
+  [ "$actual" = "$expected" ] || fail "Recovery Task tool policy is not the exact declared predecessor"
+
+  node - "$backup/tasks.sqlite3" "$backup/contacts.sqlite3" <<'NODE' || fail "Recovery governance bindings are not current"
+const {DatabaseSync}=require('node:sqlite'),t=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});
+try{
+  const rows=t.prepare("SELECT binding_key,entity_id FROM task_domain_bindings ORDER BY binding_key").all();
+  const by=Object.fromEntries(rows.map(x=>[x.binding_key,x.entity_id]));
+  if(!Number.isSafeInteger(by.OFFICE_CEO_GROUP)||!Number.isSafeInteger(by.PERSONAL_LABEL))process.exit(2);
+  if(!c.prepare('SELECT 1 ok FROM person_groups WHERE id=?').get(by.OFFICE_CEO_GROUP))process.exit(3);
+  if(!t.prepare('SELECT 1 ok FROM labels WHERE id=?').get(by.PERSONAL_LABEL))process.exit(4);
+  if(Number(c.prepare('PRAGMA user_version').get().user_version)!==3||c.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||c.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(5);
+}finally{t.close();c.close();}
+NODE
+}
+
 validate_recovery_set() {
   local backup=$1 f expected actual format workspace_files
   test -d "$backup" || fail "Missing recovery set: $backup"
@@ -127,6 +196,7 @@ NODE
   [ "$actual" = "$expected" ] || fail "Recovery workspace archive contains unexpected entries"
 
   recovery_db_schema "$backup/tasks.sqlite3" >/dev/null || fail "Recovery database validation failed"
+  validate_exact_predecessor_identity "$backup"
 }
 
 resolve_host_openclaw_root() {
