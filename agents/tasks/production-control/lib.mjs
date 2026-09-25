@@ -7,6 +7,7 @@ export const PROTECTED_DEPLOYMENT_PATHS = [
   'shared/runtime-contract/',
   'agents/tasks/production-control/',
   'agents/tasks/deploy.sh',
+  'agents/tasks/deploy-support.cjs',
   'agents/tasks/recover.sh',
   'agents/tasks/install.sh',
   'agents/tasks/workspace-layout.mjs',
@@ -17,6 +18,7 @@ export const ROLLOUT_PROTECTED_PATHS = [
   'shared/runtime-contract/',
   'agents/tasks/production-control/',
   'agents/tasks/deploy.sh',
+  'agents/tasks/deploy-support.cjs',
   'agents/tasks/recover.sh',
   'agents/tasks/install.sh',
   'agents/tasks/workspace-layout.mjs',
@@ -29,6 +31,7 @@ export const ROLLOUT_PROTECTED_PATHS = [
 export const STAGED_VALIDATION_ONLY_PATHS = [
   'agents/tasks/README.md',
   'agents/tasks/deploy.sh',
+  'agents/tasks/deploy-support.cjs',
   'agents/tasks/tests/deploy.sh',
   'agents/tasks/production-control/',
   '.github/workflows/task-production-control-ci.yml',
