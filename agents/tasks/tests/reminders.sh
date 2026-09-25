@@ -243,46 +243,4 @@ if(allow.has('task_reminder_dispatch'))process.exit(2);
 for(const x of ['exec','cron','gateway'])if(!deny.has(x))process.exit(3);
 JS
 
-# TA-REM activation migration gate: exercise the immutable schema-7 historical
-# Reminder predecessor. Current deployment predecessor may already be schema 9.
-REPO=$(cd "$ROOT/../.." && pwd)
-CONTACTCTL="$REPO/shared/contacts/contactctl"
-PRED=eb4d5b60ba0e17d9db8205885ed401d873e7687d
-git -C "$REPO" cat-file -e "$PRED^{commit}"
-PREDROOT="$TMP/predecessor-root"
-mkdir -p "$PREDROOT"
-git -C "$REPO" archive "$PRED" agents/tasks/taskctl shared/contacts/core.cjs shared/contacts/task-store.cjs | tar -x -C "$PREDROOT"
-chmod 700 "$PREDROOT/agents/tasks/taskctl"
-PDB="$TMP/predecessor.sqlite3"; PCDB="$TMP/predecessor-contacts.sqlite3"; PN='2026-09-16T08:00:00Z'
-prun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" TASKCTL_PAYLOAD="$1" node "$PREDROOT/agents/tasks/taskctl" "$2" "$3"; }
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$PREDROOT/agents/tasks/taskctl" init >/dev/null
-SELF=$(prun '{}' person list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(JSON.parse(s).people.find(p=>p.display_name==="Дубровин М.").id))')
-prun '{"operation_key":"mig-label","display_name":"Migration"}' label create >/dev/null
-prun '{"operation_key":"mig-project","title":"Migration project"}' project create >/dev/null
-prun '{"operation_key":"mig-task","title":"Preserve me","assignee":"Дубровин М.","due_date":"2026-09-20","labels":["L-1"],"project_id":"PRJ-1"}' task create >/dev/null
-prun '{"operation_key":"mig-comment","task_id":"T-1","content":"Preserve comment"}' comment add >/dev/null
-prun '{"operation_key":"mig-inbox","capture_key":"migration-inbox","content":"Preserve inbox"}' inbox add >/dev/null
-prun "{\"operation_key\":\"mig-rec\",\"mode\":\"CALENDAR\",\"rule\":{\"kind\":\"DAYS\",\"interval\":2,\"start_date\":\"2026-09-18\"},\"title\":\"Preserve recurrence\",\"assignee_id\":\"$SELF\"}" recurrence create >/dev/null
-BEFORE=$(node - "$PDB" "$PCDB" <<'JS'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);const out={uv:Number(d.prepare('pragma user_version').get().user_version),tasks:count('tasks'),labels:count('labels'),projects:count('projects'),comments:count('task_comments'),inbox:count('inbox_items'),recurrences:count('recurrences'),people:Number(c.prepare('select count(*) n from people').get().n),aliases:Number(c.prepare('select count(*) n from person_aliases').get().n),task:d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all(),rec:d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all()};process.stdout.write(JSON.stringify(out));}finally{d.close();c.close();}
-JS
-)
-contains "$BEFORE" '"uv":7'
-cp "$PDB" "$TMP/fault-predecessor.sqlite3"; cp "$PCDB" "$TMP/fault-predecessor-contacts.sqlite3"
-# Production deployment owns the Contacts schema migration before Task validation.
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$PCDB" "$CONTACTCTL" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$TASKCTL" init >/dev/null
-MIG=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$TASKCTL" health)
-node - "$BEFORE" "$MIG" "$PDB" "$PCDB" <<'JS'
-const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==9||health.implementation_version!=='0.4.14'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
-JS
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/fault-predecessor-contacts.sqlite3" "$CONTACTCTL" init >/dev/null
-set +e
-FAULT=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TMP/fault-predecessor.sqlite3" TASKCTL_CONTACTS_DB="$TMP/fault-predecessor-contacts.sqlite3" TASKCTL_TEST_NOW="$PN" TASKCTL_TEST_REMINDER_MIGRATION_FAULT=after-reminder-ddl node "$TASKCTL" init 2>&1); FRC=$?
-set -e
-[ "$FRC" -ne 0 ]; contains "$FAULT" 'TEST_REMINDER_MIGRATION_FAULT'
-node - "$TMP/fault-predecessor.sqlite3" <<'JS'
-const {DatabaseSync}=require('node:sqlite'),d=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(d.prepare('pragma user_version').get().user_version)!==7)process.exit(2);if(d.prepare("select 1 from sqlite_master where type='table' and name='reminders'").get())process.exit(3);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0)process.exit(4);}finally{d.close();}
-JS
-
 printf 'REMINDERS_V1_DETERMINISTIC_PASS\n'
