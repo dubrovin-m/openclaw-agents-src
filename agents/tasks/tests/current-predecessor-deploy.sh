@@ -265,10 +265,10 @@ set -e
 
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
 set +e
-TASK_AGENT_DEPLOY_FAULT=after-install HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
+TASK_AGENT_DEPLOY_FAULT=after-migration HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
 CODE=$?
 set -e
-[ "$CODE" -eq 1 ] || fail "post-install fault did not roll back"
+[ "$CODE" -eq 1 ] || fail "post-migration fault did not roll back"
 assert_predecessor "$R"
 node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "automatic rollback changed Task predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
