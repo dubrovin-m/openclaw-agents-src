@@ -14,7 +14,7 @@ const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_CONTACTS_LIB, 'core.cjs')) ?
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 const contactStore = require(path.join(CONTACTS_LIB, 'task-store.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.4.13';
+const IMPLEMENTATION_VERSION = '0.4.14';
 const SCHEMA_VERSION = 9;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = contacts.SELF_NAME;
@@ -200,6 +200,38 @@ function migrate(db){
 }
 function openDb(){const dir=path.dirname(DB_PATH);fs.mkdirSync(dir,{recursive:true,mode:0o700});try{fs.chmodSync(dir,0o700);}catch{}const db=new DatabaseSync(DB_PATH,{timeout:5000});db.function('task_ci',{deterministic:true},ci);migrate(db);db.exec('PRAGMA foreign_keys=ON;');contactStore.prepareV7(db);try{fs.chmodSync(DB_PATH,0o600);}catch{}return db;}
 function openReadDb(){const db=new DatabaseSync(DB_PATH,{readOnly:true,timeout:5000});db.function('task_ci',{deterministic:true},ci);db.exec('PRAGMA foreign_keys=ON;');return db;}
+function healthSnapshot(){
+  if(!fs.existsSync(DB_PATH))throw new AppError('DATABASE_NOT_FOUND','Task database is missing',{database:DB_PATH},3);
+  const db=openReadDb();let contactsDb;
+  try{
+    db.exec('PRAGMA query_only=ON;');
+    const schemaVersion=Number(db.prepare('PRAGMA user_version').get().user_version);
+    if(schemaVersion!==SCHEMA_VERSION)throw new AppError('UNSUPPORTED_SCHEMA',`Health requires schema ${SCHEMA_VERSION}; found ${schemaVersion}`,{found:schemaVersion,target:SCHEMA_VERSION});
+    const requiredTables=['inbox_items','capture_receipts','labels','label_aliases','term_aliases','projects','tasks','task_labels','task_comments','task_events','operation_results','recurrences','recurrence_labels','recurrence_occurrences','recurrence_events','reminders','deadline_change_requests','task_domain_bindings'];
+    const present=new Set(db.prepare("SELECT name FROM sqlite_master WHERE type='table'").all().map(x=>x.name));
+    const missingTables=requiredTables.filter(name=>!present.has(name));
+    if(missingTables.length)throw new AppError('SCHEMA_INVALID','Task database is missing required tables',{missing_tables:missingTables});
+    const integrityRows=db.prepare('PRAGMA integrity_check').all();
+    const foreignKeyRows=db.prepare('PRAGMA foreign_key_check').all();
+    if(integrityRows.length!==1||integrityRows[0].integrity_check!=='ok'||foreignKeyRows.length!==0)throw new AppError('INTEGRITY_ERROR','Task database integrity validation failed',{integrity:integrityRows.map(x=>x.integrity_check),foreign_key_violations:foreignKeyRows.length});
+    const contactsPath=contactStore.contactsDbPath();
+    if(!fs.existsSync(contactsPath))throw new AppError('CONTACTS_NOT_FOUND','Contacts database is missing',{database:contactsPath},3);
+    contactsDb=new DatabaseSync(contactsPath,{readOnly:true,timeout:5000});
+    contactsDb.exec('PRAGMA query_only=ON; PRAGMA foreign_keys=ON;');
+    const contactsSchemaVersion=Number(contactsDb.prepare('PRAGMA user_version').get().user_version);
+    if(contactsSchemaVersion!==contacts.CONTACT_SCHEMA_VERSION)throw new AppError('UNSUPPORTED_CONTACTS_SCHEMA',`Health requires Contacts schema ${contacts.CONTACT_SCHEMA_VERSION}; found ${contactsSchemaVersion}`,{found:contactsSchemaVersion,target:contacts.CONTACT_SCHEMA_VERSION});
+    const contactsIntegrityRows=contactsDb.prepare('PRAGMA integrity_check').all();
+    const contactsForeignKeyRows=contactsDb.prepare('PRAGMA foreign_key_check').all();
+    let semanticIntegrity;
+    try{semanticIntegrity=contacts.integrity(contactsDb);}catch(error){throw new AppError('CONTACTS_SCHEMA_INVALID','Contacts schema validation failed',{message:error?.message||String(error)});}
+    if(contactsIntegrityRows.length!==1||contactsIntegrityRows[0].integrity_check!=='ok'||contactsForeignKeyRows.length!==0||semanticIntegrity.ok!==true)throw new AppError('CONTACTS_INTEGRITY_ERROR','Contacts database integrity validation failed',{integrity:contactsIntegrityRows.map(x=>x.integrity_check),foreign_key_violations:contactsForeignKeyRows.length,semantic_errors:semanticIntegrity.errors??[]});
+    const personIds=new Set();
+    for(const row of db.prepare('SELECT DISTINCT assignee_id FROM tasks').all())personIds.add(Number(row.assignee_id));
+    for(const row of db.prepare('SELECT DISTINCT assignee_id FROM recurrences').all())personIds.add(Number(row.assignee_id));
+    for(const personId of personIds)if(!contacts.canonicalPerson(contactsDb,personId))throw new AppError('CONTACT_REFERENCE_INVALID',`Dangling Person reference P-${personId}`);
+    return{ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:schemaVersion,contacts_schema_version:contactsSchemaVersion,sqlite_version:db.prepare('SELECT sqlite_version() v').get().v,database:DB_PATH,timezone:TZ,local_date:localDate(),local_time:localTime(),integrity:{ok:true},counts:{inbox:db.prepare('SELECT count(*) n FROM inbox_items').get().n,tasks:db.prepare('SELECT count(*) n FROM tasks').get().n,projects:db.prepare('SELECT count(*) n FROM projects').get().n,people:contactsDb.prepare('SELECT count(*) n FROM people').get().n,active_people:contactsDb.prepare("SELECT count(*) n FROM people WHERE status='ACTIVE'").get().n,labels:db.prepare('SELECT count(*) n FROM labels').get().n,comments:db.prepare('SELECT count(*) n FROM task_comments').get().n,events:db.prepare('SELECT count(*) n FROM task_events').get().n,terms:db.prepare('SELECT count(*) n FROM term_aliases').get().n,recurrences:db.prepare('SELECT count(*) n FROM recurrences').get().n,recurrence_occurrences:db.prepare('SELECT count(*) n FROM recurrence_occurrences').get().n,recurrence_events:db.prepare('SELECT count(*) n FROM recurrence_events').get().n,reminders:db.prepare('SELECT count(*) n FROM reminders').get().n,deadline_change_requests:db.prepare('SELECT count(*) n FROM deadline_change_requests').get().n,pending_deadline_change_requests:db.prepare("SELECT count(*) n FROM deadline_change_requests WHERE status='PENDING'").get().n,domain_bindings:db.prepare('SELECT count(*) n FROM task_domain_bindings').get().n}};
+  }finally{try{contactsDb?.close();}catch{}try{db.close();}catch{}}
+}
 function reviewSnapshot(p){
   const raw=required(p,'boundary',40),instant=new Date(raw);
   if(Number.isNaN(instant.getTime()))throw new AppError('INVALID_BOUNDARY','boundary must be a valid ISO timestamp');
@@ -662,10 +694,10 @@ try{
   else if(scope==='review'&&action==='management-snapshot')ok(managementReviewSnapshot(p));
   else if(hiddenMaterialize){db=openDb();db.exec('BEGIN IMMEDIATE;');try{const result=materializeCalendars(db);db.exec('COMMIT;');ok(result);}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
   else if(hiddenReminderDispatchSend){db=openDb();ok(reminderDispatchSend(db));}
+  else if(scope==='health')ok(healthSnapshot());
   else{
     db=openDb();
     if(scope==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,database:DB_PATH,timezone:TZ});
-    else if(scope==='health')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:db.prepare('PRAGMA user_version').get().user_version,sqlite_version:db.prepare('SELECT sqlite_version() v').get().v,database:DB_PATH,timezone:TZ,local_date:localDate(),local_time:localTime(),counts:{inbox:db.prepare('SELECT count(*) n FROM inbox_items').get().n,tasks:db.prepare('SELECT count(*) n FROM tasks').get().n,projects:db.prepare('SELECT count(*) n FROM projects').get().n,people:db.prepare('SELECT count(*) n FROM contacts.people').get().n,active_people:db.prepare("SELECT count(*) n FROM contacts.people WHERE status='ACTIVE'").get().n,labels:db.prepare('SELECT count(*) n FROM labels').get().n,comments:db.prepare('SELECT count(*) n FROM task_comments').get().n,events:db.prepare('SELECT count(*) n FROM task_events').get().n,terms:db.prepare('SELECT count(*) n FROM term_aliases').get().n,recurrences:db.prepare('SELECT count(*) n FROM recurrences').get().n,recurrence_occurrences:db.prepare('SELECT count(*) n FROM recurrence_occurrences').get().n,recurrence_events:db.prepare('SELECT count(*) n FROM recurrence_events').get().n,reminders:db.prepare('SELECT count(*) n FROM reminders').get().n,deadline_change_requests:db.prepare('SELECT count(*) n FROM deadline_change_requests').get().n,pending_deadline_change_requests:db.prepare("SELECT count(*) n FROM deadline_change_requests WHERE status='PENDING'").get().n,domain_bindings:db.prepare('SELECT count(*) n FROM task_domain_bindings').get().n}});
     else if(scope==='config')ok(taskBinding(db,action,p)); else if(scope==='deadline-request')ok(deadlineRequest(db,action,p)); else if(scope==='inbox')ok(inbox(db,action,p)); else if(scope==='task')ok(task(db,action,p)); else if(scope==='reminder')ok(reminder(db,action,p)); else if(scope==='reminder-internal'&&action==='dispatch')ok(reminderDispatch(db,p)); else if(scope==='reminder-internal'&&action==='render')ok(reminderRenderClaim(db,p)); else if(scope==='reminder-internal'&&action==='settle')ok(reminderSettle(db,p)); else if(scope==='recurrence')ok(recurrence(db,action,p)); else if(scope==='project')ok(project(db,action,p)); else if(scope==='task-project')ok(taskProject(db,action,p)); else if(scope==='person')ok(person(db,action,p)); else if(scope==='label')ok(label(db,action,p)); else if(scope==='term')ok(term(db,action,p)); else if(scope==='task-label')ok(taskLabel(db,action,p)); else if(scope==='comment')ok(comment(db,action,p)); else if(scope==='ref'&&action==='resolve')ok(refResolve(db,p)); else throw new AppError('USAGE','Usage: taskctl <init|health|config|deadline-request|inbox|task|reminder|recurrence|project|task-project|person|label|term|task-label|comment|ref> ...');
   }
 }catch(e){die(e);}finally{try{db?.close();}catch{}}

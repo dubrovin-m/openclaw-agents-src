@@ -27,12 +27,9 @@ export function compareVersions(left, right) {
   return 0;
 }
 
-export function isOpenClawVersionCompatible(version, range) {
-  const match = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(String(range ?? '').trim());
-  if (!match) return false;
-  const floor = { major: Number(match[1]), minor: Number(match[2]), patch: Number(match[3]) };
+export function isOpenClawVersionCompatible(version, qualifiedVersion) {
   try {
-    return compareVersions(parseVersion(version), floor) >= 0;
+    return compareVersions(parseVersion(version), parseVersion(qualifiedVersion)) === 0;
   } catch {
     return false;
   }
@@ -75,26 +72,40 @@ export function assertSupportedNodeVersion(version, contract) {
 }
 
 export function assertRepositoryCompatibility(repoRoot, contract = loadRuntimeContract(path.join(repoRoot, 'runtime-contract.json'))) {
+  const qualifiedVersion = contract.openclaw.version;
   const release = JSON.parse(fs.readFileSync(path.join(repoRoot, 'agents/tasks/release.json'), 'utf8'));
   const pkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'agents/tasks/plugins/taskctl/package.json'), 'utf8'));
   if (release?.format !== 'task-agent-release-v2') fail('unsupported Task Agent release format');
   const buildVersion = release?.generation?.openclaw_build_version;
   const compatRange = release?.generation?.openclaw_compat;
   parseVersion(buildVersion);
-  if (!isOpenClawVersionCompatible(contract.openclaw.version, compatRange)) fail('runtime contract OpenClaw version is outside Task plugin compatibility');
+  if (buildVersion !== qualifiedVersion || !isOpenClawVersionCompatible(qualifiedVersion, compatRange)) fail('Task plugin compatibility must equal the qualified OpenClaw runtime');
   if (pkg?.peerDependencies?.openclaw !== compatRange) fail('Task plugin OpenClaw peer range differs from release compatibility');
   if (pkg?.openclaw?.compat?.pluginApi !== compatRange) fail('Task plugin API range differs from release compatibility');
   if (pkg?.devDependencies?.openclaw !== buildVersion) fail('Task plugin OpenClaw dev dependency differs from release build version');
   if (pkg?.openclaw?.build?.openclawVersion !== buildVersion) fail('Task plugin build metadata differs from release build version');
   if (release?.generation?.typebox_version !== pkg?.dependencies?.typebox) fail('Task release TypeBox version differs from plugin dependency');
+
+  const contactsRelease = JSON.parse(fs.readFileSync(path.join(repoRoot, 'shared/contacts/release.json'), 'utf8'));
+  const contactsPkg = JSON.parse(fs.readFileSync(path.join(repoRoot, 'shared/contacts/plugin/package.json'), 'utf8'));
+  if (contactsRelease?.format !== 'shared-contacts-release-v1') fail('unsupported Shared Contacts release format');
+  if (contactsRelease?.openclaw_build_version !== qualifiedVersion || !isOpenClawVersionCompatible(qualifiedVersion, contactsRelease?.openclaw_compat)) fail('Contacts plugin compatibility must equal the qualified OpenClaw runtime');
+  if (contactsPkg?.peerDependencies?.openclaw !== contactsRelease.openclaw_compat) fail('Contacts plugin OpenClaw peer range differs from release compatibility');
+  if (contactsPkg?.openclaw?.compat?.pluginApi !== contactsRelease.openclaw_compat) fail('Contacts plugin API range differs from release compatibility');
+  if (contactsPkg?.devDependencies?.openclaw !== contactsRelease.openclaw_build_version) fail('Contacts plugin OpenClaw dev dependency differs from release build version');
+  if (contactsPkg?.openclaw?.build?.openclawVersion !== contactsRelease.openclaw_build_version) fail('Contacts plugin build metadata differs from release build version');
+
   return {
     ok: true,
-    openclaw_version: contract.openclaw.version,
+    openclaw_version: qualifiedVersion,
     node_ci_version: contract.node.ci_version,
     taskctl_version: release.generation.taskctl_version,
     plugin_version: release.plugin.version,
     openclaw_build_version: buildVersion,
     openclaw_compat: compatRange,
+    contacts_plugin_version: contactsRelease.plugin.version,
+    contacts_openclaw_build_version: contactsRelease.openclaw_build_version,
+    contacts_openclaw_compat: contactsRelease.openclaw_compat,
   };
 }
 

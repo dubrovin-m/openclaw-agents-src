@@ -31,7 +31,7 @@
             "-nt",
             "-l",
             "auto",
-            "{{MediaPath}}"
+            "{{AttachmentPath}}"
           ],
           "timeoutSeconds": 180,
           "capabilities": [

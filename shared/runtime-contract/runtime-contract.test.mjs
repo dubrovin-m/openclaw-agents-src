@@ -14,20 +14,22 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../..');
 const contract = loadRuntimeContract(path.join(repoRoot, 'runtime-contract.json'));
 
-test('repository release and plugin match the runtime contract', () => {
+test('Task and Contacts plugin releases match the qualified runtime contract exactly', () => {
   const result = assertRepositoryCompatibility(repoRoot, contract);
   assert.equal(result.ok, true);
   assert.equal(result.openclaw_version, contract.openclaw.version);
   assert.equal(result.node_ci_version, '26.7.0');
-  assert.equal(result.openclaw_build_version, '2026.8.2');
-  assert.equal(result.openclaw_compat, '>=2026.8.2');
+  assert.equal(result.openclaw_build_version, '2026.9.5');
+  assert.equal(result.openclaw_compat, '2026.9.5');
+  assert.equal(result.contacts_openclaw_build_version, '2026.9.5');
+  assert.equal(result.contacts_openclaw_compat, '2026.9.5');
 });
 
-test('Task plugin compatibility is independent from the exact runtime patch target', () => {
-  assert.equal(isOpenClawVersionCompatible('2026.8.2', '>=2026.8.2'), true);
-  assert.equal(isOpenClawVersionCompatible('2026.8.3', '>=2026.8.2'), true);
-  assert.equal(isOpenClawVersionCompatible('2026.8.1', '>=2026.8.2'), false);
-  assert.equal(isOpenClawVersionCompatible('2026.9.0', 'invalid'), false);
+test('plugin compatibility does not imply unqualified future OpenClaw hosts', () => {
+  assert.equal(isOpenClawVersionCompatible('2026.9.5', '2026.9.5'), true);
+  assert.equal(isOpenClawVersionCompatible('2026.9.6', '2026.9.5'), false);
+  assert.equal(isOpenClawVersionCompatible('2026.9.4', '2026.9.5'), false);
+  assert.equal(isOpenClawVersionCompatible('2026.9.5', '>=2026.9.5'), false);
 });
 
 test('supported Node lines are explicit and bounded', () => {

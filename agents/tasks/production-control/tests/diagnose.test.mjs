@@ -48,7 +48,7 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
 
   const pluginPackage = path.join(openclaw, 'extensions', 'taskctl', 'package.json');
   const typeboxPackage = path.join(openclaw, 'extensions', 'taskctl', 'node_modules', 'typebox', 'package.json');
-  const writePlugin = (version, typebox = '1.3.15', openclawCompat = '>=2026.8.2', buildVersion = expectedOpenClawVersion) => {
+  const writePlugin = (version, typebox = '1.3.15', openclawCompat = expectedOpenClawVersion, buildVersion = expectedOpenClawVersion) => {
     fs.writeFileSync(pluginPackage, JSON.stringify({ name: 'openclaw-plugin-taskctl', version, peerDependencies: { openclaw: openclawCompat }, openclaw: { compat: { pluginApi: openclawCompat }, build: { openclawVersion: buildVersion } } }));
     fs.writeFileSync(typeboxPackage, JSON.stringify({ version: typebox }));
   };
@@ -64,7 +64,7 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
       taskctl_version: '0.4.0',
       sqlite_schema: 4,
       openclaw_build_version: expectedOpenClawVersion,
-      openclaw_compat: '>=2026.8.2',
+      openclaw_compat: expectedOpenClawVersion,
       typebox_version: '1.3.15',
     },
     plugin: { name: 'openclaw-plugin-taskctl', version: '0.4.0' },
@@ -144,24 +144,25 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
     assert.equal(result.checks.release.ok, false, JSON.stringify(result));
     writePlugin('0.4.0');
 
-    writePlugin('0.4.0', '1.3.15', '>=2026.9.0');
+    writePlugin('0.4.0', '1.3.15', '2026.9.0');
     diagnose = await loadDiagnose();
     result = await diagnose();
     assert.equal(result.checks.release.ok, false, JSON.stringify(result));
     writePlugin('0.4.0');
 
-    const compatibleRuntimeContract = path.join(root, 'runtime-contract-compatible-patch.json');
-    const compatibleContract = JSON.parse(JSON.stringify(runtimeContract));
-    compatibleContract.openclaw.version = '2026.8.3';
-    fs.writeFileSync(compatibleRuntimeContract, JSON.stringify(compatibleContract));
-    process.env.OPC_RUNTIME_CONTRACT = compatibleRuntimeContract;
-    writeOpenClaw('2026.8.3');
+    const unqualifiedRuntimeContract = path.join(root, 'runtime-contract-unqualified-patch.json');
+    const unqualifiedContract = JSON.parse(JSON.stringify(runtimeContract));
+    unqualifiedContract.openclaw.version = '2026.9.6';
+    fs.writeFileSync(unqualifiedRuntimeContract, JSON.stringify(unqualifiedContract));
+    process.env.OPC_RUNTIME_CONTRACT = unqualifiedRuntimeContract;
+    writeOpenClaw('2026.9.6');
     diagnose = await loadDiagnose();
     result = await diagnose();
-    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.checks.release.ok, false, JSON.stringify(result));
     assert.equal(result.checks.release.expected.openclaw_build_version, expectedOpenClawVersion);
-    assert.equal(result.checks.release.expected.openclaw_compat, '>=2026.8.2');
-    assert.equal(result.checks.runtime.openclaw_version, '2026.8.3');
+    assert.equal(result.checks.release.expected.openclaw_compat, expectedOpenClawVersion);
+    assert.equal(result.checks.runtime.openclaw_version, '2026.9.6');
     process.env.OPC_RUNTIME_CONTRACT = path.join(repoRoot, 'runtime-contract.json');
     writeOpenClaw(expectedOpenClawVersion);
 

@@ -25,11 +25,13 @@ const {DatabaseSync}=require('node:sqlite');
 const IMPLEMENTATION_VERSION = '$version';
 const TARGET_SCHEMA = $schema;
 if(process.argv[2]==='init'){
-  process.stdout.write(JSON.stringify({implementation_version:IMPLEMENTATION_VERSION,schema_version:TARGET_SCHEMA})+'\\n');
-} else if(process.argv[2]==='health'){
   const db=new DatabaseSync(process.env.TASKCTL_DB);
   try{
     let v=Number(db.prepare('PRAGMA user_version').get().user_version);
+    if (v === 0) {
+      db.exec('PRAGMA user_version='+TARGET_SCHEMA+';');
+      v=TARGET_SCHEMA;
+    }
     if ($migrate === 1 && v === 4 && TARGET_SCHEMA === 5) {
       db.exec('BEGIN IMMEDIATE');
       try {
@@ -39,6 +41,13 @@ if(process.argv[2]==='init'){
       v=Number(db.prepare('PRAGMA user_version').get().user_version);
     }
     process.stdout.write(JSON.stringify({implementation_version:IMPLEMENTATION_VERSION,schema_version:v})+'\\n');
+    if(v!==TARGET_SCHEMA)process.exitCode=2;
+  } finally { db.close(); }
+} else if(process.argv[2]==='health'){
+  const db=new DatabaseSync(process.env.TASKCTL_DB,{readOnly:true});
+  try{
+    const v=Number(db.prepare('PRAGMA user_version').get().user_version);
+    process.stdout.write(JSON.stringify({ok:v===TARGET_SCHEMA,implementation_version:IMPLEMENTATION_VERSION,schema_version:v,integrity:{ok:v===TARGET_SCHEMA}})+'\\n');
     if(v!==TARGET_SCHEMA)process.exitCode=2;
   } finally { db.close(); }
 } else process.exitCode=2;
@@ -55,10 +64,10 @@ cat > "$FIX/config/tasks-tools.json" <<'JSON'
 {"profile":"full","allow":["taskctl","task_update","task_complete","task_cancel","read"],"deny":["write","edit","apply_patch","exec","process","browser","gateway"],"fs":{"workspaceOnly":true}}
 JSON
 cat > "$FIX/plugins/taskctl/package.json" <<JSON
-{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":">=$OPENCLAW_VERSION"},"openclaw":{"extensions":["./dist/plugin.js"],"compat":{"pluginApi":">=$OPENCLAW_VERSION"},"build":{"openclawVersion":"$OPENCLAW_VERSION"}}}
+{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":"$OPENCLAW_VERSION"},"openclaw":{"extensions":["./dist/plugin.js"],"compat":{"pluginApi":"$OPENCLAW_VERSION"},"build":{"openclawVersion":"$OPENCLAW_VERSION"}}}
 JSON
 cat > "$FIX/plugins/taskctl/package-lock.json" <<JSON
-{"name":"openclaw-plugin-taskctl","version":"0.4.1","packages":{"":{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":">=$OPENCLAW_VERSION"}},"node_modules/typebox":{"version":"1.3.15"}}}
+{"name":"openclaw-plugin-taskctl","version":"0.4.1","packages":{"":{"name":"openclaw-plugin-taskctl","version":"0.4.1","dependencies":{"typebox":"1.3.15"},"devDependencies":{"openclaw":"$OPENCLAW_VERSION"},"peerDependencies":{"openclaw":"$OPENCLAW_VERSION"}},"node_modules/typebox":{"version":"1.3.15"}}}
 JSON
 cat > "$FIX/plugins/taskctl/openclaw.plugin.json" <<'JSON'
 {"id":"taskctl","version":"0.4.1","contracts":{"tools":["taskctl","task_update","task_complete","task_cancel"]}}
@@ -83,7 +92,7 @@ USER_SHA=$(sha256sum "$FIX/workspace/USER.md"|awk '{print $1}')
 IDENTITY_SHA=$(sha256sum "$FIX/workspace/IDENTITY.md"|awk '{print $1}')
 HEARTBEAT_SHA=$(sha256sum "$FIX/workspace/HEARTBEAT.md"|awk '{print $1}')
 cat > "$FIX/release.json" <<JSON
-{"format":"task-agent-release-v2","generation":{"taskctl_version":"0.4.1","sqlite_schema":5,"openclaw_build_version":"$OPENCLAW_VERSION","openclaw_compat":">=$OPENCLAW_VERSION","typebox_version":"1.3.15"},"plugin":{"name":"openclaw-plugin-taskctl","version":"0.4.1","artifact":"artifacts/openclaw-plugin-taskctl-0.4.1.tgz","sha256":"$ART_SHA"},"from":{"sqlite_schemas":[4],"taskctl_versions":["0.4.0"],"plugin_versions":["0.4.0"],"workspace_sha256":{"AGENTS.md":"$OLD_AGENT_SHA","SOUL.md":"$SOUL_SHA","TOOLS.md":"$TOOLS_SHA","USER.md":"$USER_SHA","IDENTITY.md":"$IDENTITY_SHA","HEARTBEAT.md":"$HEARTBEAT_SHA"},"tools_sha256":"$OLD_TOOLS_SHA"},"calendar_materializer":{"kind":"openclaw-command-automation-v1","declaration_key":"tasks.recurrence-calendar-materialize.v1","name":"Task Recurrence Calendar Materializer","cron":"0 * * * *","timezone":"Europe/Moscow","exact":true,"timeout_seconds":30}}
+{"format":"task-agent-release-v2","generation":{"taskctl_version":"0.4.1","sqlite_schema":5,"openclaw_build_version":"$OPENCLAW_VERSION","openclaw_compat":"$OPENCLAW_VERSION","typebox_version":"1.3.15"},"plugin":{"name":"openclaw-plugin-taskctl","version":"0.4.1","artifact":"artifacts/openclaw-plugin-taskctl-0.4.1.tgz","sha256":"$ART_SHA"},"from":{"sqlite_schemas":[4],"taskctl_versions":["0.4.0"],"plugin_versions":["0.4.0"],"workspace_sha256":{"AGENTS.md":"$OLD_AGENT_SHA","SOUL.md":"$SOUL_SHA","TOOLS.md":"$TOOLS_SHA","USER.md":"$USER_SHA","IDENTITY.md":"$IDENTITY_SHA","HEARTBEAT.md":"$HEARTBEAT_SHA"},"tools_sha256":"$OLD_TOOLS_SHA"},"calendar_materializer":{"kind":"openclaw-command-automation-v1","declaration_key":"tasks.recurrence-calendar-materialize.v1","name":"Task Recurrence Calendar Materializer","cron":"0 * * * *","timezone":"Europe/Moscow","exact":true,"timeout_seconds":30}}
 JSON
 
 mkdir -p "$TMP/shims" "$TMP/openclaw-package"

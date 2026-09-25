@@ -9,6 +9,7 @@ const repo=path.resolve(root,'../..');
 const releasePath=path.join(root,'release.json');
 const release=JSON.parse(fs.readFileSync(releasePath,'utf8'));
 const taskRelease=JSON.parse(fs.readFileSync(path.join(repo,'agents/tasks/release.json'),'utf8'));
+const runtimeContract=JSON.parse(fs.readFileSync(path.join(repo,'runtime-contract.json'),'utf8'));
 const sha=(p)=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');
 const fail=(m)=>{throw new Error(m);};
 const shaRe=/^[0-9a-f]{64}$/;
@@ -34,6 +35,7 @@ const lock=JSON.parse(fs.readFileSync(path.join(pluginDir,'package-lock.json'),'
 const manifest=JSON.parse(fs.readFileSync(path.join(pluginDir,'openclaw.plugin.json'),'utf8'));
 const plugin=release.plugin;
 if(plugin?.name!=='openclaw-plugin-contacts'||plugin.version!==release.implementation_version||pkg.name!==plugin.name||pkg.version!==plugin.version||lock.version!==plugin.version||lock.packages?.['']?.version!==plugin.version||manifest.id!=='contacts'||manifest.version!==plugin.version)fail('Contacts plugin identity mismatch');
+if(release.openclaw_build_version!==runtimeContract?.openclaw?.version||release.openclaw_compat!==runtimeContract?.openclaw?.version)fail('Contacts OpenClaw compatibility must equal the qualified runtime contract');
 if(pkg.dependencies?.typebox!==release.typebox_version||pkg.devDependencies?.openclaw!==release.openclaw_build_version||pkg.peerDependencies?.openclaw!==release.openclaw_compat||pkg.openclaw?.build?.openclawVersion!==release.openclaw_build_version||pkg.openclaw?.compat?.pluginApi!==release.openclaw_compat)fail('Contacts plugin compatibility mismatch');
 const artifact=path.join(root,plugin.artifact);
 const sidecar=artifact.replace(/\.tgz$/,'.sha256');

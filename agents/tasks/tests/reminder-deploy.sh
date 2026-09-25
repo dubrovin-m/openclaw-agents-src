@@ -5,17 +5,18 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel)
 RELEASE="$ROOT/release.json"
+CONTACTS_RELEASE="$REPO_ROOT/shared/contacts/release.json"
 TMP=$(mktemp -d /tmp/task-agent-reminder-deploy.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 fail(){ echo "$*" >&2; exit 2; }
 
-eval "$(node - "$RELEASE" <<'NODE'
-const r=require(process.argv[2]),m=r.reminder_dispatcher,q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.shared_contacts?.predecessor_mode!=='exact'||m?.kind!=='openclaw-command-automation-v1'||m?.predecessor_mode!=='exact-disabled-script-0.4.26')process.exit(2);
+eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
+const r=require(process.argv[2]),c=require(process.argv[3]),m=r.reminder_dispatcher,q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
+if(r?.shared_contacts?.predecessor_mode!=='exact'||m?.kind!=='openclaw-command-automation-v1'||m?.predecessor_mode!=='exact-disabled-script-0.4.26'||!c?.from)process.exit(2);
 for(const [k,v] of Object.entries({
   PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],
   TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,
-  CONTACTS_VERSION:r.shared_contacts.implementation_version,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,
+  PRED_CONTACTS:c.from.implementation_version,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,
   GOV_BOOTSTRAP:r.task_governance.bootstrap_path,
   REMINDER_KEY:m.declaration_key,REMINDER_NAME:m.name,REMINDER_CRON:m.cron,REMINDER_TZ:m.timezone,
   REMINDER_TIMEOUT:m.timeout_seconds,REMINDER_SUFFIX:JSON.stringify(m.command_argv_suffix)
@@ -23,7 +24,7 @@ for(const [k,v] of Object.entries({
 NODE
 )" || fail "Reminder release metadata invalid"
 [ "$PRED_SCHEMA" = 9 ] || fail "Reminder predecessor must be schema 9"
-[ "$PRED_PLUGIN" = "$TARGET_PLUGIN" ] || fail "Reminder simplification must not require a plugin release"
+[ "$PRED_PLUGIN" = 0.4.26 ] || fail "Reminder predecessor plugin must be 0.4.26"
 git -C "$REPO_ROOT" cat-file -e "$PRED^{commit}" || fail "Declared predecessor unavailable"
 
 OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
@@ -156,7 +157,7 @@ echo active > "$BASE/gateway.state"
 
 oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$OPENCLAW_VERSION" "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$OPENCLAW_VERSION" "$PRED_PLUGIN" "$PRED_CONTACTS" >/dev/null || fail "predecessor plugin registry is not exact"
 
 SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
 const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{const p=db.prepare("select id from people where is_self=1 and status='ACTIVE' and merged_into is null").all();if(p.length!==1)process.exit(2);process.stdout.write('P-'+p[0].id);}finally{db.close();}

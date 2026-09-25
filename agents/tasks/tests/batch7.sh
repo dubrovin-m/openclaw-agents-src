@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.13"'; contains "$a" '"schema_version":9'
+a=$(plain init); contains "$a" '"implementation_version":"0.4.14"'; contains "$a" '"schema_version":9'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'
@@ -134,6 +134,7 @@ try{const tables=['inbox_items','capture_receipts','people','person_aliases','la
 NODE
 )
 contains "$before" '"uv":4'
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" init >/dev/null
 health=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MIGDB" TASKCTL_CONTACTS_DB="$MIGCDB" TASKCTL_TEST_NOW="$NOW" node "$TASKCTL" health); contains "$health" '"schema_version":9'; contains "$health" '"projects":0'; contains "$health" '"recurrences":0'
 after=$(node - "$MIGDB" "$MIGCDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});
@@ -149,7 +150,7 @@ FAULTDB="$TMP/fault.sqlite3"
 FAULTCDB="$TMP/fault-contacts.sqlite3"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_TEST_NOW="$NOW" node "$PREDECESSOR" init >/dev/null
 set +e
-fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_CONTACTS_DB="$FAULTCDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_TEST_MIGRATION_FAULT=after-task-column node "$TASKCTL" health); rc=$?
+fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FAULTDB" TASKCTL_CONTACTS_DB="$FAULTCDB" TASKCTL_TEST_NOW="$NOW" TASKCTL_TEST_MIGRATION_FAULT=after-task-column node "$TASKCTL" init); rc=$?
 set -e
 [ "$rc" -ne 0 ]; contains "$fault" '"code":"TEST_MIGRATION_FAULT"'
 [ ! -e "$FAULTCDB" ]
