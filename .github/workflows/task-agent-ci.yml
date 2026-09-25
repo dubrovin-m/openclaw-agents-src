@@ -217,6 +217,14 @@ jobs:
           node --check agents/tasks/taskctl
           bash -n agents/tasks/validate.sh
           bash -n agents/tasks/install.sh
+          for guarded_entrypoint in agents/tasks/validate.sh agents/tasks/install.sh; do
+            set +e
+            guard_output="$(env -u GITHUB_ACTIONS bash "$guarded_entrypoint" 2>&1)"
+            guard_rc=$?
+            set -e
+            test "$guard_rc" -eq 2
+            grep -Fq "Task Agent repository qualification is CI-first." <<<"$guard_output"
+          done
           bash -n agents/tasks/deploy.sh
           bash -n agents/tasks/recover.sh
           bash -n agents/tasks/tests/batch6.sh
