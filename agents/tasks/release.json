@@ -16,7 +16,6 @@
   },
   "from": {
     "source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
-    "workspace_source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
     "sqlite_schemas": [
       9
     ],
