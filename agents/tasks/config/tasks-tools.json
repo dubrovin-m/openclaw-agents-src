@@ -66,8 +66,7 @@
     "recurrence_cancel",
     "read",
     "task_daily_review",
-    "task_management_review",
-    "task_reminder_dispatch"
+    "task_management_review"
   ],
   "deny": [
     "write",

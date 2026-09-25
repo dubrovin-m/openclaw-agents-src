@@ -35,7 +35,8 @@ set -e
 [ "$lost_health_rc" -ne 0 ]
 [ ! -e "$LOST_CDB" ]
 rm -rf "$TMP/lost"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.implementation_version!=="0.4.12")process.exit(1)})'
+TASKCTL_VERSION=$(node -e 'process.stdout.write(require(process.argv[1]).generation.taskctl_version)' "$ROOT/agents/tasks/release.json")
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";const v=process.argv[1];process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.implementation_version!==v)process.exit(1)})' "$TASKCTL_VERSION"
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.4")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.
 crun '{"operation_key":"c1","display_name":"Побединская Н.","organization":"Компания","title":"Директор"}' create >/dev/null

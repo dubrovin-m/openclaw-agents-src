@@ -14,7 +14,7 @@ t(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TDB" TASKCTL_CONTACTS_DB="$CDB" TA
 c(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
 
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TDB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init |
-  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.implementation_version!=="0.4.12"||x.schema_version!==9)process.exit(1)})'
+  node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.implementation_version!=="0.4.13"||x.schema_version!==9)process.exit(1)})'
 c '{"operation_key":"g","display_name":"Office CEO"}' group_create >/dev/null
 c '{"operation_key":"p","display_name":"Иванов И."}' create >/dev/null
 c '{"operation_key":"gm","group_id":"PG-1","person":"P-1"}' group_member_add >/dev/null

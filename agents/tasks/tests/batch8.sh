@@ -24,8 +24,8 @@ if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_d
 if (tools.allow.filter((name) => name === 'task_management_review').length !== 1) {
   fail('task_management_review must be host-allowlisted exactly once');
 }
-if (tools.allow.filter((name) => name === 'task_reminder_dispatch').length !== 1) {
-  fail('task_reminder_dispatch must be host-allowlisted exactly once for scheduler-only execution');
+if (tools.allow.includes('task_reminder_dispatch')) {
+  fail('task_reminder_dispatch must not be exposed to the ordinary Task model surface');
 }
 for (const required of ['deadline_request_get','deadline_request_create','deadline_request_approve','deadline_request_reject']) {
   if (tools.allow.filter((name) => name === required).length !== 1) fail(required + ' must be host-allowlisted exactly once');
@@ -54,7 +54,7 @@ for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyRe
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
 const taskctl = read('taskctl');
-for (const required of ["const IMPLEMENTATION_VERSION = '0.4.12';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
+for (const required of ["const IMPLEMENTATION_VERSION = '0.4.13';", 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
   if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
@@ -123,7 +123,7 @@ CDB="$TMP/tasks-contacts.sqlite3"
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init)
 node - "$init" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (result.schema_version !== 9 || result.implementation_version !== '0.4.12') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.12 / schema 9`);
+if (result.schema_version !== 9 || result.implementation_version !== '0.4.13') throw new Error(`Batch 8 runtime initialized ${result.implementation_version} schema ${result.schema_version}, expected taskctl 0.4.13 / schema 9`);
 NODE
 
 
@@ -158,7 +158,7 @@ NODE
 snapshot=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" TASKCTL_PAYLOAD="{\"boundary\":\"$BOUNDARY\"}" "$TASKCTL" review snapshot)
 node - "$snapshot" <<'NODE'
 const result = JSON.parse(process.argv[2]);
-if (!result.ok || result.implementation_version !== '0.4.12' || result.schema_version !== 9 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
+if (!result.ok || result.implementation_version !== '0.4.13' || result.schema_version !== 9 || result.boundary !== '2026-09-05T06:30:00.000Z') process.exit(2);
 if (!Array.isArray(result.tasks) || result.tasks.length !== 250) process.exit(3);
 if (result.tasks.some((task) => task.title === 'Done' || task.title === 'Future')) process.exit(4);
 const first = result.tasks.find((task) => task.id === 'T-1');

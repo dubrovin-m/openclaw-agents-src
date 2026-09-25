@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
 const crypto = require('node:crypto');
+const { spawnSync } = require('node:child_process');
 const { DatabaseSync } = require('node:sqlite');
 
 const SOURCE_CONTACTS_LIB = path.resolve(__dirname, '../../shared/contacts');
@@ -13,7 +14,7 @@ const CONTACTS_LIB = fs.existsSync(path.join(SOURCE_CONTACTS_LIB, 'core.cjs')) ?
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 const contactStore = require(path.join(CONTACTS_LIB, 'task-store.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.4.12';
+const IMPLEMENTATION_VERSION = '0.4.13';
 const SCHEMA_VERSION = 9;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = contacts.SELF_NAME;
@@ -450,9 +451,11 @@ function recurrenceCancel(db,p){return mutate(db,'recurrence.cancel',p,()=>{cons
 function recurrence(db,action,p){if(action==='create')return recurrenceCreate(db,p);if(action==='list')return recurrenceList(db,p);if(action==='get'){const n=recurrenceId(p.id),r=recurrenceRow(db,n);if(!r)throw new AppError('NOT_FOUND',`Recurrence R-${n} not found`,undefined,3);return{ok:true,recurrence:recurrencePresented(db,r)};}if(action==='detail')return recurrenceDetail(db,recurrenceId(p.id));if(action==='history'){const n=recurrenceId(p.id);if(!recurrenceRow(db,n))throw new AppError('NOT_FOUND',`Recurrence R-${n} not found`,undefined,3);return{ok:true,recurrence_id:`R-${n}`,events:db.prepare('SELECT * FROM recurrence_events WHERE recurrence_id=? ORDER BY id').all(n).map(x=>({id:`RE-${x.id}`,recurrence_id:`R-${x.recurrence_id}`,event_type:x.event_type,old_value:x.old_value?JSON.parse(x.old_value):null,new_value:x.new_value?JSON.parse(x.new_value):null,reason:x.reason,occurred_at:x.occurred_at}))};}if(action==='update')return recurrenceUpdate(db,p);if(action==='pause')return recurrencePause(db,p);if(action==='resume')return recurrenceResume(db,p);if(action==='cancel')return recurrenceCancel(db,p);throw new AppError('USAGE',`Unknown recurrence action: ${action}`);}
 
 function fmtReminder(db,r){const local=localDateTimeAt(r.trigger_at),task=r.task_id===null?null:taskRow(db,r.task_id);return{id:`REM-${r.id}`,task_id:r.task_id===null?null:`T-${r.task_id}`,text:r.text??null,display_text:r.task_id===null?r.text:(task?.title??null),trigger_at:r.trigger_at,trigger_date:local.date,trigger_time:local.time,status:r.status,close_reason:r.close_reason??null,created_at:r.created_at,closed_at:r.closed_at??null};}
+const REMINDER_SEND_TOKEN_PREFIX='reminder-send:';
 function reminderRow(db,n){return db.prepare('SELECT * FROM reminders WHERE id=?').get(n);}
 function assertReminderNotClaimed(r){if(r.claim_token!==null)throw new AppError('REMINDER_IN_FLIGHT','Reminder delivery is already in progress; retry shortly',{id:`REM-${r.id}`});}
-function closeLinkedReminders(db,taskId,reason,at){const rows=db.prepare("SELECT id FROM reminders WHERE task_id=? AND status='ACTIVE' ORDER BY id").all(taskId);if(rows.length)db.prepare("UPDATE reminders SET status='CLOSED',close_reason=?,closed_at=?,claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL WHERE task_id=? AND status='ACTIVE'").run(reason,at,taskId);return rows.map(x=>`REM-${x.id}`);}
+function reminderSendInFlight(r,at){return typeof r.claim_token==='string'&&r.claim_token.startsWith(REMINDER_SEND_TOKEN_PREFIX)&&typeof r.claim_expires_at==='string'&&r.claim_expires_at>at;}
+function closeLinkedReminders(db,taskId,reason,at){const rows=db.prepare("SELECT id,claim_token,claim_expires_at FROM reminders WHERE task_id=? AND status='ACTIVE' ORDER BY id").all(taskId),sending=rows.filter(r=>reminderSendInFlight(r,at));if(sending.length)throw new AppError('REMINDER_IN_FLIGHT','Reminder delivery has already started; retry the Task transition shortly',{reminder_ids:sending.map(x=>`REM-${x.id}`)});if(rows.length)db.prepare("UPDATE reminders SET status='CLOSED',close_reason=?,closed_at=?,claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL WHERE task_id=? AND status='ACTIVE'").run(reason,at,taskId);return rows.map(x=>`REM-${x.id}`);}
 function reminder(db,action,p){
   if(action==='list'){const limit=Number.isSafeInteger(p.limit)?Math.min(Math.max(p.limit,1),200):100,rows=db.prepare("SELECT * FROM reminders WHERE status='ACTIVE' ORDER BY trigger_at,id LIMIT ?").all(limit);return{ok:true,reminders:rows.map(x=>fmtReminder(db,x)),count:rows.length,timezone:TZ};}
   if(action==='create')return mutate(db,'reminder.create',p,()=>{const hasTask='task_id'in p,hasText='text'in p;if(hasTask===hasText)throw new AppError('INVALID_FIELD','Reminder requires exactly one of task_id or text');const triggerAt=futureReminderInstant(p.trigger_date,p.trigger_time),at=now();let taskId=null,text=null;if(hasTask){taskId=id(p.task_id,'T');const task=taskRow(db,taskId);if(!task)throw new AppError('NOT_FOUND',`Task T-${taskId} not found`,undefined,3);if(task.status!=='OPEN')throw new AppError('INVALID_STATE','Task-linked Reminder requires an OPEN Task');}else{text=required(p,'text',2000);}const n=Number(db.prepare("INSERT INTO reminders(task_id,text,trigger_at,status,close_reason,created_at,closed_at,claim_token,claimed_at,claim_expires_at) VALUES(?,?,?,'ACTIVE',NULL,?,NULL,NULL,NULL,NULL)").run(taskId,text,triggerAt,at).lastInsertRowid);return{ok:true,reminder:fmtReminder(db,reminderRow(db,n))};});
@@ -462,8 +465,60 @@ function reminder(db,action,p){
 }
 function reminderClaimToken(p){return required(p,'claim_token',500);}
 function reminderDispatch(db,p){const token=reminderClaimToken(p),boundary=new Date(required(p,'boundary',40));if(Number.isNaN(boundary.getTime()))throw new AppError('INVALID_BOUNDARY','boundary must be a valid ISO timestamp');const at=boundary.toISOString(),expires=new Date(boundary.getTime()+5*60*1000).toISOString(),limit=Number.isSafeInteger(p.limit)?Math.min(Math.max(p.limit,1),100):100;db.exec('BEGIN IMMEDIATE;');try{db.prepare("UPDATE reminders SET claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL WHERE status='ACTIVE' AND claim_token IS NOT NULL AND claim_expires_at<=?").run(at);const due=db.prepare("SELECT id FROM reminders WHERE status='ACTIVE' AND claim_token IS NULL AND trigger_at<=? ORDER BY trigger_at,id LIMIT ?").all(at,limit);for(const row of due)db.prepare("UPDATE reminders SET claim_token=?,claimed_at=?,claim_expires_at=? WHERE id=? AND status='ACTIVE' AND claim_token IS NULL").run(token,at,expires,row.id);const rows=db.prepare("SELECT * FROM reminders WHERE status='ACTIVE' AND claim_token=? ORDER BY trigger_at,id").all(token),items=rows.map(x=>fmtReminder(db,x)),message=items.map(x=>`🔔 Напоминание: ${x.display_text}`).join('\n\n');db.exec('COMMIT;');return{ok:true,claim_token:token,count:items.length,reminders:items,message};}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
-function reminderRenderClaim(db,p){const token=reminderClaimToken(p),rows=db.prepare("SELECT * FROM reminders WHERE status='ACTIVE' AND claim_token=? ORDER BY trigger_at,id").all(token),items=rows.map(x=>fmtReminder(db,x)),message=items.map(x=>`🔔 Напоминание: ${x.display_text}`).join('\n\n');return{ok:true,claim_token:token,count:items.length,reminders:items,message};}
+function reminderRenderClaim(db,p){const token=reminderClaimToken(p),rows=db.prepare("SELECT r.* FROM reminders r LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status='ACTIVE' AND r.claim_token=? AND (r.task_id IS NULL OR t.status='OPEN') ORDER BY r.trigger_at,r.id").all(token),items=rows.map(x=>fmtReminder(db,x)),message=items.map(x=>`🔔 Напоминание: ${x.display_text}`).join('\n\n');return{ok:true,claim_token:token,count:items.length,reminders:items,message};}
+function reminderBeginSend(db,claimToken){const sendToken=`${REMINDER_SEND_TOKEN_PREFIX}${crypto.randomUUID()}`;db.exec('BEGIN IMMEDIATE;');try{const rows=db.prepare("SELECT r.* FROM reminders r LEFT JOIN tasks t ON t.id=r.task_id WHERE r.status='ACTIVE' AND r.claim_token=? AND (r.task_id IS NULL OR t.status='OPEN') ORDER BY r.trigger_at,r.id").all(claimToken),items=rows.map(x=>fmtReminder(db,x)),message=items.map(x=>`🔔 Напоминание: ${x.display_text}`).join('\n\n');if(items.length){const changed=db.prepare("UPDATE reminders SET claim_token=? WHERE status='ACTIVE' AND claim_token=? AND (task_id IS NULL OR EXISTS(SELECT 1 FROM tasks t WHERE t.id=reminders.task_id AND t.status='OPEN'))").run(sendToken,claimToken);if(Number(changed.changes)!==items.length)throw new AppError('REMINDER_SEND_DECISION_MISMATCH','Reminder send decision changed concurrently',{rendered:items.length,transitioned:Number(changed.changes)},1);}db.exec('COMMIT;');return{ok:true,claim_token:items.length?sendToken:claimToken,count:items.length,reminders:items,message};}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
 function reminderSettle(db,p){const token=reminderClaimToken(p);if(typeof p.delivered!=='boolean')throw new AppError('INVALID_FIELD','delivered must be boolean');const at=now();db.exec('BEGIN IMMEDIATE;');try{let affected;if(p.delivered){affected=db.prepare("SELECT id FROM reminders WHERE status='ACTIVE' AND claim_token=? ORDER BY id").all(token);db.prepare("UPDATE reminders SET status='CLOSED',close_reason='DELIVERED',closed_at=?,claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL WHERE status='ACTIVE' AND claim_token=?").run(at,token);}else{affected=db.prepare("SELECT id FROM reminders WHERE status='ACTIVE' AND claim_token=? ORDER BY id").all(token);db.prepare("UPDATE reminders SET claim_token=NULL,claimed_at=NULL,claim_expires_at=NULL WHERE status='ACTIVE' AND claim_token=?").run(token);}db.exec('COMMIT;');return{ok:true,claim_token:token,delivered:p.delivered,affected:affected.map(x=>`REM-${x.id}`),count:affected.length};}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
+
+function reminderOpenClawConfigPath(){
+  if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_OPENCLAW_CONFIG)return path.resolve(process.env.TASKCTL_TEST_OPENCLAW_CONFIG);
+  if(process.env.OPENCLAW_CONFIG_PATH)return path.resolve(process.env.OPENCLAW_CONFIG_PATH);
+  return path.join(os.homedir(),'.openclaw','openclaw.json');
+}
+function reminderDeliveryRoute(){
+  let config;
+  try{config=JSON.parse(fs.readFileSync(reminderOpenClawConfigPath(),'utf8'));}catch{throw new AppError('REMINDER_ROUTE_INVALID','Reminder delivery configuration is unavailable',undefined,1);}
+  const account=config?.channels?.telegram?.accounts?.tasks,bindings=Array.isArray(config?.bindings)?config.bindings:[];
+  if(!account||account.enabled!==true||account.dmPolicy!=='allowlist'||!Array.isArray(account.allowFrom)||account.allowFrom.length!==1||account.groupPolicy!=='allowlist'||!Array.isArray(account.groupAllowFrom)||account.groupAllowFrom.length!==1)throw new AppError('REMINDER_ROUTE_INVALID','Reminder delivery requires one owner-only Tasks Telegram route',undefined,1);
+  const target=String(account.allowFrom[0]??'').trim();
+  if(!target||String(account.groupAllowFrom[0]??'').trim()!==target)throw new AppError('REMINDER_ROUTE_INVALID','Reminder delivery owner route is ambiguous',undefined,1);
+  const matches=bindings.filter(x=>x?.agentId==='tasks'&&x?.match?.channel==='telegram'&&x?.match?.accountId==='tasks');
+  if(matches.length!==1)throw new AppError('REMINDER_ROUTE_INVALID','Reminder delivery requires one Tasks Telegram binding',undefined,1);
+  return{channel:'telegram',account:'tasks',target};
+}
+function reminderOpenClawBin(){
+  if(process.env.TASKCTL_ALLOW_DB_OVERRIDE==='1'&&process.env.TASKCTL_TEST_OPENCLAW_BIN)return path.resolve(process.env.TASKCTL_TEST_OPENCLAW_BIN);
+  return'openclaw';
+}
+function reminderConfirmedSend(result){
+  if(!result||Array.isArray(result)||typeof result!=='object'||result.action!=='send'||result.channel!=='telegram'||result.dryRun!==false)return false;
+  const messageId=result.messageId===undefined||result.messageId===null?'':String(result.messageId).trim();
+  if(!messageId)return false;
+  if(result.deliveryStatus==='sent')return true;
+  const payload=result.payload;
+  if(!payload||Array.isArray(payload)||typeof payload!=='object'||payload.ok!==true)return false;
+  const payloadMessageId=payload.messageId===undefined||payload.messageId===null?'':String(payload.messageId).trim();
+  return payloadMessageId!==''&&payloadMessageId===messageId;
+}
+function reminderDispatchSend(db){
+  const claimToken=`reminder-claim:${crypto.randomUUID()}`,boundary=now();
+  const claimed=reminderDispatch(db,{claim_token:claimToken,boundary,limit:100});
+  if(claimed.count===0)return{ok:true,count:0,delivered:0};
+  let route;
+  try{route=reminderDeliveryRoute();}catch(e){reminderSettle(db,{claim_token:claimToken,delivered:false});throw e;}
+  const send=reminderBeginSend(db,claimToken);
+  if(send.count===0){reminderSettle(db,{claim_token:claimToken,delivered:false});return{ok:true,count:0,delivered:0,suppressed:claimed.count};}
+  const args=['message','send','--channel',route.channel,'--account',route.account,'--target',route.target,'--message',send.message,'--json'];
+  let child;
+  try{child=spawnSync(reminderOpenClawBin(),args,{encoding:'utf8',timeout:40000,maxBuffer:1024*1024,stdio:['ignore','pipe','pipe']});}
+  catch{throw new AppError('REMINDER_DELIVERY_UNCONFIRMED','Reminder delivery was not confirmed; claim remains retryable',{count:send.count},1);}
+  if(child.error||child.signal||child.status!==0)throw new AppError('REMINDER_DELIVERY_UNCONFIRMED','Reminder delivery was not confirmed; claim remains retryable',{count:send.count},1);
+  let result;
+  try{result=JSON.parse(String(child.stdout??'').trim());}catch{throw new AppError('REMINDER_DELIVERY_UNCONFIRMED','Reminder delivery returned no confirmed success; claim remains retryable',{count:send.count},1);}
+  if(!reminderConfirmedSend(result))throw new AppError('REMINDER_DELIVERY_UNCONFIRMED','Reminder delivery returned no confirmed success; claim remains retryable',{count:send.count},1);
+  const settled=reminderSettle(db,{claim_token:send.claim_token,delivered:true});
+  if(settled.count!==send.count)throw new AppError('REMINDER_SETTLEMENT_MISMATCH','Reminder delivery succeeded but exact claim settlement changed concurrently',{sent:send.count,settled:settled.count},1);
+  return{ok:true,count:send.count,delivered:settled.count};
+}
 
 function createTask(db,spec,at=now()){
   const title=required(spec,'title',2000), status=spec.status??'OPEN'; if(!['OPEN','DONE'].includes(status))throw new AppError('INVALID_FIELD','New task status must be OPEN or DONE');
@@ -602,10 +657,11 @@ function refResolve(db,p){const n=Number(p.number);if(!Number.isSafeInteger(n)||
 
 let db;
 try{
-  const [scope,action]=process.argv.slice(2),hiddenMaterialize=scope==='recurrence'&&action==='materialize',p=payload(!['init','health'].includes(scope)&&!hiddenMaterialize);
+  const [scope,action]=process.argv.slice(2),hiddenMaterialize=scope==='recurrence'&&action==='materialize',hiddenReminderDispatchSend=scope==='reminder-internal'&&action==='dispatch-send',p=payload(!['init','health'].includes(scope)&&!hiddenMaterialize&&!hiddenReminderDispatchSend);
   if(scope==='review'&&action==='snapshot')ok(reviewSnapshot(p));
   else if(scope==='review'&&action==='management-snapshot')ok(managementReviewSnapshot(p));
   else if(hiddenMaterialize){db=openDb();db.exec('BEGIN IMMEDIATE;');try{const result=materializeCalendars(db);db.exec('COMMIT;');ok(result);}catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}}
+  else if(hiddenReminderDispatchSend){db=openDb();ok(reminderDispatchSend(db));}
   else{
     db=openDb();
     if(scope==='init')ok({ok:true,implementation_version:IMPLEMENTATION_VERSION,schema_version:SCHEMA_VERSION,database:DB_PATH,timezone:TZ});
