@@ -214,7 +214,9 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          timeout 600s bash -x agents/tasks/tests/current-predecessor-deploy.sh
+          trace_env="$(mktemp)"
+          printf 'set -x\n' > "$trace_env"
+          BASH_ENV="$trace_env" timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
 
       - name: Deterministic Task Agent regressions
         if: steps.scope.outputs.relevant == 'true'
