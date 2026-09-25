@@ -240,7 +240,29 @@ NODE
 for f in calendar-materializer.before.json reminder-dispatcher.before.json important-date-dispatcher.before.json; do
   test ! -f "$RECOVERY/$f" || fail "exact predecessor Automation must not require transition recovery snapshot: $f"
 done
+
+checksum_files=(RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz contacts-state.json contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz plugin-registry.before.json)
+for spec in "taskctl-managed.before.tar.gz taskctl dist/index.js" "contacts-plugin.before.tar.gz contacts dist/index.js"; do
+  read -r archive prefix owned_file <<<"$spec"
+  TAMPER="$TMP/tampered-${prefix}-recovery"
+  SCRATCH="$TMP/tampered-${prefix}-tree"
+  rm -rf "$TAMPER" "$SCRATCH"
+  cp -a "$RECOVERY" "$TAMPER"
+  mkdir -p "$SCRATCH"
+  tar -xzf "$TAMPER/$archive" -C "$SCRATCH"
+  printf '\n// recovery-source-drift\n' >>"$SCRATCH/$prefix/$owned_file"
+  tar -czf "$TAMPER/$archive" -C "$SCRATCH" "$prefix"
+  (cd "$TAMPER" && sha256sum "${checksum_files[@]}" > SHA256SUMS)
+  set +e
+  HOME="$R/home" bash "$ROOT/recover.sh" --test-root "$R" --inspect --from "$TAMPER" >/dev/null 2>&1
+  TAMPER_CODE=$?
+  set -e
+  [ "$TAMPER_CODE" -eq 2 ] || fail "tampered $prefix plugin recovery archive was not rejected"
+done
+
+touch "$R/workspace-tasks/TOOLS.md"
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual current predecessor recovery failed"
+[ ! -e "$R/workspace-tasks/TOOLS.md" ] || fail "current recovery did not remove stale retired TOOLS.md"
 assert_predecessor "$R"
 node - "$TASKS_BEFORE" "$(task_state "$R")" <<'NODE' || fail "manual recovery changed Task predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
