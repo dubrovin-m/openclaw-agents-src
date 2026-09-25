@@ -2,7 +2,7 @@
   "format": "task-agent-release-v2",
   "workspace_layout": "agents-md-tools-v1",
   "generation": {
-    "taskctl_version": "0.4.14",
+    "taskctl_version": "0.4.15",
     "sqlite_schema": 9,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.9.5",
@@ -15,21 +15,20 @@
     "sha256": "5e921e93da453b5ba74d56449b523f4e4ef61ef9033283e5ed24d5b82403f0f5"
   },
   "from": {
-    "source_revision": "31d32153c40c82fe67bd03f31fca3054de53458a",
-    "workspace_source_revision": "31d32153c40c82fe67bd03f31fca3054de53458a",
+    "source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
+    "workspace_source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
     "sqlite_schemas": [
       9
     ],
     "taskctl_versions": [
-      "0.4.13"
+      "0.4.14"
     ],
     "plugin_versions": [
-      "0.4.26"
+      "0.4.27"
     ],
     "workspace_sha256": {
       "AGENTS.md": "cb0331cd8f2ce1f90e48a5c6ba7aea08372c9149722d16bebbdbbb8b9b5d3a3f",
       "SOUL.md": "32b4944c5876ff1944e98b542406478058aa42f01ef705f6675199ea79d95fe4",
-      "TOOLS.md": "a67dab1171228c8bf7d7a7495f186fcb89bc940efac48530e17b906212ffd069",
       "USER.md": "f88ac7bd8acfb48becff9598d1912a9a1cfb45becc44db5bac6e8a252e680306",
       "IDENTITY.md": "370479c726f75e9d2a6d4786966da4b75225a6e6442731ab433af94be6a69b8d",
       "HEARTBEAT.md": "b6c8db15e58c92fd779ac0c6b05088314c1722612829f30d91c8c4991a73d1a9"
@@ -47,7 +46,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "6082f0dbce60d444263ebc78410e2521e1e9076b4bb04f39764dca2f7c6b0dc6",
+    "release_sha256": "638bd6bd87d1870fd3b6a7b9eebd6c131c0ecef48e2e968946c835bbfd88aeaa",
     "implementation_version": "0.1.5",
     "sqlite_schema": 3,
     "predecessor_mode": "exact"
@@ -67,7 +66,7 @@
     "delivery_channel": "telegram",
     "delivery_account": "tasks",
     "delivery_recipient_source": "tasks-owner-allowFrom-singleton",
-    "predecessor_mode": "exact-disabled-script-0.4.26"
+    "predecessor_mode": "exact"
   },
   "important_date_dispatcher": {
     "kind": "openclaw-script-automation-v1",
