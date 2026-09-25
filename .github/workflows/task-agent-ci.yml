@@ -223,8 +223,6 @@ jobs:
           bash -n agents/tasks/tests/health-readonly.sh
           bash -n agents/tasks/tests/compatibility-window.sh
           bash -n agents/tasks/tests/current-predecessor-deploy.sh
-          bash -n agents/tasks/tests/compatibility-window.sh
-          bash -n agents/tasks/tests/current-predecessor-deploy.sh
           bash -n agents/tasks/tests/isolated-runtime.sh
           bash -n agents/tasks/tests/batch7.sh
           bash -n agents/tasks/tests/batch8.sh
@@ -237,8 +235,6 @@ jobs:
           node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
           timeout 120s bash agents/tasks/tests/smoke.sh agents/tasks/taskctl
           timeout 120s bash agents/tasks/tests/health-readonly.sh agents/tasks/taskctl
-          timeout 120s bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
-          timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
           timeout 120s bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
           timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
           timeout 600s bash agents/tasks/tests/isolated-runtime.sh
