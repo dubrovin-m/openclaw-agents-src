@@ -65,7 +65,7 @@ const gov=r?.task_governance??null;if(gov&&(gov.kind!=='private-bootstrap-v1'||g
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 const rem=r?.reminder_dispatcher??null;
-if(rem!==null&&(rem?.kind!=='openclaw-script-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||typeof rem?.script!=='string'||!rem.script.trim()||rem?.tool!=='task_reminder_dispatch'||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||!Number.isSafeInteger(rem?.tool_budget)||rem.tool_budget<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.best_effort!==false))bad();
+if(rem!==null&&(rem?.kind!=='openclaw-command-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||JSON.stringify(rem?.command_argv_suffix)!==JSON.stringify(['reminder-internal','dispatch-send'])||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.predecessor_mode!=='exact-disabled-script-0.4.26'))bad();
 const idr=r?.important_date_dispatcher??null;
 if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false||!['absent','exact'].includes(idr?.predecessor_mode??'absent')))bad();
 if(!r?.from||!Array.isArray(r.from.plugin_versions)||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(r.from.plugin_versions).size!==r.from.plugin_versions.length)bad();
@@ -110,10 +110,9 @@ console.log(`REMINDER_DECLARATION=${q(rem?.declaration_key||'')}`);
 console.log(`REMINDER_NAME=${q(rem?.name||'')}`);
 console.log(`REMINDER_CRON=${q(rem?.cron||'')}`);
 console.log(`REMINDER_TIMEZONE=${q(rem?.timezone||'')}`);
-console.log(`REMINDER_SCRIPT=${q(rem?.script||'')}`);
-console.log(`REMINDER_TOOL=${q(rem?.tool||'')}`);
+console.log(`REMINDER_COMMAND_SUFFIX_JSON=${q(JSON.stringify(rem?.command_argv_suffix??[]))}`);
 console.log(`REMINDER_TIMEOUT=${q(rem?.timeout_seconds||'')}`);
-console.log(`REMINDER_TOOL_BUDGET=${q(rem?.tool_budget||'')}`);
+console.log(`REMINDER_PREDECESSOR_MODE=${q(rem?.predecessor_mode||'')}`);
 console.log(`REMINDER_CHANNEL=${q(rem?.delivery_channel||'')}`);
 console.log(`REMINDER_ACCOUNT=${q(rem?.delivery_account||'')}`);
 console.log(`IMPORTANT_DATE_ENABLED=${q(idr?'1':'0')}`);
@@ -202,6 +201,7 @@ if [ "$GOVERNANCE_ENABLED" = "1" ]; then GOVERNANCE_BOOTSTRAP="$STATE_DIR/$GOVER
 GOVERNANCE_BOOTSTRAP_SHA=""
 STATE_DB="$STATE_DIR/state/openclaw.sqlite"
 MATERIALIZER_COMMAND_JSON=$(node -e 'process.stdout.write(JSON.stringify([process.argv[1],"recurrence","materialize"]))' "$TASKCTL_TARGET")
+REMINDER_COMMAND_JSON=$(node -e 'const suffix=JSON.parse(process.argv[2]);process.stdout.write(JSON.stringify([process.argv[1],...suffix]))' "$TASKCTL_TARGET" "$REMINDER_COMMAND_SUFFIX_JSON")
 
 OPENCLAW_BIN=$(command -v openclaw || true)
 SYSTEMCTL_BIN=$(command -v systemctl || true)
@@ -222,6 +222,7 @@ START_PLUGIN_VERSION=""
 START_IS_TARGET=0
 START_MATERIALIZER_EXACT=0
 START_REMINDER_EXACT=0
+START_REMINDER_PREDECESSOR_EXACT=0
 REMINDER_DELIVERY_TO=""
 START_IMPORTANT_DATE_EXACT=0
 IMPORTANT_DATE_DELIVERY_TO=""
@@ -314,19 +315,36 @@ NODE
 reminder_dispatcher_absent(){ local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1; node -e 'const x=JSON.parse(process.argv[1]);if(!Array.isArray(x)||x.length!==0)process.exit(1)' "$jobs"; }
 reminder_dispatcher_exact(){
   [ "$REMINDER_ENABLED" = "1" ] || return 0
+  local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1
+  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$REMINDER_COMMAND_JSON" "$REMINDER_TIMEOUT" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],argv=JSON.parse(process.argv[7]),timeout=Number(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||typeof j.enabled!=='boolean'||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||j.payload?.toolsAllow!==undefined||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
+NODE
+}
+reminder_dispatcher_predecessor_exact(){
+  [ "$REMINDER_ENABLED" = "1" ] || return 1
+  [ "$REMINDER_PREDECESSOR_MODE" = "exact-disabled-script-0.4.26" ] || return 1
   local jobs destination; jobs=$(reminder_dispatcher_jobs_json) || return 1; destination=${REMINDER_DELIVERY_TO:-}; [ -n "$destination" ] || destination=$(resolve_reminder_delivery_to) || return 1
-  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$REMINDER_SCRIPT" "$REMINDER_TOOL" "$REMINDER_TIMEOUT" "$REMINDER_TOOL_BUDGET" "$REMINDER_CHANNEL" "$REMINDER_ACCOUNT" "$destination" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],script=process.argv[7],tool=process.argv[8],timeout=Number(process.argv[9]),budget=Number(process.argv[10]),channel=process.argv[11],account=process.argv[12],to=process.argv[13];if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||j.enabled!==true||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='script'||j.payload?.script!==script||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify([tool])||j.payload?.timeoutSeconds!==timeout||j.payload?.toolBudget!==budget||j.delivery?.mode!=='announce'||j.delivery?.channel!==channel||String(j.delivery?.to)!==to||j.delivery?.accountId!==account||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false))process.exit(1);
+  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$destination" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],to=process.argv[7],script='const dispatch = await task_reminder_dispatch({});\njson(dispatch.count > 0 ? { notify: dispatch.message } : {});';if(jobs.length!==1)process.exit(1);const j=jobs[0],policy=j.scheduledToolPolicy;if(j.declarationKey!==key||j.name!==name||j.enabled!==false||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='script'||j.payload?.script!==script||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify(['task_reminder_dispatch'])||j.payload?.timeoutSeconds!==30||j.payload?.toolBudget!==1||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||String(j.delivery?.to)!==to||j.delivery?.accountId!=='tasks'||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false)||policy?.version!==1||policy?.mode!=='trusted')process.exit(1);
 NODE
 }
 install_reminder_dispatcher(){
   [ "$REMINDER_ENABLED" = "1" ] || return 0
   reminder_dispatcher_absent || return 1
-  local result destination; destination=${REMINDER_DELIVERY_TO:-}; [ -n "$destination" ] || destination=$(resolve_reminder_delivery_to) || return 1
-  result=$(printf '%s\n' "$REMINDER_SCRIPT" | oc automations add --name "$REMINDER_NAME" --declaration-key "$REMINDER_DECLARATION" --cron "$REMINDER_CRON" --tz "$REMINDER_TIMEZONE" --exact --agent tasks --session isolated --script - --tools "$REMINDER_TOOL" --script-timeout-seconds "$REMINDER_TIMEOUT" --script-tool-budget "$REMINDER_TOOL_BUDGET" --announce --channel "$REMINDER_CHANNEL" --account "$REMINDER_ACCOUNT" --to "$destination" --json) || return 1
+  local result
+  result=$(oc automations add --name "$REMINDER_NAME" --declaration-key "$REMINDER_DECLARATION" --cron "$REMINDER_CRON" --tz "$REMINDER_TIMEZONE" --exact --agent tasks --session isolated --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --disabled --no-deliver --json) || return 1
   node - "$result" "$REMINDER_DECLARATION" <<'NODE' || return 1
-const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key)process.exit(1);
+const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key||x?.job?.enabled!==false)process.exit(1);
 NODE
+  reminder_dispatcher_exact
+}
+migrate_reminder_dispatcher_predecessor(){
+  [ "$REMINDER_ENABLED" = "1" ] || return 0
+  reminder_dispatcher_predecessor_exact || return 1
+  local jobs id
+  jobs=$(reminder_dispatcher_jobs_json) || return 1
+  id=$(node -e 'const x=JSON.parse(process.argv[1]);if(x.length!==1||typeof x[0]?.id!=="string"||!x[0].id)process.exit(2);process.stdout.write(x[0].id)' "$jobs") || return 1
+  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --clear-tools --no-deliver --json >/dev/null || return 1
   reminder_dispatcher_exact
 }
 resolve_important_date_delivery_to(){
@@ -640,6 +658,7 @@ NODE
   fi
   if [ "$REMINDER_ENABLED" = "1" ]; then
     if reminder_dispatcher_exact; then START_REMINDER_EXACT=1
+    elif reminder_dispatcher_predecessor_exact; then START_REMINDER_PREDECESSOR_EXACT=1
     elif reminder_dispatcher_absent; then START_REMINDER_EXACT=0
     else abort_deploy "PREFLIGHT" "declared predecessor has Reminder dispatcher drift or duplicate Automation"; fi
   fi
@@ -670,7 +689,7 @@ fi
     local reminder_jobs
     reminder_jobs=$(reminder_dispatcher_jobs_json) || return 1
     node - "$RECOVERY_SET/reminder-dispatcher.before.json" "$REMINDER_DECLARATION" "$reminder_jobs" <<'NODE' || return 1
-const fs=require('fs'),jobs=JSON.parse(process.argv[4]);if(!Array.isArray(jobs)||jobs.length!==0)process.exit(2);fs.writeFileSync(process.argv[2],JSON.stringify({format:'task-agent-reminder-dispatcher-recovery-v1',declaration_key:process.argv[3],jobs},null,2)+'\n',{mode:0o600});
+const fs=require('fs'),jobs=JSON.parse(process.argv[4]),key=process.argv[3];if(!Array.isArray(jobs)||jobs.length>1||jobs.some(j=>j?.declarationKey!==key||typeof j?.id!=='string'||!j.id))process.exit(2);fs.writeFileSync(process.argv[2],JSON.stringify({format:'task-agent-reminder-dispatcher-recovery-v2',declaration_key:key,jobs},null,2)+'\n',{mode:0o600});
 NODE
   fi
   if [ "$IMPORTANT_DATE_ENABLED" = "1" ] && [ "$START_IMPORTANT_DATE_EXACT" -eq 0 ]; then
@@ -747,6 +766,7 @@ main(){
   fi
   if [ "$REMINDER_ENABLED" = "1" ]; then
     if [ "$START_REMINDER_EXACT" -eq 1 ]; then reminder_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Reminder dispatcher changed after preflight"
+    elif [ "$START_REMINDER_PREDECESSOR_EXACT" -eq 1 ]; then reminder_dispatcher_predecessor_exact || abort_deploy "PREFLIGHT_OUTAGE" "Reminder predecessor changed after preflight"
     else reminder_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Reminder dispatcher appeared or drifted after preflight"; fi
   fi
   if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
@@ -804,6 +824,7 @@ main(){
   fi
   if [ "$REMINDER_ENABLED" = "1" ]; then
     if [ "$START_REMINDER_EXACT" -eq 1 ]; then reminder_dispatcher_exact || abort_deploy "REMINDER_DISPATCHER" "existing Reminder dispatcher drifted during deployment"
+    elif [ "$START_REMINDER_PREDECESSOR_EXACT" -eq 1 ]; then migrate_reminder_dispatcher_predecessor || abort_deploy "REMINDER_DISPATCHER" "failed to migrate exact Reminder predecessor"
     else install_reminder_dispatcher || abort_deploy "REMINDER_DISPATCHER" "failed to install or validate native Reminder dispatcher Automation"; fi
     maybe_fault "after-reminder-dispatcher"
   fi
