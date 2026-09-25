@@ -209,6 +209,13 @@ jobs:
           set -euo pipefail
           node agents/tasks/production-control/verify-release-predecessor.mjs "$PREDECESSOR_BASE_SHA"
 
+      - name: Diagnose current predecessor deployment path
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          timeout 600s bash -x agents/tasks/tests/current-predecessor-deploy.sh
+
       - name: Deterministic Task Agent regressions
         if: steps.scope.outputs.relevant == 'true'
         shell: bash
