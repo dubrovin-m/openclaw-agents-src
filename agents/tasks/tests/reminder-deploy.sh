@@ -23,7 +23,7 @@ for(const [k,v] of Object.entries({
 NODE
 )" || fail "Reminder release metadata invalid"
 [ "$PRED_SCHEMA" = 9 ] || fail "Reminder predecessor must be schema 9"
-[ "$PRED_PLUGIN" = "$TARGET_PLUGIN" ] || fail "Reminder simplification must not require a plugin release"
+[ "$PRED_PLUGIN" = 0.4.26 ] || fail "Reminder predecessor plugin must be 0.4.26"
 git -C "$REPO_ROOT" cat-file -e "$PRED^{commit}" || fail "Declared predecessor unavailable"
 
 OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
