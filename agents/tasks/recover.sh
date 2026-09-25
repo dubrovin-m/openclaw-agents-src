@@ -107,7 +107,7 @@ const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),sch
 if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.lib_present!==true||x.contactctl_present!==true||x.plugin_present!==true||x.schema_version!==schema)process.exit(2);
 NODE
 
-  local predecessor_contacts="$backup/.predecessor-contacts-release.$"
+  local predecessor_contacts="$backup/.predecessor-contacts-release.$.json"
   git -C "$REPO_ROOT" show "$source:shared/contacts/release.json" > "$predecessor_contacts" || fail "Unable to materialize predecessor Contacts release"
   node - "$predecessor_contacts" "$contacts_version" "$contacts_schema" "$contacts_plugin" <<'NODE' || { rm -f "$predecessor_contacts"; fail "Predecessor Contacts release identity mismatch"; }
 const r=require(process.argv[2]);if(r.implementation_version!==process.argv[3]||r.sqlite_schema!==Number(process.argv[4])||r.plugin?.version!==process.argv[5])process.exit(2);
