@@ -1,6 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 umask 077
+
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel)
 RELEASE="$ROOT/release.json"
@@ -8,35 +9,20 @@ TMP=$(mktemp -d /tmp/task-agent-reminder-deploy.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 fail(){ echo "$*" >&2; exit 2; }
 
-read_release(){
-  node - "$RELEASE" <<'NODE'
-const r=require(process.argv[2]);const q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.shared_contacts?.predecessor_mode!=='exact'||!r?.reminder_dispatcher)process.exit(2);
-console.log(`PRED=${q(r.from.source_revision)}`);
-console.log(`PRED_TASKCTL=${q(r.from.taskctl_versions[0])}`);
-console.log(`PRED_SCHEMA=${q(r.from.sqlite_schemas[0])}`);
-console.log(`PRED_PLUGIN=${q(r.from.plugin_versions[0])}`);
-console.log(`TARGET_TASKCTL=${q(r.generation.taskctl_version)}`);
-console.log(`TARGET_SCHEMA=${q(r.generation.sqlite_schema)}`);
-console.log(`TARGET_PLUGIN=${q(r.plugin.version)}`);
-console.log(`CONTACTS_VERSION=${q(r.shared_contacts.implementation_version)}`);
-console.log(`MATERIALIZER_KEY=${q(r.calendar_materializer.declaration_key)}`);
-console.log(`MATERIALIZER_NAME=${q(r.calendar_materializer.name)}`);
-console.log(`MATERIALIZER_CRON=${q(r.calendar_materializer.cron)}`);
-console.log(`MATERIALIZER_TZ=${q(r.calendar_materializer.timezone)}`);
-console.log(`MATERIALIZER_TIMEOUT=${q(r.calendar_materializer.timeout_seconds)}`);
-console.log(`REMINDER_KEY=${q(r.reminder_dispatcher.declaration_key)}`);
-console.log(`REMINDER_NAME=${q(r.reminder_dispatcher.name)}`);
-console.log(`REMINDER_CRON=${q(r.reminder_dispatcher.cron)}`);
-console.log(`REMINDER_TZ=${q(r.reminder_dispatcher.timezone)}`);
-console.log(`REMINDER_SCRIPT=${q(r.reminder_dispatcher.script)}`);
-console.log(`REMINDER_TOOL=${q(r.reminder_dispatcher.tool)}`);
-console.log(`REMINDER_TIMEOUT=${q(r.reminder_dispatcher.timeout_seconds)}`);
-console.log(`REMINDER_BUDGET=${q(r.reminder_dispatcher.tool_budget)}`);
+eval "$(node - "$RELEASE" <<'NODE'
+const r=require(process.argv[2]),m=r.reminder_dispatcher,q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
+if(r?.shared_contacts?.predecessor_mode!=='exact'||m?.kind!=='openclaw-command-automation-v1'||m?.predecessor_mode!=='exact-disabled-script-0.4.26')process.exit(2);
+for(const [k,v] of Object.entries({
+  PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],
+  TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,
+  CONTACTS_VERSION:r.shared_contacts.implementation_version,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,
+  REMINDER_KEY:m.declaration_key,REMINDER_NAME:m.name,REMINDER_CRON:m.cron,REMINDER_TZ:m.timezone,
+  REMINDER_TIMEOUT:m.timeout_seconds,REMINDER_SUFFIX:JSON.stringify(m.command_argv_suffix)
+}))console.log(`${k}=${q(v)}`);
 NODE
-}
-eval "$(read_release)" || fail "Reminder release metadata invalid"
-[ "$PRED_SCHEMA" = 7 ] || fail "Reminder deploy qualification requires schema-7 predecessor"
+)" || fail "Reminder release metadata invalid"
+[ "$PRED_SCHEMA" = 9 ] || fail "Reminder predecessor must be schema 9"
+[ "$PRED_PLUGIN" = "$TARGET_PLUGIN" ] || fail "Reminder simplification must not require a plugin release"
 git -C "$REPO_ROOT" cat-file -e "$PRED^{commit}" || fail "Declared predecessor unavailable"
 
 OPENCLAW_BIN=$(command -v openclaw || true)
@@ -54,15 +40,6 @@ git -C "$REPO_ROOT" archive "$PRED" | tar -x -C "$PRED_SRC"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
 
-# Production predecessor already contains the retired TOOLS.md archive required by
-# the current deployment fingerprint, although it is absent from active workspace.
-TOOLS_SHA=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.workspace_sha256["TOOLS.md"])' "$RELEASE")
-mkdir -p "$BASE/state/backups/tools-md-migration"
-git -C "$REPO_ROOT" show "$PRED:agents/tasks/workspace/TOOLS.md" > "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
-chmod 600 "$BASE/state/backups/tools-md-migration/tasks-$TOOLS_SHA.md"
-
-# Add a synthetic owner-only Telegram route. No production credential or recipient
-# is copied into the fixture; deploy derives the destination from this isolated config.
 mkdir -p "$BASE/state/secrets"
 printf '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' > "$BASE/state/secrets/tasks.token"
 chmod 600 "$BASE/state/secrets/tasks.token"
@@ -87,23 +64,36 @@ if [ "${1:-}" = automations ]; then
       ROOT_STATE=$(dirname "$STATE"); [ "$(cat "$ROOT_STATE/gateway.state" 2>/dev/null || true)" = active ] || exit 2; echo '{"enabled":true}'; exit 0 ;;
     list) cat "$FILE"; exit 0 ;;
     add)
-      SCRIPT_INPUT=""; if printf '%s\n' "${@:3}" | grep -qx -- '--script'; then :; fi
-      args=("${@:3}"); for ((i=0;i<${#args[@]};i++)); do if [ "${args[$i]}" = --script ] && [ "${args[$((i+1))]:-}" = - ]; then SCRIPT_INPUT=$(cat); fi; done
+      SCRIPT_INPUT=""; args=("${@:3}"); for ((i=0;i<${#args[@]};i++)); do if [ "${args[$i]}" = --script ] && [ "${args[$((i+1))]:-}" = - ]; then SCRIPT_INPUT=$(cat); fi; done
       export SCRIPT_INPUT
       node - "$FILE" "${@:3}" <<'NODE'
 const fs=require('fs'),p=process.argv[2],a=process.argv.slice(3),opt=n=>{const i=a.indexOf(n);return i>=0?a[i+1]:undefined};
 const x=JSON.parse(fs.readFileSync(p,'utf8')),jobs=Array.isArray(x.jobs)?x.jobs:[],key=opt('--declaration-key');if(!key||jobs.some(j=>j.declarationKey===key))process.exit(2);
-let payload,delivery;
+let payload,delivery,policy=null;
 if(opt('--command-argv')){payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};delivery={mode:a.includes('--no-deliver')?'none':'announce'};}
-else if(opt('--script')==='-'){payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};delivery={mode:a.includes('--announce')?'announce':'none',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account'),...(a.includes('--best-effort-deliver')?{bestEffort:true}:{})};}
+else if(opt('--script')==='-'){payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};delivery={mode:a.includes('--announce')?'announce':'none',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account')};policy={version:1,mode:'trusted'};}
 else process.exit(2);
-const job={id:`job-${jobs.length+1}`,declarationKey:key,name:opt('--name'),enabled:true,agentId:opt('--agent'),schedule:{kind:'cron',expr:opt('--cron'),tz:opt('--tz'),staggerMs:a.includes('--exact')?0:undefined},sessionTarget:opt('--session')||'isolated',wakeMode:'now',payload,delivery};
+const job={id:`job-${jobs.length+1}`,declarationKey:key,name:opt('--name'),enabled:!a.includes('--disabled'),agentId:opt('--agent'),schedule:{kind:'cron',expr:opt('--cron'),tz:opt('--tz'),staggerMs:a.includes('--exact')?0:undefined},sessionTarget:opt('--session')||'isolated',wakeMode:'now',payload,delivery,scheduledToolPolicy:policy};
 jobs.push(job);fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');process.stdout.write(JSON.stringify({created:true,job})+'\n');
+NODE
+      exit 0 ;;
+    edit)
+      ID=$3; shift 3; SCRIPT_INPUT=""; args=("$@"); for ((i=0;i<${#args[@]};i++)); do if [ "${args[$i]}" = --script ] && [ "${args[$((i+1))]:-}" = - ]; then SCRIPT_INPUT=$(cat); fi; done
+      export SCRIPT_INPUT
+      node - "$FILE" "$ID" "${args[@]}" <<'NODE'
+const fs=require('fs'),p=process.argv[2],id=process.argv[3],a=process.argv.slice(4),opt=n=>{const i=a.indexOf(n);return i>=0?a[i+1]:undefined};
+const x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.id===id);if(!j)process.exit(2);
+if(a.includes('--disable'))j.enabled=false;if(a.includes('--enable'))j.enabled=true;
+if(opt('--command-argv')){j.payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};j.scheduledToolPolicy=null;}
+if(opt('--script')==='-'){j.payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};j.scheduledToolPolicy={version:1,mode:'trusted'};}
+if(a.includes('--no-deliver'))j.delivery={mode:'none'};
+if(a.includes('--announce'))j.delivery={mode:'announce',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account')};
+fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');process.stdout.write(JSON.stringify({ok:true,job:j})+'\n');
 NODE
       exit 0 ;;
     rm|remove)
       node - "$FILE" "$3" <<'NODE'
-const fs=require('fs'),p=process.argv[2],id=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),jobs=x.jobs||[],next=jobs.filter(j=>j.id!==id);if(next.length===jobs.length)process.exit(2);fs.writeFileSync(p,JSON.stringify({jobs:next},null,2)+'\n');process.stdout.write(JSON.stringify({removed:true,id})+'\n');
+const fs=require('fs'),p=process.argv[2],id=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),jobs=x.jobs||[],next=jobs.filter(j=>j.id!==id);if(next.length===jobs.length)process.exit(2);fs.writeFileSync(p,JSON.stringify({jobs:next},null,2)+'\n');process.stdout.write(JSON.stringify({ok:true,id})+'\n');
 NODE
       exit 0 ;;
   esac
@@ -126,18 +116,27 @@ SH
 chmod 755 "$TMP/shims/systemctl"
 export PATH="$TMP/shims:$ROOT/plugins/taskctl/node_modules/.bin:$(dirname "$(command -v node)"):/usr/bin:/bin"
 
-oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
-node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TZ" "$MATERIALIZER_TIMEOUT" <<'NODE'
-const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3],key=process.argv[4],name=process.argv[5],expr=process.argv[6],tz=process.argv[7],timeout=Number(process.argv[8]);const job={id:'recurrence-predecessor',declarationKey:key,name,enabled:true,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:timeout},delivery:{mode:'none'}};fs.writeFileSync(p,JSON.stringify({jobs:[job]},null,2)+'\n');
+LEGACY_SCRIPT='const dispatch = await task_reminder_dispatch({});
+json(dispatch.count > 0 ? { notify: dispatch.message } : {});'
+node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$LEGACY_SCRIPT" <<'NODE'
+const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3],matKey=process.argv[4],key=process.argv[5],name=process.argv[6],expr=process.argv[7],tz=process.argv[8],script=process.argv[9];
+const jobs=[
+ {id:'recurrence-predecessor',declarationKey:matKey,name:'Task Recurrence Calendar Materializer',enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:'0 * * * *',tz:'Europe/Moscow',staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:30},delivery:{mode:'none'}},
+ {id:'reminder-predecessor',declarationKey:key,name,enabled:false,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script,toolsAllow:['task_reminder_dispatch'],timeoutSeconds:30,toolBudget:1},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'},scheduledToolPolicy:{version:1,mode:'trusted'},state:{consecutiveErrors:5,lastStatus:'error'}}
+];
+fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
 echo active > "$BASE/gateway.state"
 
-# Refresh only the disposable provider registry and prove it represents the exact
-# active Contacts predecessor before testing the Reminder release.
+oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" 2026.8.2 "$PRED_PLUGIN" "$CONTACTS_VERSION" || fail "predecessor plugin registry is not exact"
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" 2026.8.2 "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
+stable_tools_sha(){ node - "$1" <<'NODE'
+const fs=require('fs'),crypto=require('crypto'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),stable=v=>v===null||typeof v!=='object'?JSON.stringify(v):Array.isArray(v)?'['+v.map(stable).join(',')+']':'{'+Object.keys(v).sort().map(k=>JSON.stringify(k)+':'+stable(v[k])).join(',')+'}';process.stdout.write(crypto.createHash('sha256').update(stable(x)).digest('hex'));
+NODE
+}
 runtime_tools_sha(){ node - "$1/state/openclaw.json" <<'NODE'
 const fs=require('fs'),crypto=require('crypto'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),v=c?.agents?.entries?.tasks?.tools,stable=x=>x===null||typeof x!=='object'?JSON.stringify(x):Array.isArray(x)?'['+x.map(stable).join(',')+']':'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}';process.stdout.write(crypto.createHash('sha256').update(stable(v)).digest('hex'));
 NODE
@@ -146,34 +145,32 @@ contacts_fingerprint(){ node - "$1/state/data/contacts/contacts.sqlite3" <<'NODE
 const {DatabaseSync}=require('node:sqlite'),crypto=require('node:crypto'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{const x={uv:Number(db.prepare('pragma user_version').get().user_version),people:db.prepare('select * from people order by id').all(),aliases:db.prepare('select * from person_aliases order by person_id,alias').all(),integrity:db.prepare('pragma integrity_check').get().integrity_check,fk:db.prepare('pragma foreign_key_check').all()};process.stdout.write(crypto.createHash('sha256').update(JSON.stringify(x)).digest('hex'));}finally{db.close();}
 NODE
 }
-automation_count(){ node - "$1/state/automations-test.json" "$2" <<'NODE'
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),key=process.argv[3];process.stdout.write(String((x.jobs||[]).filter(j=>j.declarationKey===key).length));
+clone_runtime(){ cp -a "$1" "$2"; node - "$2/state/openclaw.json" "$1" "$2" <<'NODE'
+const fs=require('fs'),p=process.argv[2],from=process.argv[3],to=process.argv[4],rewrite=v=>typeof v==='string'&&v.startsWith(from)?to+v.slice(from.length):Array.isArray(v)?v.map(rewrite):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,rewrite(x)])):v,c=rewrite(JSON.parse(fs.readFileSync(p,'utf8')));fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
+NODE
+node - "$2/state/automations-test.json" "$1" "$2" <<'NODE'
+const fs=require('fs'),p=process.argv[2],from=process.argv[3],to=process.argv[4],x=JSON.parse(fs.readFileSync(p,'utf8')),rewrite=v=>typeof v==='string'&&v.startsWith(from)?to+v.slice(from.length):Array.isArray(v)?v.map(rewrite):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,z])=>[k,rewrite(z)])):v;fs.writeFileSync(p,JSON.stringify(rewrite(x),null,2)+'\n');
 NODE
 }
 assert_predecessor(){
   local r=$1 h; h=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" "$r/bin/taskctl" health) || fail "predecessor taskctl unhealthy"
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3]))process.exit(1)' "$h" "$PRED_TASKCTL" "$PRED_SCHEMA" || fail "predecessor generation drift"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$PRED_PLUGIN" ] || fail "predecessor plugin drift"
-  [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$CONTACTS_VERSION" ] || fail "Contacts plugin drift"
   [ "$(runtime_tools_sha "$r")" = "$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.tools_sha256)' "$RELEASE")" ] || fail "predecessor tool policy drift"
-  [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer missing"
-  [ "$(automation_count "$r" "$REMINDER_KEY")" = 0 ] || fail "Reminder dispatcher unexpectedly present"
+  node - "$r/state/automations-test.json" "$REMINDER_KEY" "$LEGACY_SCRIPT" <<'NODE' || fail "Reminder predecessor shape mismatch"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]);if(!j||j.id!=='reminder-predecessor'||j.enabled!==false||j.payload?.kind!=='script'||j.payload.script!==process.argv[4]||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify(['task_reminder_dispatch'])||j.payload.timeoutSeconds!==30||j.payload.toolBudget!==1||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner'||j.scheduledToolPolicy?.version!==1||j.scheduledToolPolicy?.mode!=='trusted')process.exit(1);
+NODE
 }
 assert_target(){
-  local r=$1 h; h=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" "$r/bin/taskctl" health) || fail "target taskctl unhealthy"
+  local r=$1 h expected; h=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" "$r/bin/taskctl" health) || fail "target taskctl unhealthy"
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3]))process.exit(1)' "$h" "$TARGET_TASKCTL" "$TARGET_SCHEMA" || fail "target generation mismatch"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN" ] || fail "target plugin mismatch"
-  [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer changed"
-  [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "Reminder dispatcher missing"
-  node - "$r/state/automations-test.json" "$REMINDER_KEY" "$REMINDER_SCRIPT" "$REMINDER_TOOL" <<'NODE' || fail "Reminder dispatcher shape mismatch"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]);if(!j||j.payload?.kind!=='script'||j.payload.script!==process.argv[4]||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify([process.argv[5]])||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner'||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false))process.exit(1);
+  expected=$(stable_tools_sha "$ROOT/config/tasks-tools.json"); [ "$(runtime_tools_sha "$r")" = "$expected" ] || fail "target tool policy mismatch"
+  node - "$r/state/automations-test.json" "$REMINDER_KEY" "$r/bin/taskctl" "$REMINDER_SUFFIX" "$REMINDER_TIMEOUT" <<'NODE' || fail "Reminder target shape mismatch"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]),argv=[process.argv[4],...JSON.parse(process.argv[5])],timeout=Number(process.argv[6]);if(!j||j.id!=='reminder-predecessor'||typeof j.enabled!=='boolean'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify(argv)||j.payload.timeoutSeconds!==timeout||j.payload.toolsAllow!==undefined||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
 NODE
-}
-clone_runtime(){ cp -a "$1" "$2"; node - "$2/state/openclaw.json" "$1" "$2" <<'NODE'
-const fs=require('fs'),p=process.argv[2],from=process.argv[3],to=process.argv[4],rewrite=v=>typeof v==='string'&&v.startsWith(from)?to+v.slice(from.length):Array.isArray(v)?v.map(rewrite):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,x])=>[k,rewrite(x)])):v;c=rewrite(JSON.parse(fs.readFileSync(p,'utf8')));fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
-NODE
-node - "$2/state/automations-test.json" "$1" "$2" <<'NODE'
-const fs=require('fs'),p=process.argv[2],from=process.argv[3],to=process.argv[4],x=JSON.parse(fs.readFileSync(p,'utf8')),rewrite=v=>typeof v==='string'&&v.startsWith(from)?to+v.slice(from.length):Array.isArray(v)?v.map(rewrite):v&&typeof v==='object'?Object.fromEntries(Object.entries(v).map(([k,z])=>[k,rewrite(z)])):v;fs.writeFileSync(p,JSON.stringify(rewrite(x),null,2)+'\n');
+  node - "$r/state/openclaw.json" <<'NODE' || fail "ordinary Task surface still exposes Reminder scheduler authority"
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),p=c?.agents?.entries?.tasks?.tools;if(!p||p.allow?.includes('task_reminder_dispatch'))process.exit(1);for(const x of ['exec','cron','gateway'])if(!p.deny?.includes(x))process.exit(1);
 NODE
 }
 
@@ -183,33 +180,39 @@ R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "Reminder preflight failed"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Reminder deploy failed"
 assert_target "$R"
-
-# Persisted scheduler drift must fail closed: only omission or literal false is
-# a valid representation of required (non-best-effort) delivery.
-node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
-const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);j.delivery.bestEffort=null;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
-NODE
-set +e
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight >/dev/null 2>&1
-MALFORMED_CODE=$?
-set -e
-[ "$MALFORMED_CODE" -ne 0 ] || fail "Malformed Reminder bestEffort state passed preflight"
-node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
-const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);delete j.delivery.bestEffort;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
-NODE
-assert_target "$R"
 [ "$(contacts_fingerprint "$R")" = "$CONTACTS_BEFORE" ] || fail "Reminder deploy mutated Contacts domain state"
+
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit); [ -n "$RECOVERY" ] || fail "recovery set missing"
-test -f "$RECOVERY/reminder-dispatcher.before.json" || fail "Reminder dispatcher recovery snapshot missing"
 node - "$RECOVERY/reminder-dispatcher.before.json" "$REMINDER_KEY" <<'NODE' || fail "Reminder recovery snapshot invalid"
-const x=require(process.argv[2]);if(x.format!=='task-agent-reminder-dispatcher-recovery-v1'||x.declaration_key!==process.argv[3]||!Array.isArray(x.jobs)||x.jobs.length!==0)process.exit(1);
+const x=require(process.argv[2]);if(x.format!=='task-agent-reminder-dispatcher-recovery-v2'||x.declaration_key!==process.argv[3]||!Array.isArray(x.jobs)||x.jobs.length!==1||x.jobs[0]?.id!=='reminder-predecessor'||x.jobs[0]?.enabled!==false)process.exit(1);
 NODE
+
+# Enabled is operational state, not release-definition identity.
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);j.enabled=true;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'start_is_target=1' || fail "enabled target command job was misclassified as drift"
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);j.enabled=false;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+
 bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual Reminder recovery failed"
 assert_predecessor "$R"
 [ "$(contacts_fingerprint "$R")" = "$CONTACTS_BEFORE" ] || fail "Reminder recovery changed Contacts domain state"
 
-# A post-dispatcher preparation fault must remove the newly created Automation and
-# restore exact schema-7/plugin/workspace/config predecessor automatically.
+# Same declaration key with anything except the exact disabled predecessor must stop.
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);j.enabled=true;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+set +e
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight >/dev/null 2>&1
+DRIFT_CODE=$?
+set -e
+[ "$DRIFT_CODE" -ne 0 ] || fail "non-exact Reminder predecessor passed preflight"
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);j.enabled=false;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+
 rm -rf "$R/backups"/task-agent-stage-* "$R/deliverables"
 set +e
 TASK_AGENT_DEPLOY_FAULT=after-reminder-dispatcher HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null 2>&1
