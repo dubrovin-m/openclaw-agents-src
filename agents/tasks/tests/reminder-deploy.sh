@@ -131,7 +131,8 @@ echo active > "$BASE/gateway.state"
 
 oc(){ HOME="$1/home" OPENCLAW_HOME="$1/home" OPENCLAW_STATE_DIR="$1/state" OPENCLAW_CONFIG_PATH="$1/state/openclaw.json" openclaw "${@:2}"; }
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" 2026.8.2 "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
+OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$OPENCLAW_VERSION" "$PRED_PLUGIN" "$CONTACTS_VERSION" >/dev/null || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
 stable_tools_sha(){ node - "$1" <<'NODE'
