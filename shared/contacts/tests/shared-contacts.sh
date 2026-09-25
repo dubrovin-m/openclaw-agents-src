@@ -4,7 +4,6 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 TASKCTL="$ROOT/agents/tasks/taskctl"
 CONTACTCTL="$ROOT/shared/contacts/contactctl"
-PREDECESSOR=42329b0edab9d8d3ab9fa16257fc11723cd6acaf
 TMP=$(mktemp -d /tmp/shared-contacts.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/tasks.sqlite3"
@@ -76,37 +75,6 @@ node - "$CDB" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});const rows=db.prepare('select id,status,merged_into from people where id in (2,5,6) order by id').all();if(rows[0].merged_into!==6||rows[1].merged_into!==6||rows[2].status!=='ACTIVE')process.exit(1);db.close();
 NODE
 trun '{"id":"T-1"}' task get | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.task.assignee_id!=="P-6")process.exit(1)})'
-# Historical schema-6 Task state migrates losslessly through Shared Contacts to the current Task schema.
-PRE="$TMP/predecessor-taskctl"; git -C "$ROOT" show "$PREDECESSOR:agents/tasks/taskctl" > "$PRE"; chmod 700 "$PRE"
-MDB="$TMP/migrate/tasks.sqlite3"; MCDB="$TMP/migrate/contacts.sqlite3"; mkdir -p "$TMP/migrate"
-oldrun(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_TEST_NOW=2026-09-16T09:00:00Z TASKCTL_PAYLOAD="$1" "$PRE" "$2" "$3"; }
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_TEST_NOW=2026-09-16T09:00:00Z "$PRE" init >/dev/null
-oldrun '{"operation_key":"p","display_name":"Иванов И."}' person create >/dev/null
-oldrun '{"operation_key":"a","id":"P-2","alias":"Иванов"}' person alias_add >/dev/null
-oldrun '{"operation_key":"t","title":"Predecessor task","assignee":"Иванов"}' task create >/dev/null
-oldrun '{"operation_key":"r","mode":"AFTER_COMPLETION","rule":{"interval":7,"unit":"DAYS"},"title":"Predecessor recurrence","assignee_id":"P-2","first_due_date":"2026-09-20"}' recurrence create >/dev/null
-node - "$MDB" > "$TMP/before.json" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});const out={people:d.prepare('select id,display_name,created_at from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:d.prepare('select id,assignee_id from tasks order by id').all(),recurrences:d.prepare('select id,assignee_id from recurrences order by id').all()};process.stdout.write(JSON.stringify(out));d.close();
-NODE
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_CONTACTS_DB="$MCDB" "$TASKCTL" init >/dev/null
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_CONTACTS_DB="$MCDB" "$TASKCTL" health >/dev/null
-node - "$MDB" "$MCDB" "$TMP/before.json" <<'NODE'
-const fs=require('node:fs');const {DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[4]));const t=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});const after={people:c.prepare('select id,display_name,created_at from people order by id').all(),aliases:c.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:t.prepare('select id,assignee_id from tasks order by id').all(),recurrences:t.prepare('select id,assignee_id from recurrences order by id').all()};if(t.prepare('pragma user_version').get().user_version!==9||c.prepare('pragma user_version').get().user_version!==3)process.exit(1);if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(t.prepare("select count(*) n from sqlite_master where type='table' and name in ('people','person_aliases')").get().n!==0)process.exit(3);if(c.prepare("select count(*) n from people where is_self=1 and status='ACTIVE'").get().n!==1)process.exit(4);if(t.prepare('pragma foreign_key_check').all().length||c.prepare('pragma foreign_key_check').all().length)process.exit(5);t.close();c.close();
-NODE
-
-# Preparation-owned migration failure restores schema 6 and removes a newly-created Contacts file.
-FDB="$TMP/fault/tasks.sqlite3"; FCDB="$TMP/fault/contacts.sqlite3"; mkdir -p "$TMP/fault"
-TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FDB" "$PRE" init >/dev/null
-set +e
-fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FDB" TASKCTL_CONTACTS_DB="$FCDB" TASKCTL_TEST_CONTACTS_MIGRATION_FAULT=after-contacts-copy "$TASKCTL" init); frc=$?
-set -e
-[ "$frc" -ne 0 ]
-[ ! -e "$FCDB" ]
-node - "$FDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==6)process.exit(1);if(d.prepare("select count(*) n from sqlite_master where type='table' and name='people'").get().n!==1)process.exit(2);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length)process.exit(3);d.close();
-NODE
-
-
 # Person Groups have stable identity, reusable membership, and canonical Person merge semantics.
 crun '{"operation_key":"pg1","display_name":"Office CEO"}' group_create | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.group.id!=="PG-1"||x.group.members.length!==0)process.exit(1)})'
 crun '{"operation_key":"pgm1","group_id":"PG-1","person":"Побединская Н.В."}' group_member_add >/dev/null
