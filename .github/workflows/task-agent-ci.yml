@@ -230,6 +230,8 @@ jobs:
           bash -n agents/tasks/tests/batch9.sh
           bash -n agents/tasks/tests/recurrence-qualification.sh
           bash -n agents/tasks/tests/recurrence-gateway-e2e.sh
+          bash -n agents/tasks/tests/reminder-gateway-e2e.sh
+          bash -n agents/tasks/tests/reminder-deploy.sh
           bash -n agents/tasks/tests/reminders.sh
           bash -n agents/tasks/tests/deadline-governance.sh
           node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
@@ -242,7 +244,9 @@ jobs:
           timeout 180s bash agents/tasks/tests/recurrence-qualification.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/reminders.sh agents/tasks/taskctl
           timeout 180s bash agents/tasks/tests/deadline-governance.sh
+          timeout 240s bash agents/tasks/tests/reminder-deploy.sh
           timeout 240s bash agents/tasks/tests/recurrence-gateway-e2e.sh
+          timeout 300s bash agents/tasks/tests/reminder-gateway-e2e.sh
 
       - name: Verify generated outputs are frozen
         if: steps.scope.outputs.relevant == 'true'
