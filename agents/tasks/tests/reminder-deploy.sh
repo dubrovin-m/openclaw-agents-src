@@ -46,10 +46,16 @@ printf '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n' > "$BASE/state/secrets/
 chmod 600 "$BASE/state/secrets/tasks.token"
 node - "$BASE/state/openclaw.json" "$BASE/state/secrets/tasks.token" <<'NODE'
 const fs=require('fs'),p=process.argv[2],tokenFile=process.argv[3],c=JSON.parse(fs.readFileSync(p,'utf8'));
-c.channels??={};c.channels.telegram??={};c.channels.telegram.accounts??={};
+c.channels??={};c.channels.telegram??={};c.channels.telegram.enabled=true;c.channels.telegram.accounts??={};
 c.channels.telegram.accounts.tasks={enabled:true,tokenFile,dmPolicy:'allowlist',allowFrom:['test-owner'],groupPolicy:'allowlist',groupAllowFrom:['test-owner']};
-c.bindings=(Array.isArray(c.bindings)?c.bindings:[]).filter(x=>!(x?.match?.channel==='telegram'&&x?.match?.accountId==='tasks'));
+c.channels.telegram.accounts.default={enabled:true,tokenFile,dmPolicy:'allowlist',allowFrom:['111'],groupPolicy:'allowlist',groupAllowFrom:['111']};
+c.commands={...(c.commands??{}),ownerAllowFrom:['telegram:111']};
+c.bindings=(Array.isArray(c.bindings)?c.bindings:[]).filter(x=>!(
+  x?.match?.channel==='telegram'&&
+  ((x?.agentId==='tasks'&&x?.match?.accountId==='tasks')||(x?.agentId==='main'&&x?.match?.accountId==='default'))
+));
 c.bindings.push({agentId:'tasks',match:{channel:'telegram',accountId:'tasks'}});
+c.bindings.push({agentId:'main',match:{channel:'telegram',accountId:'default'}});
 fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
 NODE
 
@@ -119,11 +125,13 @@ export PATH="$TMP/shims:$ROOT/plugins/taskctl/node_modules/.bin:$(dirname "$(com
 
 LEGACY_SCRIPT='const dispatch = await task_reminder_dispatch({});
 json(dispatch.count > 0 ? { notify: dispatch.message } : {});'
-node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$LEGACY_SCRIPT" <<'NODE'
-const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3],matKey=process.argv[4],key=process.argv[5],name=process.argv[6],expr=process.argv[7],tz=process.argv[8],script=process.argv[9];
+node - "$BASE/state/automations-test.json" "$BASE/bin/taskctl" "$MATERIALIZER_KEY" "$REMINDER_KEY" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TZ" "$LEGACY_SCRIPT" "$RELEASE" <<'NODE'
+const fs=require('fs'),p=process.argv[2],taskctl=process.argv[3],matKey=process.argv[4],key=process.argv[5],name=process.argv[6],expr=process.argv[7],tz=process.argv[8],script=process.argv[9],rel=require(process.argv[10]),idr=rel.important_date_dispatcher;
+if(idr?.kind!=='openclaw-script-automation-v1'||idr?.predecessor_mode!=='exact')process.exit(2);
 const jobs=[
  {id:'recurrence-predecessor',declarationKey:matKey,name:'Task Recurrence Calendar Materializer',enabled:true,agentId:'tasks',schedule:{kind:'cron',expr:'0 * * * *',tz:'Europe/Moscow',staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'command',argv:[taskctl,'recurrence','materialize'],timeoutSeconds:30},delivery:{mode:'none'}},
- {id:'reminder-predecessor',declarationKey:key,name,enabled:false,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script,toolsAllow:['task_reminder_dispatch'],timeoutSeconds:30,toolBudget:1},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'},scheduledToolPolicy:{version:1,mode:'trusted'},state:{consecutiveErrors:5,lastStatus:'error'}}
+ {id:'reminder-predecessor',declarationKey:key,name,enabled:false,agentId:'tasks',schedule:{kind:'cron',expr,tz,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script,toolsAllow:['task_reminder_dispatch'],timeoutSeconds:30,toolBudget:1},delivery:{mode:'announce',channel:'telegram',to:'test-owner',accountId:'tasks'},scheduledToolPolicy:{version:1,mode:'trusted'},state:{consecutiveErrors:5,lastStatus:'error'}},
+ {id:'important-date-predecessor',declarationKey:idr.declaration_key,name:idr.name,enabled:true,agentId:'main',schedule:{kind:'cron',expr:idr.cron,tz:idr.timezone,staggerMs:0},sessionTarget:'isolated',wakeMode:'now',payload:{kind:'script',script:idr.script,toolsAllow:[idr.tool],timeoutSeconds:idr.timeout_seconds,toolBudget:idr.tool_budget},delivery:{mode:'announce',channel:idr.delivery_channel,to:'111',accountId:idr.delivery_account},scheduledToolPolicy:{version:1,mode:'trusted'}}
 ];
 fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
@@ -161,6 +169,9 @@ assert_predecessor(){
   [ "$(runtime_tools_sha "$r")" = "$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.tools_sha256)' "$RELEASE")" ] || fail "predecessor tool policy drift"
   node - "$r/state/automations-test.json" "$REMINDER_KEY" "$LEGACY_SCRIPT" <<'NODE' || fail "Reminder predecessor shape mismatch"
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]);if(!j||j.id!=='reminder-predecessor'||j.enabled!==false||j.payload?.kind!=='script'||j.payload.script!==process.argv[4]||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify(['task_reminder_dispatch'])||j.payload.timeoutSeconds!==30||j.payload.toolBudget!==1||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||j.delivery?.to!=='test-owner'||j.scheduledToolPolicy?.version!==1||j.scheduledToolPolicy?.mode!=='trusted')process.exit(1);
+NODE
+  node - "$r/state/automations-test.json" "$RELEASE" <<'NODE' || fail "Important Dates predecessor shape mismatch"
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),i=require(process.argv[3]).important_date_dispatcher,j=(x.jobs||[]).find(v=>v.declarationKey===i.declaration_key);if(!j||j.id!=='important-date-predecessor'||j.enabled!==true||j.agentId!=='main'||j.payload?.kind!=='script'||j.payload.script!==i.script||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify([i.tool])||j.delivery?.mode!=='announce'||j.delivery?.channel!==i.delivery_channel||j.delivery?.accountId!==i.delivery_account||j.delivery?.to!=='111')process.exit(1);
 NODE
 }
 assert_target(){
