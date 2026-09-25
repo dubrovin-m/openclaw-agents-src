@@ -3,7 +3,6 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/../../.." && pwd)
 CONTACTCTL="$ROOT/shared/contacts/contactctl"
-BASE=ade06f111c20ac485e9185ed322424ac59fd31e9
 TMP=$(mktemp -d /tmp/important-dates.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/contacts.sqlite3"
@@ -98,37 +97,22 @@ fail_action '{"operation_key":"merge-conflict","from_id":"P-6","into_id":"P-7"}'
 a=$(run '{"person":"P-6","type":"BIRTHDAY"}' date_list)
 node -e 'const x=JSON.parse(process.argv[1]);if(x.count!==1||x.dates[0].person.id!=="P-6")process.exit(1)' "$a"
 
-# Schema-1 predecessor migrates losslessly; synthetic migration failure rolls back fully.
-OLD="$TMP/old"; mkdir -p "$OLD"
-git -C "$ROOT" show "$BASE:shared/contacts/core.cjs" > "$OLD/core.cjs"
-git -C "$ROOT" show "$BASE:shared/contacts/contactctl" > "$OLD/contactctl"; chmod 700 "$OLD/contactctl"
-MDB="$TMP/migrate.sqlite3"
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" "$OLD/contactctl" init >/dev/null
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" CONTACTCTL_PAYLOAD='{"operation_key":"m1","display_name":"Сидоров С."}' "$OLD/contactctl" create >/dev/null
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" CONTACTCTL_PAYLOAD='{"operation_key":"ma","id":"P-2","alias":"Сидоров"}' "$OLD/contactctl" alias_add >/dev/null
-node - "$MDB" >"$TMP/before.json" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});process.stdout.write(JSON.stringify({people:d.prepare('select id,display_name,is_self,status from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all()}));d.close();
+# Historical Contacts schemas are unsupported and must remain byte-for-byte unchanged.
+for schema in 1 2; do
+  OLDDB="$TMP/unsupported-$schema.sqlite3"
+  cp "$DB" "$OLDDB"
+  node - "$OLDDB" "$schema" <<'NODE'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2]);db.exec(`pragma user_version=${Number(process.argv[3])}`);db.close();
 NODE
-set +e
-pre_migrate=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL" health)
-pre_migrate_rc=$?
-set -e
-[ "$pre_migrate_rc" -ne 0 ]
-node -e 'const x=JSON.parse(process.argv[1]);if(x?.error?.code!=="INTERNAL_ERROR"||!String(x?.error?.message||"").includes("Unsupported Contacts schema version 1"))process.exit(1)' "$pre_migrate"
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$MDB" "$CONTACTCTL" init >/dev/null
-node - "$MDB" "$TMP/before.json" <<'NODE'
-const fs=require('node:fs'),{DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[3])),d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==3)process.exit(1);const after={people:d.prepare('select id,display_name,is_self,status from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all()};if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(d.prepare('pragma foreign_key_check').all().length)process.exit(3);d.close();
-NODE
-FDB="$TMP/fault.sqlite3"
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$FDB" "$OLD/contactctl" init >/dev/null
-set +e
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$FDB" CONTACTCTL_TEST_MIGRATION_FAULT=after-important-date-ddl "$CONTACTCTL" init >/dev/null
-frc=$?
-set -e
-[ "$frc" -ne 0 ]
-node - "$FDB" <<'NODE'
-const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});if(d.prepare('pragma user_version').get().user_version!==1)process.exit(1);if(d.prepare("select count(*) n from sqlite_master where type='table' and name in ('important_dates','important_date_reminders','important_date_deliveries')").get().n!==0)process.exit(2);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok')process.exit(3);d.close();
-NODE
+  BEFORE=$(sha256sum "$OLDDB" | awk '{print $1}')
+  set +e
+  OUT=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$OLDDB" "$CONTACTCTL" init)
+  RC=$?
+  set -e
+  [ "$RC" -ne 0 ]
+  node -e 'const x=JSON.parse(process.argv[1]),schema=process.argv[2];if(x?.error?.code!=="INTERNAL_ERROR"||!String(x?.error?.message||"").includes("Unsupported Contacts schema version "+schema))process.exit(1)' "$OUT" "$schema"
+  [ "$(sha256sum "$OLDDB" | awk '{print $1}')" = "$BEFORE" ]
+done
 
 [ "$(stat -c %a "$DB")" = 600 ]
 printf 'IMPORTANT_DATES_PASS\n'
