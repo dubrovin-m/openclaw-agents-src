@@ -225,6 +225,16 @@ HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fai
 assert_target "$R"
 [ "$(contacts_fingerprint "$R")" = "$CONTACTS_BEFORE" ] || fail "Reminder deploy mutated Contacts domain state"
 
+# The parent command target may omit toolsAllow entirely. That shape is
+# semantically the same empty command tool cap and must remain idempotent.
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);delete j.payload.toolsAllow;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'start_is_target=1' || fail "legacy omitted Reminder command tool cap was misclassified as drift"
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);j.payload.toolsAllow=[];fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit); [ -n "$RECOVERY" ] || fail "recovery set missing"
 node - "$RECOVERY/reminder-dispatcher.before.json" "$REMINDER_KEY" <<'NODE' || fail "Reminder recovery snapshot invalid"
 const x=require(process.argv[2]);if(x.format!=='task-agent-reminder-dispatcher-recovery-v2'||x.declaration_key!==process.argv[3]||!Array.isArray(x.jobs)||x.jobs.length!==1||x.jobs[0]?.id!=='reminder-predecessor'||x.jobs[0]?.enabled!==false)process.exit(1);
