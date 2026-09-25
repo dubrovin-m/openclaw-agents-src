@@ -94,7 +94,7 @@ if [ "${1:-}" = automations ]; then
 const fs=require('fs'),p=process.argv[2],a=process.argv.slice(3),opt=n=>{const i=a.indexOf(n);return i>=0?a[i+1]:undefined};
 const x=JSON.parse(fs.readFileSync(p,'utf8')),jobs=Array.isArray(x.jobs)?x.jobs:[],key=opt('--declaration-key');if(!key||jobs.some(j=>j.declarationKey===key))process.exit(2);
 let payload,delivery,policy=null;
-if(opt('--command-argv')){payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};delivery={mode:a.includes('--no-deliver')?'none':'announce'};}
+if(opt('--command-argv')){payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds')),...a.includes('--tools')?{toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean)}:{}};delivery={mode:a.includes('--no-deliver')?'none':'announce'};}
 else if(opt('--script')==='-'){payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};delivery={mode:a.includes('--announce')?'announce':'none',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account')};policy={version:1,mode:'trusted'};}
 else process.exit(2);
 const job={id:`job-${jobs.length+1}`,declarationKey:key,name:opt('--name'),enabled:!a.includes('--disabled'),agentId:opt('--agent'),schedule:{kind:'cron',expr:opt('--cron'),tz:opt('--tz'),staggerMs:a.includes('--exact')?0:undefined},sessionTarget:opt('--session')||'isolated',wakeMode:'now',payload,delivery,scheduledToolPolicy:policy};
@@ -108,7 +108,7 @@ NODE
 const fs=require('fs'),p=process.argv[2],id=process.argv[3],a=process.argv.slice(4),opt=n=>{const i=a.indexOf(n);return i>=0?a[i+1]:undefined};
 const x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.id===id);if(!j)process.exit(2);
 if(a.includes('--disable'))j.enabled=false;if(a.includes('--enable'))j.enabled=true;
-if(opt('--command-argv')){j.payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds'))};j.scheduledToolPolicy=null;}
+if(opt('--command-argv')){j.payload={kind:'command',argv:JSON.parse(opt('--command-argv')),timeoutSeconds:Number(opt('--timeout-seconds')),...a.includes('--tools')?{toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean)}:{}};j.scheduledToolPolicy=null;}
 if(opt('--script')==='-'){j.payload={kind:'script',script:process.env.SCRIPT_INPUT??'',toolsAllow:String(opt('--tools')??'').split(/[ ,]+/).filter(Boolean),timeoutSeconds:Number(opt('--script-timeout-seconds')),toolBudget:Number(opt('--script-tool-budget'))};j.scheduledToolPolicy={version:1,mode:'trusted'};}
 if(a.includes('--no-deliver'))j.delivery={mode:'none'};
 if(a.includes('--announce'))j.delivery={mode:'announce',channel:opt('--channel'),to:opt('--to'),accountId:opt('--account')};
@@ -210,7 +210,7 @@ assert_target(){
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN" ] || fail "target plugin mismatch"
   expected=$(stable_tools_sha "$ROOT/config/tasks-tools.json"); [ "$(runtime_tools_sha "$r")" = "$expected" ] || fail "target tool policy mismatch"
   node - "$r/state/automations-test.json" "$REMINDER_KEY" "$r/bin/taskctl" "$REMINDER_SUFFIX" "$REMINDER_TIMEOUT" <<'NODE' || fail "Reminder target shape mismatch"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]),argv=[process.argv[4],...JSON.parse(process.argv[5])],timeout=Number(process.argv[6]);if(!j||j.id!=='reminder-predecessor'||typeof j.enabled!=='boolean'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify(argv)||j.payload.timeoutSeconds!==timeout||j.payload.toolsAllow!==undefined||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===process.argv[3]),argv=[process.argv[4],...JSON.parse(process.argv[5])],timeout=Number(process.argv[6]);if(!j||j.id!=='reminder-predecessor'||typeof j.enabled!=='boolean'||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify(argv)||j.payload.timeoutSeconds!==timeout||JSON.stringify(j.payload.toolsAllow)!=='[]'||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
 NODE
   node - "$r/state/openclaw.json" <<'NODE' || fail "ordinary Task surface still exposes Reminder scheduler authority"
 const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),p=c?.agents?.entries?.tasks?.tools;if(!p||p.allow?.includes('task_reminder_dispatch'))process.exit(1);for(const x of ['exec','cron','gateway'])if(!p.deny?.includes(x))process.exit(1);
@@ -224,6 +224,16 @@ HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TA
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Reminder deploy failed"
 assert_target "$R"
 [ "$(contacts_fingerprint "$R")" = "$CONTACTS_BEFORE" ] || fail "Reminder deploy mutated Contacts domain state"
+
+# The parent command target may omit toolsAllow entirely. That shape is
+# semantically the same empty command tool cap and must remain idempotent.
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);delete j.payload.toolsAllow;fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'start_is_target=1' || fail "legacy omitted Reminder command tool cap was misclassified as drift"
+node - "$R/state/automations-test.json" "$REMINDER_KEY" <<'NODE'
+const fs=require('fs'),p=process.argv[2],key=process.argv[3],x=JSON.parse(fs.readFileSync(p,'utf8')),j=(x.jobs||[]).find(v=>v.declarationKey===key);if(!j)process.exit(2);j.payload.toolsAllow=[];fs.writeFileSync(p,JSON.stringify(x,null,2)+'\n');
+NODE
 
 RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -print -quit); [ -n "$RECOVERY" ] || fail "recovery set missing"
 node - "$RECOVERY/reminder-dispatcher.before.json" "$REMINDER_KEY" <<'NODE' || fail "Reminder recovery snapshot invalid"

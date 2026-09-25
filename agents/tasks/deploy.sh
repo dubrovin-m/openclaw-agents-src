@@ -317,7 +317,7 @@ reminder_dispatcher_exact(){
   [ "$REMINDER_ENABLED" = "1" ] || return 0
   local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1
   node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$REMINDER_COMMAND_JSON" "$REMINDER_TIMEOUT" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],argv=JSON.parse(process.argv[7]),timeout=Number(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||typeof j.enabled!=='boolean'||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||j.payload?.toolsAllow!==undefined||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],argv=JSON.parse(process.argv[7]),timeout=Number(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0],tools=j.payload?.toolsAllow,toolsExact=tools===undefined||(Array.isArray(tools)&&tools.length===0);if(j.declarationKey!==key||j.name!==name||typeof j.enabled!=='boolean'||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||!toolsExact||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
 NODE
 }
 reminder_dispatcher_predecessor_exact(){
@@ -332,7 +332,7 @@ install_reminder_dispatcher(){
   [ "$REMINDER_ENABLED" = "1" ] || return 0
   reminder_dispatcher_absent || return 1
   local result
-  result=$(oc automations add --name "$REMINDER_NAME" --declaration-key "$REMINDER_DECLARATION" --cron "$REMINDER_CRON" --tz "$REMINDER_TIMEZONE" --exact --agent tasks --session isolated --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --disabled --no-deliver --json) || return 1
+  result=$(oc automations add --name "$REMINDER_NAME" --declaration-key "$REMINDER_DECLARATION" --cron "$REMINDER_CRON" --tz "$REMINDER_TIMEZONE" --exact --agent tasks --session isolated --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --tools "" --disabled --no-deliver --json) || return 1
   node - "$result" "$REMINDER_DECLARATION" <<'NODE' || return 1
 const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key||x?.job?.enabled!==false)process.exit(1);
 NODE
@@ -344,7 +344,10 @@ migrate_reminder_dispatcher_predecessor(){
   local jobs id
   jobs=$(reminder_dispatcher_jobs_json) || return 1
   id=$(node -e 'const x=JSON.parse(process.argv[1]);if(x.length!==1||typeof x[0]?.id!=="string"||!x[0].id)process.exit(2);process.stdout.write(x[0].id)' "$jobs") || return 1
-  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --clear-tools --no-deliver --json >/dev/null || return 1
+  # OpenClaw 2026.9.5 merges payload fields across kind changes. Set an explicit
+  # empty tools cap so the legacy task_reminder_dispatch allow-list cannot survive
+  # on the command job. --clear-tools would mean toolsAllow:["*"], not removal.
+  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --tools "" --no-deliver --clear-channel --clear-to --clear-account --json >/dev/null || return 1
   reminder_dispatcher_exact
 }
 resolve_important_date_delivery_to(){
