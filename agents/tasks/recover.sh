@@ -107,20 +107,19 @@ const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),sch
 if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.lib_present!==true||x.contactctl_present!==true||x.plugin_present!==true||x.schema_version!==schema)process.exit(2);
 NODE
 
-  local predecessor_contacts="$backup/.predecessor-contacts-release.$.json"
-  git -C "$REPO_ROOT" show "$source:shared/contacts/release.json" > "$predecessor_contacts" || fail "Unable to materialize predecessor Contacts release"
-  node - "$predecessor_contacts" "$contacts_version" "$contacts_schema" "$contacts_plugin" <<'NODE' || { rm -f "$predecessor_contacts"; fail "Predecessor Contacts release identity mismatch"; }
-const r=require(process.argv[2]);if(r.implementation_version!==process.argv[3]||r.sqlite_schema!==Number(process.argv[4])||r.plugin?.version!==process.argv[5])process.exit(2);
+  local predecessor_contacts
+  predecessor_contacts=$(git -C "$REPO_ROOT" show "$source:shared/contacts/release.json") || fail "Unable to read predecessor Contacts release"
+  node - "$predecessor_contacts" "$contacts_version" "$contacts_schema" "$contacts_plugin" <<'NODE' || fail "Predecessor Contacts release identity mismatch"
+const r=JSON.parse(process.argv[2]);if(r.implementation_version!==process.argv[3]||r.sqlite_schema!==Number(process.argv[4])||r.plugin?.version!==process.argv[5])process.exit(2);
 NODE
   for f in core.cjs task-store.cjs; do
-    expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.runtime_files[process.argv[2]])' "$predecessor_contacts" "$f") || { rm -f "$predecessor_contacts"; fail "Missing predecessor Contacts fingerprint: $f"; }
-    actual=$(tar -xOf "$backup/contacts-lib.before.tar.gz" "openclaw-contacts/$f" | sha256sum | awk '{print $1}') || { rm -f "$predecessor_contacts"; fail "Unable to fingerprint recovered Contacts library: $f"; }
-    [ "$actual" = "$expected" ] || { rm -f "$predecessor_contacts"; fail "Recovery Contacts library is not the exact declared predecessor: $f"; }
+    expected=$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.runtime_files[process.argv[2]]||"")' "$predecessor_contacts" "$f") || fail "Missing predecessor Contacts fingerprint: $f"
+    actual=$(tar -xOf "$backup/contacts-lib.before.tar.gz" "openclaw-contacts/$f" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint recovered Contacts library: $f"
+    [ -n "$expected" ] && [ "$actual" = "$expected" ] || fail "Recovery Contacts library is not the exact declared predecessor: $f"
   done
-  expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.runtime_files.contactctl)' "$predecessor_contacts")
+  expected=$(node -e 'const r=JSON.parse(process.argv[1]);process.stdout.write(r.runtime_files.contactctl||"")' "$predecessor_contacts")
   actual=$(sha256sum "$backup/contactctl.before" | awk '{print $1}')
-  [ "$actual" = "$expected" ] || { rm -f "$predecessor_contacts"; fail "Recovery contactctl is not the exact declared predecessor"; }
-  rm -f "$predecessor_contacts"
+  [ -n "$expected" ] && [ "$actual" = "$expected" ] || fail "Recovery contactctl is not the exact declared predecessor"
 
   actual=$(tar -xOf "$backup/taskctl-managed.before.tar.gz" taskctl/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version||"")))') || fail "Unable to inspect recovery Task plugin"
   [ "$actual" = "$task_plugin" ] || fail "Recovery Task plugin is not the exact declared predecessor"
