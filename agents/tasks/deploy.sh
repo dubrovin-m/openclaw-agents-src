@@ -10,7 +10,6 @@ REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)
 RELEASE_FILE="$ROOT/release.json"
 WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
-LEGACY_WORKSPACE_FILES=(AGENTS.md SOUL.md TOOLS.md USER.md IDENTITY.md HEARTBEAT.md)
 TARGET_WORKSPACE_FILES=()
 
 TEST_ROOT=""
@@ -51,7 +50,7 @@ node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/
 [ -f "$RELEASE_FILE" ] || fail_plain "Task Agent release metadata missing"
 RELEASE_ENV=$(EXPECTED_OPENCLAW_VERSION="$EXPECTED_OPENCLAW_VERSION" node - "$RELEASE_FILE" <<'NODE'
 const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const files=['AGENTS.md','SOUL.md','TOOLS.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
+const files=['AGENTS.md','SOUL.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
 const bad=()=>process.exit(2);
 if(r?.format!=='task-agent-release-v2')bad();
 const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.sqlite_schema;
@@ -60,26 +59,22 @@ const exactHost=(v,range)=>tuple(v)!==null&&v===range;
 if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!exactHost(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
 if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
 if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
-const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||!['absent','exact'].includes(sc.predecessor_mode??'absent')))bad();
+const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||sc.predecessor_mode!=='exact'))bad();
 const gov=r?.task_governance??null;if(gov&&(gov.kind!=='private-bootstrap-v1'||gov.bootstrap_path!=='data/tasks/task-governance-bootstrap.json'||gov.office_ceo_group_display_name!=='Office CEO'||gov.office_ceo_binding_key!=='OFFICE_CEO_GROUP'||gov.personal_label_binding_key!=='PERSONAL_LABEL'))bad();
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 const rem=r?.reminder_dispatcher??null;
-if(rem!==null&&(rem?.kind!=='openclaw-command-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||JSON.stringify(rem?.command_argv_suffix)!==JSON.stringify(['reminder-internal','dispatch-send'])||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.predecessor_mode!=='exact-disabled-script-0.4.26'))bad();
+if(rem!==null&&(rem?.kind!=='openclaw-command-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||JSON.stringify(rem?.command_argv_suffix)!==JSON.stringify(['reminder-internal','dispatch-send'])||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.predecessor_mode!=='exact'))bad();
 const idr=r?.important_date_dispatcher??null;
-if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false||!['absent','exact'].includes(idr?.predecessor_mode??'absent')))bad();
-if(!r?.from||!Array.isArray(r.from.plugin_versions)||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(r.from.plugin_versions).size!==r.from.plugin_versions.length)bad();
+if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false||idr?.predecessor_mode!=='exact'))bad();
+if(!r?.from||!Array.isArray(r.from.plugin_versions)||r.from.plugin_versions.length!==1||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v)))bad();
 const fromSchemas=r.from.sqlite_schemas;
-if(!Array.isArray(fromSchemas)||fromSchemas.length===0||!fromSchemas.every(v=>Number.isSafeInteger(v)&&v>=1)||new Set(fromSchemas).size!==fromSchemas.length)bad();
+if(!Array.isArray(fromSchemas)||fromSchemas.length!==1||!fromSchemas.every(v=>Number.isSafeInteger(v)&&v>=1))bad();
 const fromTaskctl=r.from.taskctl_versions??[targetTaskctl];
-if(!Array.isArray(fromTaskctl)||fromTaskctl.length===0||!fromTaskctl.every(v=>/^0\.4\.[0-9]+$/.test(v))||new Set(fromTaskctl).size!==fromTaskctl.length)bad();
-if(r.from.plugin_versions.length===0){
-  if(Object.keys(r.from.workspace_sha256||{}).length!==0||r.from.tools_sha256!==null)bad();
-}else{
-  if(!r.from.workspace_sha256||Object.keys(r.from.workspace_sha256).sort().join(',')!==files.slice().sort().join(','))bad();
-  if(!files.every(f=>/^[0-9a-f]{64}$/.test(r.from.workspace_sha256[f]||'')))bad();
-  if(!/^[0-9a-f]{64}$/.test(r.from.tools_sha256||''))bad();
-}
+if(!Array.isArray(fromTaskctl)||fromTaskctl.length!==1||!fromTaskctl.every(v=>/^0\.4\.[0-9]+$/.test(v)))bad();
+if(!r.from.workspace_sha256||Object.keys(r.from.workspace_sha256).sort().join(',')!==files.slice().sort().join(','))bad();
+if(!files.every(f=>/^[0-9a-f]{64}$/.test(r.from.workspace_sha256[f]||'')))bad();
+if(!/^[0-9a-f]{64}$/.test(r.from.tools_sha256||''))bad();
 const q=s=>`'${String(s).replace(/'/g,"'\\''")}'`;
 console.log(`TARGET_TASKCTL_VERSION=${q(targetTaskctl)}`);
 console.log(`TARGET_SQLITE_SCHEMA=${q(targetSchema)}`);
@@ -87,7 +82,6 @@ console.log(`FROM_SQLITE_SCHEMAS=${q(fromSchemas.join(' '))}`);
 console.log(`FROM_TASKCTL_VERSIONS=${q(fromTaskctl.join(' '))}`);
 console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);
 console.log(`CONTACTS_ENABLED=${q(sc?'1':'0')}`);
-console.log(`CONTACTS_PREDECESSOR_MODE=${q(sc?.predecessor_mode??'absent')}`);
 console.log(`TARGET_CONTACTS_VERSION=${q(sc?.implementation_version||'')}`);
 console.log(`TARGET_CONTACTS_SCHEMA=${q(sc?.sqlite_schema||'')}`);
 console.log(`CONTACTS_RELEASE_REL=${q(sc?.release_path||'')}`);
@@ -112,11 +106,9 @@ console.log(`REMINDER_CRON=${q(rem?.cron||'')}`);
 console.log(`REMINDER_TIMEZONE=${q(rem?.timezone||'')}`);
 console.log(`REMINDER_COMMAND_SUFFIX_JSON=${q(JSON.stringify(rem?.command_argv_suffix??[]))}`);
 console.log(`REMINDER_TIMEOUT=${q(rem?.timeout_seconds||'')}`);
-console.log(`REMINDER_PREDECESSOR_MODE=${q(rem?.predecessor_mode||'')}`);
 console.log(`REMINDER_CHANNEL=${q(rem?.delivery_channel||'')}`);
 console.log(`REMINDER_ACCOUNT=${q(rem?.delivery_account||'')}`);
 console.log(`IMPORTANT_DATE_ENABLED=${q(idr?'1':'0')}`);
-console.log(`IMPORTANT_DATE_PREDECESSOR_MODE=${q(idr?.predecessor_mode??'absent')}`);
 console.log(`IMPORTANT_DATE_DECLARATION=${q(idr?.declaration_key||'')}`);
 console.log(`IMPORTANT_DATE_NAME=${q(idr?.name||'')}`);
 console.log(`IMPORTANT_DATE_CRON=${q(idr?.cron||'')}`);
@@ -222,7 +214,6 @@ START_PLUGIN_VERSION=""
 START_IS_TARGET=0
 START_MATERIALIZER_EXACT=0
 START_REMINDER_EXACT=0
-START_REMINDER_PREDECESSOR_EXACT=0
 REMINDER_DELIVERY_TO=""
 START_IMPORTANT_DATE_EXACT=0
 IMPORTANT_DATE_DELIVERY_TO=""
@@ -277,24 +268,6 @@ calendar_materializer_jobs_json(){
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
 }
-calendar_materializer_absent(){ local jobs; jobs=$(calendar_materializer_jobs_json) || return 1; node -e 'const x=JSON.parse(process.argv[1]);if(!Array.isArray(x)||x.length!==0)process.exit(1)' "$jobs"; }
-calendar_materializer_exact(){
-  [ "$MATERIALIZER_ENABLED" = "1" ] || return 0
-  local jobs; jobs=$(calendar_materializer_jobs_json) || return 1
-  node - "$jobs" "$MATERIALIZER_DECLARATION" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TIMEZONE" "$MATERIALIZER_TIMEOUT" "$MATERIALIZER_COMMAND_JSON" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],timeout=Number(process.argv[7]),argv=JSON.parse(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||j.enabled!==true||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||j.delivery?.mode!=='none')process.exit(1);
-NODE
-}
-install_calendar_materializer(){
-  [ "$MATERIALIZER_ENABLED" = "1" ] || return 0
-  calendar_materializer_absent || return 1
-  local result
-  result=$(oc automations add --name "$MATERIALIZER_NAME" --declaration-key "$MATERIALIZER_DECLARATION" --cron "$MATERIALIZER_CRON" --tz "$MATERIALIZER_TIMEZONE" --exact --agent tasks --session isolated --command-argv "$MATERIALIZER_COMMAND_JSON" --timeout-seconds "$MATERIALIZER_TIMEOUT" --no-deliver --json) || return 1
-  node - "$result" "$MATERIALIZER_DECLARATION" <<'NODE' || return 1
-const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key)process.exit(1);
-NODE
-  calendar_materializer_exact
-}
 resolve_reminder_delivery_to(){
   [ "$REMINDER_ENABLED" = "1" ] || { printf '\n'; return 0; }
   node - "$CONFIG" "$REMINDER_ACCOUNT" <<'NODE'
@@ -311,44 +284,6 @@ reminder_dispatcher_jobs_json(){
   node - "$REMINDER_DECLARATION" "$raw" <<'NODE'
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
-}
-reminder_dispatcher_absent(){ local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1; node -e 'const x=JSON.parse(process.argv[1]);if(!Array.isArray(x)||x.length!==0)process.exit(1)' "$jobs"; }
-reminder_dispatcher_exact(){
-  [ "$REMINDER_ENABLED" = "1" ] || return 0
-  local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1
-  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$REMINDER_COMMAND_JSON" "$REMINDER_TIMEOUT" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],argv=JSON.parse(process.argv[7]),timeout=Number(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0],tools=j.payload?.toolsAllow,toolsExact=tools===undefined||(Array.isArray(tools)&&tools.length===0);if(j.declarationKey!==key||j.name!==name||typeof j.enabled!=='boolean'||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||!toolsExact||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
-NODE
-}
-reminder_dispatcher_predecessor_exact(){
-  [ "$REMINDER_ENABLED" = "1" ] || return 1
-  [ "$REMINDER_PREDECESSOR_MODE" = "exact-disabled-script-0.4.26" ] || return 1
-  local jobs destination; jobs=$(reminder_dispatcher_jobs_json) || return 1; destination=${REMINDER_DELIVERY_TO:-}; [ -n "$destination" ] || destination=$(resolve_reminder_delivery_to) || return 1
-  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$destination" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],to=process.argv[7],script='const dispatch = await task_reminder_dispatch({});\njson(dispatch.count > 0 ? { notify: dispatch.message } : {});';if(jobs.length!==1)process.exit(1);const j=jobs[0],policy=j.scheduledToolPolicy;if(j.declarationKey!==key||j.name!==name||j.enabled!==false||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='script'||j.payload?.script!==script||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify(['task_reminder_dispatch'])||j.payload?.timeoutSeconds!==30||j.payload?.toolBudget!==1||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||String(j.delivery?.to)!==to||j.delivery?.accountId!=='tasks'||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false)||policy?.version!==1||policy?.mode!=='trusted')process.exit(1);
-NODE
-}
-install_reminder_dispatcher(){
-  [ "$REMINDER_ENABLED" = "1" ] || return 0
-  reminder_dispatcher_absent || return 1
-  local result
-  result=$(oc automations add --name "$REMINDER_NAME" --declaration-key "$REMINDER_DECLARATION" --cron "$REMINDER_CRON" --tz "$REMINDER_TIMEZONE" --exact --agent tasks --session isolated --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --tools "" --disabled --no-deliver --json) || return 1
-  node - "$result" "$REMINDER_DECLARATION" <<'NODE' || return 1
-const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key||x?.job?.enabled!==false)process.exit(1);
-NODE
-  reminder_dispatcher_exact
-}
-migrate_reminder_dispatcher_predecessor(){
-  [ "$REMINDER_ENABLED" = "1" ] || return 0
-  reminder_dispatcher_predecessor_exact || return 1
-  local jobs id
-  jobs=$(reminder_dispatcher_jobs_json) || return 1
-  id=$(node -e 'const x=JSON.parse(process.argv[1]);if(x.length!==1||typeof x[0]?.id!=="string"||!x[0].id)process.exit(2);process.stdout.write(x[0].id)' "$jobs") || return 1
-  # OpenClaw 2026.9.5 merges payload fields across kind changes. Set an explicit
-  # empty tools cap so the legacy task_reminder_dispatch allow-list cannot survive
-  # on the command job. --clear-tools would mean toolsAllow:["*"], not removal.
-  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --tools "" --no-deliver --clear-channel --clear-to --clear-account --json >/dev/null || return 1
-  reminder_dispatcher_exact
 }
 resolve_important_date_delivery_to(){
   [ "$IMPORTANT_DATE_ENABLED" = "1" ] || { printf '\n'; return 0; }
@@ -367,25 +302,6 @@ important_date_dispatcher_jobs_json(){
   node - "$IMPORTANT_DATE_DECLARATION" "$raw" <<'NODE'
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
-}
-important_date_dispatcher_absent(){ local jobs; jobs=$(important_date_dispatcher_jobs_json) || return 1; node -e 'const x=JSON.parse(process.argv[1]);if(!Array.isArray(x)||x.length!==0)process.exit(1)' "$jobs"; }
-important_date_dispatcher_exact(){
-  [ "$IMPORTANT_DATE_ENABLED" = "1" ] || return 0
-  local jobs destination; jobs=$(important_date_dispatcher_jobs_json) || return 1; destination=$IMPORTANT_DATE_DELIVERY_TO; [ -n "$destination" ] || destination=$(resolve_important_date_delivery_to) || return 1
-  node - "$jobs" "$IMPORTANT_DATE_DECLARATION" "$IMPORTANT_DATE_NAME" "$IMPORTANT_DATE_CRON" "$IMPORTANT_DATE_TIMEZONE" "$IMPORTANT_DATE_SCRIPT" "$IMPORTANT_DATE_TOOL" "$IMPORTANT_DATE_TIMEOUT" "$IMPORTANT_DATE_TOOL_BUDGET" "$IMPORTANT_DATE_CHANNEL" "$IMPORTANT_DATE_ACCOUNT" "$destination" <<'NODE'
-const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],script=process.argv[7],tool=process.argv[8],timeout=Number(process.argv[9]),budget=Number(process.argv[10]),channel=process.argv[11],account=process.argv[12],to=process.argv[13];if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||j.enabled!==true||j.agentId!=='main'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='script'||j.payload?.script!==script||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify([tool])||j.payload?.timeoutSeconds!==timeout||j.payload?.toolBudget!==budget||j.delivery?.mode!=='announce'||j.delivery?.channel!==channel||String(j.delivery?.to)!==to||j.delivery?.accountId!==account||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false))process.exit(1);
-NODE
-}
-install_important_date_dispatcher(){
-  [ "$IMPORTANT_DATE_ENABLED" = "1" ] || return 0
-  if important_date_dispatcher_exact; then return 0; fi
-  important_date_dispatcher_absent || return 1
-  local result destination; destination=$IMPORTANT_DATE_DELIVERY_TO; [ -n "$destination" ] || destination=$(resolve_important_date_delivery_to) || return 1
-  result=$(printf '%s\n' "$IMPORTANT_DATE_SCRIPT" | oc automations add --name "$IMPORTANT_DATE_NAME" --declaration-key "$IMPORTANT_DATE_DECLARATION" --cron "$IMPORTANT_DATE_CRON" --tz "$IMPORTANT_DATE_TIMEZONE" --exact --agent main --session isolated --script - --tools "$IMPORTANT_DATE_TOOL" --script-timeout-seconds "$IMPORTANT_DATE_TIMEOUT" --script-tool-budget "$IMPORTANT_DATE_TOOL_BUDGET" --announce --channel "$IMPORTANT_DATE_CHANNEL" --account "$IMPORTANT_DATE_ACCOUNT" --to "$destination" --json) || return 1
-  node - "$result" "$IMPORTANT_DATE_DECLARATION" <<'NODE' || return 1
-const x=JSON.parse(process.argv[2]),key=process.argv[3];if(x?.created!==true||x?.job?.declarationKey!==key)process.exit(1);
-NODE
-  important_date_dispatcher_exact
 }
 taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
 taskctl_migrate(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" init; else "$TASKCTL_TARGET" init; fi; }
@@ -468,19 +384,13 @@ const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.ar
 try{
   const uv=Number(db.prepare('PRAGMA user_version').get().user_version),integrity=db.prepare('PRAGMA integrity_check').get().integrity_check,fk=db.prepare('PRAGMA foreign_key_check').all().length;
   const cols=n=>db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name=?").get(n)?db.prepare(`PRAGMA table_info("${n}")`).all().map(x=>x.name):[];
-  const labels=cols('labels'),tasks=cols('tasks'),projects=cols('projects'),ev=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_events'").get()?.sql||'',base=labels.includes('emoji')&&tasks.includes('assignee_id')&&ev.includes('DUE_TIME_CHANGED');
-  const physical_v4=base&&!tasks.includes('project_id')&&projects.length===0;
-  const physical_v5=base&&tasks.includes('project_id')&&['id','title','status','created_at','completed_at'].every(x=>projects.includes(x));
+  const labels=cols('labels'),tasks=cols('tasks'),projects=cols('projects'),ev=db.prepare("SELECT sql FROM sqlite_master WHERE type='table' AND name='task_events'").get()?.sql||'',base=labels.includes('emoji')&&tasks.includes('assignee_id')&&tasks.includes('project_id')&&['id','title','status','created_at','completed_at'].every(x=>projects.includes(x))&&ev.includes('DUE_TIME_CHANGED');
   const rec=cols('recurrences'),rl=cols('recurrence_labels'),ro=cols('recurrence_occurrences'),re=cols('recurrence_events'),people=cols('people'),aliases=cols('person_aliases');
   const recurrenceShape=['id','status','mode','title','assignee_id','due_time','target_project_id','rule_json','calendar_cursor_date','created_at','updated_at','cancelled_at'].every(x=>rec.includes(x))&&['recurrence_id','label_id'].every(x=>rl.includes(x))&&['id','recurrence_id','occurrence_key','occurrence_date','predecessor_task_id','task_id','template_json','generated_at'].every(x=>ro.includes(x))&&['id','recurrence_id','event_type','old_value','new_value','reason','occurred_at'].every(x=>re.includes(x));
-  const physical_v6=physical_v5&&recurrenceShape&&people.includes('id')&&aliases.includes('person_id');
-  const physical_v7=physical_v5&&recurrenceShape&&people.length===0&&aliases.length===0;
   const reminders=cols('reminders'),reminderShape=['id','task_id','text','trigger_at','status','close_reason','created_at','closed_at','claim_token','claimed_at','claim_expires_at'].every(x=>reminders.includes(x));
-  const physical_v8=physical_v7&&reminderShape;
-  const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests');
-  const governanceShape=['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))&&['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x));
-  const physical_v9=physical_v8&&governanceShape;
-  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_v4,physical_v5,physical_v6,physical_v7,physical_v8,physical_v9}));
+  const bindings=cols('task_domain_bindings'),requests=cols('deadline_change_requests'),governanceShape=['binding_key','entity_id','created_at','updated_at'].every(x=>bindings.includes(x))&&['id','task_id','base_due_date','base_due_time','requested_due_date','requested_due_time','reason','status','approved_due_date','approved_due_time','created_at','resolved_at'].every(x=>requests.includes(x));
+  const physical_current=base&&recurrenceShape&&people.length===0&&aliases.length===0&&reminderShape&&governanceShape;
+  process.stdout.write(JSON.stringify({user_version:uv,integrity,fk,physical_current}));
 }finally{db.close();}
 NODE
 }
@@ -500,33 +410,20 @@ main_contacts_policy_target_exact(){
 const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),want=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),got=c?.agents?.entries?.main?.tools;const stable=x=>x===null||typeof x!=="object"?JSON.stringify(x):Array.isArray(x)?'['+x.map(stable).join(',')+']':'{'+Object.keys(x).sort().map(k=>JSON.stringify(k)+':'+stable(x[k])).join(',')+'}';if(c?.tools?.profile!=="coding"||stable(got)!==stable(want))process.exit(1);
 NODE
 }
-main_contacts_policy_starting_eligible(){
-  [ "$CONTACTS_ENABLED" = "1" ] || return 0
-  if [ "$CONTACTS_PREDECESSOR_MODE" = "exact" ]; then main_contacts_policy_target_exact; return; fi
-  node - "$CONFIG" <<'NODE'
-const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),main=c?.agents?.entries?.main;if(c?.tools?.profile!=="coding"||!main||Object.prototype.hasOwnProperty.call(main,'tools'))process.exit(1);
-NODE
-}
+main_contacts_policy_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || main_contacts_policy_target_exact; }
 workspace_matches_target(){
   local f
   for f in "${TARGET_WORKSPACE_FILES[@]}"; do cmp -s "$ROOT/workspace/$f" "$WORKSPACE/$f" || return 1; done
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1; fi
 }
 workspace_matches_from(){
-  local f expected actual var archive
+  local f expected actual var
   for f in "${TARGET_WORKSPACE_FILES[@]}"; do
     var="FROM_WS_${f//./_}"; expected=${!var}; [ -n "$expected" ] || return 1
     actual=$(sha256sum "$WORKSPACE/$f" 2>/dev/null|awk '{print $1}') || return 1
     [ "$actual" = "$expected" ] || return 1
   done
-  if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then
-    [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1
-    expected=${FROM_WS_TOOLS_md:-}; [ -n "$expected" ] || return 1
-    archive="$STATE_DIR/backups/tools-md-migration/tasks-${expected}.md"
-    [ -f "$archive" ] && [ ! -L "$archive" ] || return 1
-    actual=$(sha256sum "$archive" 2>/dev/null|awk '{print $1}') || return 1
-    [ "$actual" = "$expected" ] || return 1
-  fi
+  [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1
 }
 plugin_version(){ node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/package.json" 2>/dev/null; }
 plugin_identity_matches_target(){ local pv tv; pv=$(plugin_version) || return 1; [ "$pv" = "$TARGET_PLUGIN_VERSION" ] || return 1; tv=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/node_modules/typebox/package.json" 2>/dev/null) || return 1; [ "$tv" = "1.3.15" ]; }
@@ -576,19 +473,6 @@ NODE
 const {execFileSync}=require('child_process'),x=JSON.parse(process.argv[2]),p=x?.plugin,v=process.argv[3],repo=process.argv[4],sha=process.argv[5];const m=JSON.parse(execFileSync('git',['-C',repo,'show',sha+':shared/contacts/plugin/openclaw.plugin.json'],{encoding:'utf8'})),expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.id!=='contacts'||p?.packageVersion!==v||p?.enabled!==true||p?.status!=='loaded'||!expected.every(t=>p.toolNames?.includes(t)))process.exit(1);
 NODE
 }
-contacts_predecessor_absent(){ [ "$CONTACTS_ENABLED" != "1" ] || { [ ! -e "$CONTACTS_DB" ] && [ ! -e "$CONTACTS_LIB" ] && [ ! -e "$CONTACTCTL_TARGET" ] && [ ! -e "$CONTACTS_PLUGIN_DIR" ]; }; }
-contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_runtime_exact || { [ "$CONTACTS_PREDECESSOR_MODE" = "exact" ] && contacts_predecessor_exact || { [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ] && contacts_predecessor_absent; }; }; }
-
-taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
-taskctl_starting_eligible(){ local identity current schema found_v=0 found_s=0 v; identity=$(taskctl_runtime_identity) || return 1; current=${identity%% *}; schema=${identity##* }; for v in $FROM_TASKCTL_VERSIONS; do [ "$current" = "$v" ] && found_v=1; done; for v in $FROM_SQLITE_SCHEMAS; do [ "$schema" = "$v" ] && found_s=1; done; [ "$found_v" -eq 1 ] && [ "$found_s" -eq 1 ]; }
-db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||(want===4&&!s.physical_v4)||(want===5&&!s.physical_v5)||(want===6&&!s.physical_v6)||(want===7&&!s.physical_v7)||(want===8&&!s.physical_v8)||(want===9&&!s.physical_v9))process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
-db_starting_eligible(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),allowed=process.argv[2].split(/ +/).filter(Boolean).map(Number);if(!allowed.includes(s.user_version)||s.integrity!=="ok"||s.fk!==0||(s.user_version===4&&!s.physical_v4)||(s.user_version===5&&!s.physical_v5)||(s.user_version===6&&!s.physical_v6)||(s.user_version===7&&!s.physical_v7))process.exit(1)' "$state" "$FROM_SQLITE_SCHEMAS"; }
-target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && governance_bindings_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && main_contacts_policy_target_exact && oc config validate >/dev/null 2>&1; }
-starting_runtime_eligible(){
-  db_starting_eligible || return 1; taskctl_starting_eligible || return 1; contacts_starting_eligible || return 1; main_contacts_policy_starting_eligible || return 1
-  local pv found=0 v; pv=$(plugin_version) || return 1; for v in $FROM_PLUGIN_VERSIONS; do [ "$pv" = "$v" ] && found=1; done; [ "$found" -eq 1 ] || return 1
-  workspace_matches_from || return 1; [ "$(current_tools_sha)" = "$FROM_TOOLS_SHA" ] || return 1; oc config validate >/dev/null 2>&1 || return 1
-}
 source_taskctl_identity_exact(){
   [ -x "$ROOT/taskctl" ] || return 1
   local tmp out code=0; tmp=$(mktemp -d) || return 1
@@ -619,10 +503,6 @@ NODE
 ) || abort_deploy "SOURCE" "artifact package identity invalid"
   [ "$pkgver" = "$TARGET_PLUGIN_VERSION" ] || abort_deploy "SOURCE" "artifact package version mismatch"
   for f in "${TARGET_WORKSPACE_FILES[@]}"; do [ -f "$ROOT/workspace/$f" ] || abort_deploy "SOURCE" "workspace source missing: $f"; done
-  if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then
-    [ -f "$ROOT/workspace/TOOLS.md" ] || abort_deploy "SOURCE" "retired TOOLS.md migration source missing"
-    [ "$(sha256sum "$ROOT/workspace/TOOLS.md"|awk '{print $1}')" = "${FROM_WS_TOOLS_md:-}" ] || abort_deploy "SOURCE" "retired TOOLS.md source identity mismatch"
-  fi
   bash -n "$ROOT/deploy.sh" || abort_deploy "SOURCE" "deploy runner syntax invalid"; bash -n "$ROOT/recover.sh" || abort_deploy "SOURCE" "recovery runner syntax invalid"
 }
 
@@ -651,58 +531,15 @@ NODE
   [ -n "$FROM_PLUGIN_VERSIONS" ] || abort_deploy "PREFLIGHT" "runtime is not exact target and release declares no eligible starting generation"
   starting_runtime_eligible || abort_deploy "PREFLIGHT" "runtime does not match declared starting fingerprint"
   if [ "$GOVERNANCE_ENABLED" = "1" ]; then governance_bootstrap_validate || abort_deploy "PREFLIGHT" "Task governance bootstrap is missing, unsafe, or does not resolve to canonical predecessor Persons/Label"; fi
-  if [ "$MATERIALIZER_ENABLED" = "1" ]; then
-    if calendar_materializer_exact; then
-      START_MATERIALIZER_EXACT=1
-    elif calendar_materializer_absent; then
-      START_MATERIALIZER_EXACT=0
-    else
-      abort_deploy "PREFLIGHT" "declared predecessor has Recurrence materializer scheduler drift or duplicate Automation"
-    fi
-  fi
-  if [ "$REMINDER_ENABLED" = "1" ]; then
-    if reminder_dispatcher_exact; then START_REMINDER_EXACT=1
-    elif reminder_dispatcher_predecessor_exact; then START_REMINDER_PREDECESSOR_EXACT=1
-    elif reminder_dispatcher_absent; then START_REMINDER_EXACT=0
-    else abort_deploy "PREFLIGHT" "declared predecessor has Reminder dispatcher drift or duplicate Automation"; fi
-  fi
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
-    if [ "$IMPORTANT_DATE_PREDECESSOR_MODE" = "exact" ]; then
-      important_date_dispatcher_exact || abort_deploy "PREFLIGHT" "declared predecessor Important Dates dispatcher is missing or drifted"
-      START_IMPORTANT_DATE_EXACT=1
-    else
-      important_date_dispatcher_absent || abort_deploy "PREFLIGHT" "declared predecessor must not already contain an Important Dates dispatcher Automation"
-      START_IMPORTANT_DATE_EXACT=0
-    fi
-  fi
+  if [ "$MATERIALIZER_ENABLED" = "1" ]; then calendar_materializer_exact || abort_deploy "PREFLIGHT" "declared predecessor Recurrence materializer is missing or drifted"; START_MATERIALIZER_EXACT=1; fi
+  if [ "$REMINDER_ENABLED" = "1" ]; then reminder_dispatcher_exact || abort_deploy "PREFLIGHT" "declared predecessor Reminder dispatcher is missing or drifted"; START_REMINDER_EXACT=1; fi
+  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then important_date_dispatcher_exact || abort_deploy "PREFLIGHT" "declared predecessor Important Dates dispatcher is missing or drifted"; START_IMPORTANT_DATE_EXACT=1; fi
   oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target Task Agent tool policy is not accepted by OpenClaw"
-  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ]; then oc config set "agents.entries.main.tools" "$TARGET_MAIN_CONTACTS_TOOLS_JSON" --strict-json --dry-run >/dev/null || abort_deploy "PREFLIGHT" "target main Contacts tool policy is not accepted by OpenClaw"; fi
 }
 
 create_recovery_set(){
   RECOVERY_SET="$BACKUPS_ROOT/task-agent-stage-$STAMP"; mkdir -m 700 "$RECOVERY_SET" || return 1
   install -m 600 "$CONFIG" "$RECOVERY_SET/openclaw.json.before" || return 1; install -m 700 "$TASKCTL_TARGET" "$RECOVERY_SET/taskctl.before" || return 1
-  if [ "$MATERIALIZER_ENABLED" = "1" ] && [ "$START_MATERIALIZER_EXACT" -eq 0 ]; then
-  local materializer_jobs
-  materializer_jobs=$(calendar_materializer_jobs_json) || return 1
-  node - "$RECOVERY_SET/calendar-materializer.before.json" "$MATERIALIZER_DECLARATION" "$materializer_jobs" <<'NODE' || return 1
-const fs=require('fs'),jobs=JSON.parse(process.argv[4]);if(!Array.isArray(jobs)||jobs.length!==0)process.exit(2);fs.writeFileSync(process.argv[2],JSON.stringify({format:'task-agent-calendar-materializer-recovery-v1',declaration_key:process.argv[3],jobs},null,2)+String.fromCharCode(10),{mode:0o600});
-NODE
-fi
-  if [ "$REMINDER_ENABLED" = "1" ] && [ "$START_REMINDER_EXACT" -eq 0 ]; then
-    local reminder_jobs
-    reminder_jobs=$(reminder_dispatcher_jobs_json) || return 1
-    node - "$RECOVERY_SET/reminder-dispatcher.before.json" "$REMINDER_DECLARATION" "$reminder_jobs" <<'NODE' || return 1
-const fs=require('fs'),jobs=JSON.parse(process.argv[4]),key=process.argv[3];if(!Array.isArray(jobs)||jobs.length>1||jobs.some(j=>j?.declarationKey!==key||typeof j?.id!=='string'||!j.id))process.exit(2);fs.writeFileSync(process.argv[2],JSON.stringify({format:'task-agent-reminder-dispatcher-recovery-v2',declaration_key:key,jobs},null,2)+'\n',{mode:0o600});
-NODE
-  fi
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ] && [ "$START_IMPORTANT_DATE_EXACT" -eq 0 ]; then
-    local important_date_jobs
-    important_date_jobs=$(important_date_dispatcher_jobs_json) || return 1
-    node - "$RECOVERY_SET/important-date-dispatcher.before.json" "$IMPORTANT_DATE_DECLARATION" "$important_date_jobs" <<'NODE' || return 1
-const fs=require('fs'),jobs=JSON.parse(process.argv[4]);if(!Array.isArray(jobs)||jobs.length!==0)process.exit(2);fs.writeFileSync(process.argv[2],JSON.stringify({format:'contacts-important-date-dispatcher-recovery-v1',declaration_key:process.argv[3],jobs},null,2)+String.fromCharCode(10),{mode:0o600});
-NODE
-  fi
   node - "$DB" "$RECOVERY_SET/tasks.sqlite3" <<'NODE' || return 1
 const {DatabaseSync,backup}=require('node:sqlite');const fs=require('fs');(async()=>{const db=new DatabaseSync(process.argv[2],{readOnly:true});try{await backup(db,process.argv[3]);}finally{db.close();}fs.chmodSync(process.argv[3],0o600);})().catch(e=>{console.error(e);process.exit(2)});
 NODE
@@ -768,27 +605,14 @@ main(){
   if [ "$MATERIALIZER_ENABLED" = "1" ] && [ "$START_MATERIALIZER_EXACT" -eq 1 ]; then
     calendar_materializer_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Recurrence materializer changed after preflight"
   fi
-  if [ "$REMINDER_ENABLED" = "1" ]; then
-    if [ "$START_REMINDER_EXACT" -eq 1 ]; then reminder_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Reminder dispatcher changed after preflight"
-    elif [ "$START_REMINDER_PREDECESSOR_EXACT" -eq 1 ]; then reminder_dispatcher_predecessor_exact || abort_deploy "PREFLIGHT_OUTAGE" "Reminder predecessor changed after preflight"
-    else reminder_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Reminder dispatcher appeared or drifted after preflight"; fi
-  fi
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
-    if [ "$START_IMPORTANT_DATE_EXACT" -eq 1 ]; then important_date_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Important Dates dispatcher changed after preflight"
-    else important_date_dispatcher_absent || abort_deploy "PREFLIGHT_OUTAGE" "Important Dates dispatcher appeared or drifted after preflight"; fi
-  fi
+  if [ "$REMINDER_ENABLED" = "1" ]; then reminder_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Reminder dispatcher changed after preflight"; fi
+  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then important_date_dispatcher_exact || abort_deploy "PREFLIGHT_OUTAGE" "existing Important Dates dispatcher changed after preflight"; fi
   if [ "$GOVERNANCE_ENABLED" = "1" ]; then governance_bootstrap_validate || abort_deploy "PREFLIGHT_OUTAGE" "Task governance bootstrap changed after preflight"; fi
   systemctl_user stop openclaw-gateway.service || abort_deploy "OUTAGE" "failed to stop Gateway"; GATEWAY_STOPPED=1; maybe_fault "after-stop"
   starting_runtime_eligible || abort_deploy "PREFLIGHT_OFFLINE" "starting runtime changed after preflight"
 
   MUTATED=1
   if [ "$CONTACTS_ENABLED" = "1" ]; then
-    if [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ]; then
-      oc plugins registry --refresh --json >/dev/null || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to refresh predecessor plugin registry"
-      node "$PLUGIN_REGISTRY_HELPER" normalize-initial "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$START_PLUGIN_VERSION" || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to normalize initial Shared Contacts plugin ownership"
-      oc plugins registry --refresh --json >/dev/null || abort_deploy "PLUGIN_REGISTRY_PREP" "failed to refresh normalized predecessor plugin registry"
-      node "$PLUGIN_REGISTRY_HELPER" verify-normalized "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$START_PLUGIN_VERSION" || abort_deploy "PLUGIN_REGISTRY_PREP" "normalized predecessor plugin registry validation failed"
-    fi
     install -d -m 700 "$CONTACTS_LIB" || abort_deploy "CONTACTS_INSTALL" "Contacts library directory install failed"
     install -m 600 "$CONTACTS_ROOT/core.cjs" "$CONTACTS_LIB/core.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts core install failed"
     install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$CONTACTS_LIB/task-store.cjs" || abort_deploy "CONTACTS_INSTALL" "Contacts Task adapter install failed"
@@ -809,36 +633,18 @@ main(){
   maybe_fault "after-migration"
   if [ "$GOVERNANCE_ENABLED" = "1" ]; then activate_governance || abort_deploy "GOVERNANCE_ACTIVATION" "failed to create or validate Office CEO Person Group and Task governance bindings"; fi
   maybe_fault "after-governance-activation"
-  if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then rm -f "$WORKSPACE/TOOLS.md" || abort_deploy "WORKSPACE_INSTALL" "failed to remove retired TOOLS.md"; fi
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do install -m 644 "$ROOT/workspace/$f" "$WORKSPACE/$f" || abort_deploy "WORKSPACE_INSTALL" "workspace install failed: $f"; done
   oc plugins install "$ARTIFACT" --force --accept-capabilities || abort_deploy "PLUGIN_INSTALL" "plugin install failed"
   oc config set "agents.entries.tasks.tools" "$TARGET_TOOLS_JSON" --strict-json || abort_deploy "TOOL_POLICY_INSTALL" "Task Agent tool policy update failed"
-  if [ "$CONTACTS_ENABLED" = "1" ] && [ "$CONTACTS_PREDECESSOR_MODE" = "absent" ]; then oc config set "agents.entries.main.tools" "$TARGET_MAIN_CONTACTS_TOOLS_JSON" --strict-json || abort_deploy "TOOL_POLICY_INSTALL" "main Contacts tool policy update failed"; fi; maybe_fault "after-install"
 
   validate_target || abort_deploy "OFFLINE_VALIDATE" "target offline validation failed"; maybe_fault "after-offline-validate"
   systemctl_user start openclaw-gateway.service || abort_deploy "GATEWAY_START" "failed to start Gateway"; GATEWAY_STOPPED=0
   systemctl_user is-active --quiet openclaw-gateway.service || abort_deploy "POST_RESTART" "Gateway not active after start"
   wait_gateway_rpc_ready || abort_deploy "POST_RESTART" "Gateway RPC not ready after start"
   validate_target || abort_deploy "POST_RESTART" "final target runtime validation failed"
-  if [ "$MATERIALIZER_ENABLED" = "1" ]; then
-    if [ "$START_MATERIALIZER_EXACT" -eq 1 ]; then
-      calendar_materializer_exact || abort_deploy "CALENDAR_MATERIALIZER" "existing native Recurrence materializer Automation drifted during deployment"
-    else
-      install_calendar_materializer || abort_deploy "CALENDAR_MATERIALIZER" "failed to install or validate native Recurrence materializer Automation"
-    fi
-    maybe_fault "after-calendar-materializer"
-  fi
-  if [ "$REMINDER_ENABLED" = "1" ]; then
-    if [ "$START_REMINDER_EXACT" -eq 1 ]; then reminder_dispatcher_exact || abort_deploy "REMINDER_DISPATCHER" "existing Reminder dispatcher drifted during deployment"
-    elif [ "$START_REMINDER_PREDECESSOR_EXACT" -eq 1 ]; then migrate_reminder_dispatcher_predecessor || abort_deploy "REMINDER_DISPATCHER" "failed to migrate exact Reminder predecessor"
-    else install_reminder_dispatcher || abort_deploy "REMINDER_DISPATCHER" "failed to install or validate native Reminder dispatcher Automation"; fi
-    maybe_fault "after-reminder-dispatcher"
-  fi
-
-  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then
-    install_important_date_dispatcher || abort_deploy "IMPORTANT_DATE_DISPATCHER" "failed to install or validate native Important Dates dispatcher Automation"
-    maybe_fault "after-important-date-dispatcher"
-  fi
+  if [ "$MATERIALIZER_ENABLED" = "1" ]; then calendar_materializer_exact || abort_deploy "CALENDAR_MATERIALIZER" "Recurrence materializer drifted during deployment"; fi
+  if [ "$REMINDER_ENABLED" = "1" ]; then reminder_dispatcher_exact || abort_deploy "REMINDER_DISPATCHER" "Reminder dispatcher drifted during deployment"; fi
+  if [ "$IMPORTANT_DATE_ENABLED" = "1" ]; then important_date_dispatcher_exact || abort_deploy "IMPORTANT_DATE_DISPATCHER" "Important Dates dispatcher drifted during deployment"; fi
 
   json_result "PASS" "COMPLETE" "Task Agent taskctl $TARGET_TASKCTL_VERSION / plugin $TARGET_PLUGIN_VERSION deployment completed"; echo "TASK_AGENT_DEPLOY_PASS"; echo "RESULT_FILE=$RESULT_FILE"
 }
