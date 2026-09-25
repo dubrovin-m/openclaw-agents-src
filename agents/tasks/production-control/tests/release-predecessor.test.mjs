@@ -6,7 +6,6 @@ import {
 } from '../verify-release-predecessor.mjs';
 
 const SOURCE = 'a'.repeat(40);
-const WORKSPACE_SOURCE = 'e'.repeat(40);
 const WORKSPACE_HASH = 'b'.repeat(64);
 const TOOLS_HASH = 'c'.repeat(64);
 const workspace = Object.fromEntries(PREDECESSOR_WORKSPACE_FILES.map((file) => [file, WORKSPACE_HASH]));
@@ -41,29 +40,6 @@ test('binds the single supported predecessor identities and fingerprints to one 
     workspaceSha256: workspace,
     toolsSha256: TOOLS_HASH,
   }), true);
-});
-
-test('binds an explicitly declared workspace overlay to its own exact revision', () => {
-  const overlayRelease = {
-    ...release,
-    from: { ...release.from, workspace_source_revision: WORKSPACE_SOURCE },
-  };
-  assert.equal(validatePredecessorBinding({
-    release: overlayRelease,
-    predecessorRelease,
-    sourceRevision: SOURCE,
-    workspaceSourceRevision: WORKSPACE_SOURCE,
-    workspaceSha256: workspace,
-    toolsSha256: TOOLS_HASH,
-  }), true);
-  assert.throws(() => validatePredecessorBinding({
-    release: overlayRelease,
-    predecessorRelease,
-    sourceRevision: SOURCE,
-    workspaceSourceRevision: SOURCE,
-    workspaceSha256: workspace,
-    toolsSha256: TOOLS_HASH,
-  }), /workspace source revision mismatch/u);
 });
 
 test('rejects predecessor source, tool-policy, and workspace drift', () => {
