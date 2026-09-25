@@ -110,14 +110,14 @@ jobs:
       - name: Bounded compatibility window
         run: bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
 
+      - name: Install Task runtime dependencies
+        working-directory: agents/tasks/plugins/taskctl
+        run: timeout 300s npm ci
+
       - name: Current predecessor deployment and v4 recovery
         env:
           TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT: ${{ github.workspace }}
         run: timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
-
-      - name: Install isolated-runtime dependencies
-        working-directory: agents/tasks/plugins/taskctl
-        run: timeout 300s npm ci
 
       - name: Isolated runtime and recovery reconstruction
         run: timeout 300s bash agents/tasks/tests/isolated-runtime.sh
