@@ -2,12 +2,13 @@
 set -euo pipefail
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASKCTL=${1:-$ROOT/taskctl}
+EXPECTED_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d /tmp/task-agent-batch9.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT INT TERM
 DB="$TMP/tasks.sqlite3"
 run(){ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW="$1" TASKCTL_PAYLOAD="$2" "$TASKCTL" "$3" "$4"; }
 init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_TEST_NOW=2026-09-08T07:00:00Z "$TASKCTL" init)
-node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==9||x.implementation_version!=="0.4.14")process.exit(1)' "$init"
+node -e 'const x=JSON.parse(process.argv[1]);if(x.schema_version!==9||x.implementation_version!==process.argv[2])process.exit(1)' "$init" "$EXPECTED_TASKCTL_VERSION"
 
 # Existing entities.
 SELF=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_PAYLOAD='{}' "$TASKCTL" person list | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);process.stdout.write(x.people.find(p=>p.display_name==="Дубровин М.").id)})')
