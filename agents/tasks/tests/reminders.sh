@@ -84,6 +84,129 @@ if(db.prepare('pragma integrity_check').get().integrity_check!=='ok')process.exi
 if(db.prepare('pragma foreign_key_check').all().length)process.exit(1);
 db.close();
 JS
+# Native command dispatcher: no model/tool delivery dependency.
+DDB="$TMP/dispatch.sqlite3"
+DCONFIG="$TMP/openclaw.json"
+DFAKE="$TMP/openclaw-fake"
+DCAPTURE="$TMP/send-capture.jsonl"
+cat >"$DCONFIG" <<'JSON'
+{
+  "channels": {
+    "telegram": {
+      "accounts": {
+        "tasks": {
+          "enabled": true,
+          "dmPolicy": "allowlist",
+          "allowFrom": ["test-owner"],
+          "groupPolicy": "allowlist",
+          "groupAllowFrom": ["test-owner"]
+        }
+      }
+    }
+  },
+  "bindings": [
+    {"agentId":"tasks","match":{"channel":"telegram","accountId":"tasks"}}
+  ]
+}
+JSON
+cat >"$DFAKE" <<'JS'
+#!/usr/bin/env node
+'use strict';
+const fs=require('node:fs');
+const args=process.argv.slice(2),value=(name)=>{const i=args.indexOf(name);return i>=0?args[i+1]:null;};
+if(args[0]!=='message'||args[1]!=='send')process.exit(64);
+fs.appendFileSync(process.env.TASKCTL_TEST_SEND_CAPTURE,JSON.stringify({
+  channel:value('--channel'),account:value('--account'),target:value('--target'),message:value('--message')
+})+'\n');
+const mode=process.env.TASKCTL_TEST_SEND_MODE||'success';
+if(mode==='failure'){process.stdout.write(JSON.stringify({ok:false,error:{type:'cli_error',message:'synthetic definite failure'}})+'\n');process.exit(1);}
+if(mode==='unknown')process.exit(75);
+process.stdout.write(JSON.stringify({
+  action:'send',channel:'telegram',dryRun:false,handledBy:'plugin',messageId:'4242',
+  payload:{ok:true,messageId:'4242',chatId:value('--target'),receipt:{}}
+})+'\n');
+JS
+chmod 700 "$DFAKE"
+drun(){
+  local now=$1 payload=$2 scope=$3 action=$4
+  TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" TASKCTL_TEST_NOW="$now" TASKCTL_PAYLOAD="$payload" node "$TASKCTL" "$scope" "$action"
+}
+dsend(){
+  local now=$1 mode=$2
+  TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" TASKCTL_TEST_NOW="$now" \
+    TASKCTL_TEST_OPENCLAW_CONFIG="$DCONFIG" TASKCTL_TEST_OPENCLAW_BIN="$DFAKE" \
+    TASKCTL_TEST_SEND_MODE="$mode" TASKCTL_TEST_SEND_CAPTURE="$DCAPTURE" \
+    node "$TASKCTL" reminder-internal dispatch-send
+}
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DDB" node "$TASKCTL" init >/dev/null
+
+# No due Reminder means no outbound invocation.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"future","text":"Позже","trigger_date":"2026-09-16","trigger_time":"13:00"}' reminder create >/dev/null
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0"'; [ ! -e "$DCAPTURE" ]
+
+# Standalone + Task-linked due Reminders are rendered deterministically using current Task title.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-task","title":"Старое название","assignee":"Дубровин М."}' task create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-linked","task_id":"T-1","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-standalone","text":"Отдельное","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"dispatch-rename","id":"T-1","title":"Текущее название"}' task update >/dev/null
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":2"'; contains "$a" '"delivered":2'
+capture=$(tail -n 1 "$DCAPTURE")
+contains "$capture" '"channel":"telegram"'; contains "$capture" '"account":"tasks"'; contains "$capture" '"target":"test-owner"'
+contains "$capture" '🔔 Напоминание: Текущее название\n\n🔔 Напоминание: Отдельное'
+node - "$DDB" <<'JS'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
+try{
+  const rows=db.prepare("select status,close_reason,claim_token from reminders where id in (2,3) order by id").all();
+  if(rows.length!==2||rows.some(r=>r.status!=='CLOSED'||r.close_reason!=='DELIVERED'||r.claim_token!==null))process.exit(2);
+}finally{db.close();}
+JS
+
+# A Task completed before dispatch cannot emit stale linked content.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"closed-before","title":"Не отправлять","assignee":"Дубровин М."}' task create >/dev/null
+drun '2026-09-16T08:00:00Z' '{"operation_key":"closed-before-rem","task_id":"T-2","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+drun '2026-09-16T08:30:00Z' '{"operation_key":"closed-before-done","id":"T-2"}' task complete >/dev/null
+before_lines=$(wc -l <"$DCAPTURE")
+a=$(dsend '2026-09-16T09:00:00Z' success); contains "$a" '"count":0"'
+[ "$(wc -l <"$DCAPTURE")" -eq "$before_lines" ]
+
+# Definite failure and unknown/crash are both conservative: claim stays leased, then expires and retries.
+drun '2026-09-16T08:00:00Z' '{"operation_key":"retry-failure","text":"Повтор после ошибки","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+set +e
+a=$(dsend '2026-09-16T09:00:00Z' failure 2>&1); rc=$?
+set -e
+[ "$rc" -ne 0 ]; contains "$a" 'REMINDER_DELIVERY_UNCONFIRMED'
+node - "$DDB" <<'JS'
+const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});
+try{const r=db.prepare('select status,close_reason,claim_token,claim_expires_at from reminders where id=5').get();if(r.status!=='ACTIVE'||r.close_reason!==null||!r.claim_token||!r.claim_expires_at)process.exit(2);}finally{db.close();}
+JS
+a=$(dsend '2026-09-16T09:01:00Z' success); contains "$a" '"count":0"'
+a=$(dsend '2026-09-16T09:05:00Z' success); contains "$a" '"count":1"'; contains "$a" '"delivered":1'
+
+drun '2026-09-16T08:00:00Z' '{"operation_key":"retry-unknown","text":"Повтор после неизвестного исхода","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+set +e
+a=$(dsend '2026-09-16T09:06:00Z' unknown 2>&1); rc=$?
+set -e
+[ "$rc" -ne 0 ]; contains "$a" 'REMINDER_DELIVERY_UNCONFIRMED'
+a=$(dsend '2026-09-16T09:07:00Z' success); contains "$a" '"count":0"'
+a=$(dsend '2026-09-16T09:11:00Z' success); contains "$a" '"count":1"'; contains "$a" '"delivered":1'
+
+# Owner route ambiguity fails closed before outbound send and leaves the claim retryable.
+node - "$DCONFIG" <<'JS'
+const fs=require('node:fs'),p=process.argv[2],c=JSON.parse(fs.readFileSync(p,'utf8'));c.channels.telegram.accounts.tasks.allowFrom.push('other-owner');fs.writeFileSync(p,JSON.stringify(c));
+JS
+drun '2026-09-16T08:00:00Z' '{"operation_key":"route-fail","text":"Маршрут","trigger_date":"2026-09-16","trigger_time":"12:00"}' reminder create >/dev/null
+set +e
+a=$(dsend '2026-09-16T09:12:00Z' success 2>&1); rc=$?
+set -e
+[ "$rc" -ne 0 ]; contains "$a" 'REMINDER_ROUTE_INVALID'
+
+# Ordinary Task Agent policy has no dispatcher, exec, cron, or Gateway authority.
+node - "$ROOT/config/tasks-tools.json" <<'JS'
+const p=require(process.argv[2]),allow=new Set(p.allow||[]),deny=new Set(p.deny||[]);
+if(allow.has('task_reminder_dispatch'))process.exit(2);
+for(const x of ['exec','cron','gateway'])if(!deny.has(x))process.exit(3);
+JS
+
 # TA-REM activation migration gate: exercise the immutable schema-7 historical
 # Reminder predecessor. Current deployment predecessor may already be schema 9.
 REPO=$(cd "$ROOT/../.." && pwd)
@@ -114,7 +237,7 @@ cp "$PDB" "$TMP/fault-predecessor.sqlite3"; cp "$PCDB" "$TMP/fault-predecessor-c
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$PCDB" "$CONTACTCTL" init >/dev/null
 MIG=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$PDB" TASKCTL_CONTACTS_DB="$PCDB" TASKCTL_TEST_NOW="$PN" node "$TASKCTL" health)
 node - "$BEFORE" "$MIG" "$PDB" "$PCDB" <<'JS'
-const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==9||health.implementation_version!=='0.4.12'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
+const {DatabaseSync}=require('node:sqlite'),before=JSON.parse(process.argv[2]),health=JSON.parse(process.argv[3]),d=new DatabaseSync(process.argv[4],{readOnly:true}),c=new DatabaseSync(process.argv[5],{readOnly:true});try{const count=t=>Number(d.prepare(`select count(*) n from ${t}`).get().n);if(health.schema_version!==9||health.implementation_version!=='0.4.13'||before.uv!==7)process.exit(2);if(count('tasks')!==before.tasks||count('labels')!==before.labels||count('projects')!==before.projects||count('task_comments')!==before.comments||count('inbox_items')!==before.inbox||count('recurrences')!==before.recurrences||count('reminders')!==0)process.exit(3);if(Number(c.prepare('select count(*) n from people').get().n)!==before.people||Number(c.prepare('select count(*) n from person_aliases').get().n)!==before.aliases)process.exit(4);if(JSON.stringify(d.prepare('select id,title,assignee_id,status,due_date,due_time,project_id from tasks order by id').all())!==JSON.stringify(before.task))process.exit(5);if(JSON.stringify(d.prepare('select id,status,mode,title,assignee_id,due_time,target_project_id,rule_json,calendar_cursor_date from recurrences order by id').all())!==JSON.stringify(before.rec))process.exit(6);if(d.prepare('pragma integrity_check').get().integrity_check!=='ok'||d.prepare('pragma foreign_key_check').all().length!==0||c.prepare('pragma integrity_check').get().integrity_check!=='ok'||c.prepare('pragma foreign_key_check').all().length!==0)process.exit(7);}finally{d.close();c.close();}
 JS
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$TMP/fault-predecessor-contacts.sqlite3" "$CONTACTCTL" init >/dev/null
 set +e
