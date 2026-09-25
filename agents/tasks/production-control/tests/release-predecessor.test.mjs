@@ -2,10 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   PREDECESSOR_WORKSPACE_FILES,
-  sha256,
-  stableJson,
   validatePredecessorBinding,
-  validatePublicBootstrapBridge,
 } from '../verify-release-predecessor.mjs';
 
 const SOURCE = 'a'.repeat(40);
@@ -15,33 +12,28 @@ const TOOLS_HASH = 'c'.repeat(64);
 const workspace = Object.fromEntries(PREDECESSOR_WORKSPACE_FILES.map((file) => [file, WORKSPACE_HASH]));
 const predecessorPlugin = {
   name: 'openclaw-plugin-taskctl',
-  version: '0.4.13',
-  artifact: 'artifacts/openclaw-plugin-taskctl-0.4.13.tgz',
+  version: '0.4.27',
+  artifact: 'artifacts/openclaw-plugin-taskctl-0.4.27.tgz',
   sha256: 'd'.repeat(64),
 };
 const predecessorRelease = {
   format: 'task-agent-release-v2',
-  generation: { sqlite_schema: 5, taskctl_version: '0.4.5' },
+  generation: { sqlite_schema: 9, taskctl_version: '0.4.14' },
   plugin: predecessorPlugin,
 };
 const release = {
-  plugin: {
-    name: 'openclaw-plugin-taskctl',
-    version: '0.4.14',
-    artifact: 'artifacts/openclaw-plugin-taskctl-0.4.14.tgz',
-    sha256: 'f'.repeat(64),
-  },
+  plugin: { ...predecessorPlugin },
   from: {
     source_revision: SOURCE,
-    sqlite_schemas: [5],
-    taskctl_versions: ['0.4.5'],
-    plugin_versions: ['0.4.13'],
+    sqlite_schemas: [9],
+    taskctl_versions: ['0.4.14'],
+    plugin_versions: ['0.4.27'],
     workspace_sha256: workspace,
     tools_sha256: TOOLS_HASH,
   },
 };
 
-test('binds predecessor identities and fingerprints to one exact source revision by default', () => {
+test('binds the single supported predecessor identities and fingerprints to one exact source revision', () => {
   assert.equal(validatePredecessorBinding({
     release,
     predecessorRelease,
@@ -51,13 +43,10 @@ test('binds predecessor identities and fingerprints to one exact source revision
   }), true);
 });
 
-test('binds a source-owned workspace overlay to its own exact revision', () => {
+test('binds an explicitly declared workspace overlay to its own exact revision', () => {
   const overlayRelease = {
     ...release,
-    from: {
-      ...release.from,
-      workspace_source_revision: WORKSPACE_SOURCE,
-    },
+    from: { ...release.from, workspace_source_revision: WORKSPACE_SOURCE },
   };
   assert.equal(validatePredecessorBinding({
     release: overlayRelease,
@@ -77,7 +66,7 @@ test('binds a source-owned workspace overlay to its own exact revision', () => {
   }), /workspace source revision mismatch/u);
 });
 
-test('rejects predecessor fingerprint and source drift', () => {
+test('rejects predecessor source, tool-policy, and workspace drift', () => {
   assert.throws(() => validatePredecessorBinding({
     release,
     predecessorRelease,
@@ -101,10 +90,9 @@ test('rejects predecessor fingerprint and source drift', () => {
   }), /workspace fingerprint mismatch/u);
 });
 
-test('permits same plugin version only as exact frozen artifact reuse', () => {
-  const samePluginRelease = { ...release, plugin: { ...predecessorPlugin } };
+test('same plugin version is allowed only as exact frozen artifact reuse', () => {
   assert.equal(validatePredecessorBinding({
-    release: samePluginRelease,
+    release,
     predecessorRelease,
     sourceRevision: SOURCE,
     workspaceSha256: workspace,
@@ -117,7 +105,7 @@ test('permits same plugin version only as exact frozen artifact reuse', () => {
     { ...predecessorPlugin, name: 'different-plugin' },
   ]) {
     assert.throws(() => validatePredecessorBinding({
-      release: { ...samePluginRelease, plugin },
+      release: { ...release, plugin },
       predecessorRelease,
       sourceRevision: SOURCE,
       workspaceSha256: workspace,
@@ -126,91 +114,28 @@ test('permits same plugin version only as exact frozen artifact reuse', () => {
   }
 });
 
-test('rejects predecessor identity widening beyond the exact source release', () => {
+test('rejects any predecessor identity widening', () => {
   assert.throws(() => validatePredecessorBinding({
-    release: { ...release, from: { ...release.from, plugin_versions: ['0.4.12', '0.4.13'] } },
+    release: { ...release, from: { ...release.from, plugin_versions: ['0.4.26', '0.4.27'] } },
     predecessorRelease,
     sourceRevision: SOURCE,
     workspaceSha256: workspace,
     toolsSha256: TOOLS_HASH,
-  }), /plugin identity is not bound/u);
-});
+  }), /exactly one supported predecessor|plugin identity is not bound/u);
 
-test('a release without a predecessor must explicitly retire source provenance', () => {
-  assert.equal(validatePredecessorBinding({
-    release: { plugin: { version: '0.4.14' }, from: { source_revision: null, plugin_versions: [] } },
-    predecessorRelease: null,
-    sourceRevision: null,
-    workspaceSourceRevision: null,
-    workspaceSha256: {},
-    toolsSha256: null,
-  }), true);
   assert.throws(() => validatePredecessorBinding({
-    release: { plugin: { version: '0.4.14' }, from: { source_revision: SOURCE, plugin_versions: [] } },
-    predecessorRelease: null,
-    sourceRevision: null,
-    workspaceSourceRevision: null,
-    workspaceSha256: {},
-    toolsSha256: null,
-  }), /retired predecessor source revision remains/u);
+    release: { ...release, from: { ...release.from, sqlite_schemas: [8, 9] } },
+    predecessorRelease,
+    sourceRevision: SOURCE,
+    workspaceSha256: workspace,
+    toolsSha256: TOOLS_HASH,
+  }), /SQLite identity is not bound/u);
+
   assert.throws(() => validatePredecessorBinding({
-    release: { plugin: { version: '0.4.14' }, from: { source_revision: null, workspace_source_revision: WORKSPACE_SOURCE, plugin_versions: [] } },
-    predecessorRelease: null,
-    sourceRevision: null,
-    workspaceSourceRevision: null,
-    workspaceSha256: {},
-    toolsSha256: null,
-  }), /retired predecessor workspace source revision remains/u);
-});
-
-
-test('public bootstrap bridge is pinned to one exact clean-history release and predecessor', () => {
-  const bootstrapRelease = {
-    generation: { taskctl_version: '0.4.7', sqlite_schema: 6 },
-    plugin: { version: '0.4.17' },
-    from: {
-      source_revision: SOURCE,
-      workspace_source_revision: SOURCE,
-      plugin_versions: ['0.4.16'],
-    },
-  };
-  const marker = {
-    format: 'task-agent-public-source-bootstrap-v1',
-    target: {
-      plugin_version: '0.4.17',
-      taskctl_version: '0.4.7',
-      sqlite_schema: 6,
-      release_sha256: sha256(stableJson(bootstrapRelease)),
-    },
-    legacy_predecessor: {
-      source_revision: SOURCE,
-      workspace_source_revision: SOURCE,
-    },
-    public_snapshot: {
-      commit: 'd'.repeat(40),
-      tree: 'e'.repeat(40),
-      parent: 'f'.repeat(40),
-    },
-    historical_test_revisions: {
-      batch7_schema4_source_revision: 'c'.repeat(40),
-      schema5_source_revision: 'b'.repeat(40),
-    },
-  };
-  assert.equal(validatePublicBootstrapBridge({ release: bootstrapRelease, marker }), true);
-  assert.throws(() => validatePublicBootstrapBridge({
-    release: { ...bootstrapRelease, plugin: { version: '0.4.18' } },
-    marker,
-  }), /target plugin mismatch/u);
-  assert.throws(() => validatePublicBootstrapBridge({
-    release: { ...bootstrapRelease, from: { ...bootstrapRelease.from, source_revision: 'b'.repeat(40) } },
-    marker,
-  }), /release fingerprint mismatch|predecessor revision mismatch/u);
-  assert.throws(() => validatePublicBootstrapBridge({
-    release: bootstrapRelease,
-    marker: { ...marker, public_snapshot: { ...marker.public_snapshot, tree: 'not-a-sha' } },
-  }), /snapshot identity is invalid/u);
-  assert.throws(() => validatePublicBootstrapBridge({
-    release: bootstrapRelease,
-    marker: { ...marker, historical_test_revisions: { batch7_schema4_source_revision: 'not-a-sha' } },
-  }), /historical test revision is invalid/u);
+    release: { ...release, from: { ...release.from, taskctl_versions: ['0.4.13', '0.4.14'] } },
+    predecessorRelease,
+    sourceRevision: SOURCE,
+    workspaceSha256: workspace,
+    toolsSha256: TOOLS_HASH,
+  }), /taskctl identity is not bound/u);
 });
