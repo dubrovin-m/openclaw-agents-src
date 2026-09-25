@@ -208,12 +208,24 @@ create_due(){
 
 create_due direct-smoke 'Frozen direct smoke' >/dev/null
 start_gateway
-ADD=$(automation add --name "$NAME" --declaration-key "$DECLARATION" --cron "$CRON" --tz "$TZ_NAME" --exact --agent tasks --session isolated --command-argv "$COMMAND_JSON" --timeout-seconds "$TIMEOUT" --disabled --no-deliver --json)
-JOB_ID=$(node - "$ADD" "$DECLARATION" "$COMMAND_JSON" "$TIMEOUT" <<'NODE'
-const x=JSON.parse(process.argv[2]),key=process.argv[3],argv=JSON.parse(process.argv[4]),timeout=Number(process.argv[5]),j=x?.job;
-if(x?.created!==true||typeof j?.id!=='string'||!j.id||j.declarationKey!==key||j.enabled!==false||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify(argv)||j.payload.timeoutSeconds!==timeout||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);process.stdout.write(j.id);
+
+# Reproduce the exact production predecessor and migrate it with the native CLI.
+# This guards the script -> command payload transition, not only fresh command creation.
+LEGACY_SCRIPT='const dispatch = await task_reminder_dispatch({});
+json(dispatch.count > 0 ? { notify: dispatch.message } : {});'
+ADD=$(printf '%s\n' "$LEGACY_SCRIPT" | automation add --name "$NAME" --declaration-key "$DECLARATION" --cron "$CRON" --tz "$TZ_NAME" --exact --agent tasks --session isolated --script - --tools task_reminder_dispatch --script-timeout-seconds 30 --script-tool-budget 1 --announce --channel telegram --account tasks --to 111 --disabled --json)
+JOB_ID=$(node - "$ADD" "$DECLARATION" "$LEGACY_SCRIPT" <<'NODE'
+const x=JSON.parse(process.argv[2]),key=process.argv[3],script=process.argv[4],j=x?.job;
+if(x?.created!==true||typeof j?.id!=='string'||!j.id||j.declarationKey!==key||j.enabled!==false||j.payload?.kind!=='script'||j.payload.script!==script||JSON.stringify(j.payload.toolsAllow)!==JSON.stringify(['task_reminder_dispatch'])||j.payload.timeoutSeconds!==30||j.payload.toolBudget!==1||j.delivery?.mode!=='announce'||j.delivery?.channel!=='telegram'||j.delivery?.accountId!=='tasks'||String(j.delivery?.to)!=='111')process.exit(1);process.stdout.write(j.id);
 NODE
-) || fail "real OpenClaw did not create exact disabled Reminder command job"
+) || fail "real OpenClaw did not create exact disabled Reminder predecessor"
+
+automation edit "$JOB_ID" --disable --command-argv "$COMMAND_JSON" --timeout-seconds "$TIMEOUT" --tools "" --no-deliver --clear-channel --clear-to --clear-account --json >/dev/null || fail "real OpenClaw did not migrate Reminder predecessor to command payload"
+LIST=$(automation list --all --json)
+node - "$LIST" "$JOB_ID" "$DECLARATION" "$COMMAND_JSON" "$TIMEOUT" <<'NODE' || fail "real OpenClaw Reminder predecessor migration is not exact"
+const x=JSON.parse(process.argv[2]),jobs=Array.isArray(x)?x:x.jobs,j=jobs?.find(v=>v.id===process.argv[3]),key=process.argv[4],argv=JSON.parse(process.argv[5]),timeout=Number(process.argv[6]);
+if(!j||j.declarationKey!==key||j.enabled!==false||j.payload?.kind!=='command'||JSON.stringify(j.payload.argv)!==JSON.stringify(argv)||j.payload.timeoutSeconds!==timeout||JSON.stringify(j.payload.toolsAllow)!=='[]'||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
+NODE
 
 PROBE=$(oc_env "$OPENCLAW_BIN" message send --channel telegram --account tasks --target 111 --message 'Native Reminder transport probe' --json) || fail "native OpenClaw message send probe failed"
 node - "$PROBE" <<'NODE' || fail "native OpenClaw message send probe returned unconfirmed success: $PROBE"
