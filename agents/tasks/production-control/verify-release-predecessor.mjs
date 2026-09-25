@@ -27,12 +27,10 @@ function exactSingleton(values, expected) {
   return Array.isArray(values) && values.length === 1 && values[0] === expected;
 }
 
-export function validatePredecessorBinding({ release, predecessorRelease, sourceRevision, workspaceSourceRevision = sourceRevision, workspaceSha256, toolsSha256 }) {
+export function validatePredecessorBinding({ release, predecessorRelease, sourceRevision, workspaceSha256, toolsSha256 }) {
   const from = release?.from;
   if (!from || !Array.isArray(from.plugin_versions) || from.plugin_versions.length !== 1) fail('release must declare exactly one supported predecessor');
   if (!SHA_RE.test(sourceRevision ?? '') || from.source_revision !== sourceRevision) fail('predecessor source revision mismatch');
-  const declaredWorkspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
-  if (!SHA_RE.test(workspaceSourceRevision ?? '') || declaredWorkspaceSourceRevision !== workspaceSourceRevision) fail('predecessor workspace source revision mismatch');
   if (predecessorRelease?.format !== 'task-agent-release-v2') fail('predecessor release format is invalid');
 
   const predecessorSchema = predecessorRelease?.generation?.sqlite_schema;
@@ -88,9 +86,6 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
 
   const sourceRevision = from.source_revision;
   if (!SHA_RE.test(sourceRevision ?? '')) fail('predecessor source revision must be an exact lowercase commit SHA');
-  const workspaceSourceRevision = from.workspace_source_revision ?? sourceRevision;
-  if (!SHA_RE.test(workspaceSourceRevision ?? '')) fail('predecessor workspace source revision must be an exact lowercase commit SHA');
-
   const effectiveBase = SHA_RE.test(baseRevision ?? '') && !/^0{40}$/u.test(baseRevision) ? baseRevision : 'HEAD';
   if (!gitObjectExists(repoRoot, `${effectiveBase}^{commit}`)) fail('predecessor verification base revision is unavailable');
   try {
@@ -99,27 +94,19 @@ export function verifyReleasePredecessor({ repoRoot = process.cwd(), baseRevisio
     fail('predecessor verification base revision is not an ancestor of HEAD');
   }
 
-  if (!gitObjectExists(repoRoot, `${sourceRevision}^{commit}`) || !gitObjectExists(repoRoot, `${workspaceSourceRevision}^{commit}`)) {
-    fail('predecessor history is unavailable');
-  }
+  if (!gitObjectExists(repoRoot, `${sourceRevision}^{commit}`)) fail('predecessor history is unavailable');
   const firstParent = new Set(git(repoRoot, ['rev-list', '--first-parent', effectiveBase]).split(/\n/u).filter(Boolean));
   if (!firstParent.has(sourceRevision)) fail('predecessor source revision is not on the pre-candidate first-parent history');
-  if (!firstParent.has(workspaceSourceRevision)) fail('predecessor workspace source revision is not on the pre-candidate first-parent history');
-  try {
-    git(repoRoot, ['merge-base', '--is-ancestor', sourceRevision, workspaceSourceRevision]);
-  } catch {
-    fail('predecessor workspace source revision does not descend from predecessor source revision');
-  }
 
   const predecessorRelease = JSON.parse(gitShow(repoRoot, sourceRevision, 'agents/tasks/release.json'));
   const workspaceSha256 = Object.fromEntries(PREDECESSOR_WORKSPACE_FILES.map((file) => [
     file,
-    sha256(gitShow(repoRoot, workspaceSourceRevision, `agents/tasks/workspace/${file}`)),
+    sha256(gitShow(repoRoot, sourceRevision, `agents/tasks/workspace/${file}`)),
   ]));
   const predecessorTools = JSON.parse(gitShow(repoRoot, sourceRevision, 'agents/tasks/config/tasks-tools.json'));
   const toolsSha256 = sha256(stableJson(predecessorTools));
-  validatePredecessorBinding({ release, predecessorRelease, sourceRevision, workspaceSourceRevision, workspaceSha256, toolsSha256 });
-  return { provenance_mode: 'history', source_revision: sourceRevision, workspace_source_revision: workspaceSourceRevision, predecessor_plugin: predecessorRelease.plugin.version };
+  validatePredecessorBinding({ release, predecessorRelease, sourceRevision, workspaceSha256, toolsSha256 });
+  return { provenance_mode: 'history', source_revision: sourceRevision, predecessor_plugin: predecessorRelease.plugin.version };
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
