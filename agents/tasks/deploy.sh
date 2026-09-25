@@ -344,7 +344,7 @@ migrate_reminder_dispatcher_predecessor(){
   local jobs id
   jobs=$(reminder_dispatcher_jobs_json) || return 1
   id=$(node -e 'const x=JSON.parse(process.argv[1]);if(x.length!==1||typeof x[0]?.id!=="string"||!x[0].id)process.exit(2);process.stdout.write(x[0].id)' "$jobs") || return 1
-  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --clear-tools --no-deliver --json >/dev/null || return 1
+  oc automations edit "$id" --disable --command-argv "$REMINDER_COMMAND_JSON" --timeout-seconds "$REMINDER_TIMEOUT" --no-deliver --json >/dev/null || return 1
   reminder_dispatcher_exact
 }
 resolve_important_date_delivery_to(){
