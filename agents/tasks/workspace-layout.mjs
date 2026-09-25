@@ -3,31 +3,29 @@
 
 import fs from 'node:fs';
 
-const LEGACY_LAYOUT = 'legacy-tools-md-v1';
-const AGENTS_TOOLS_LAYOUT = 'agents-md-tools-v1';
-const LEGACY_FILES = ['AGENTS.md', 'SOUL.md', 'TOOLS.md', 'USER.md', 'IDENTITY.md', 'HEARTBEAT.md'];
-const AGENTS_TOOLS_FILES = ['AGENTS.md', 'SOUL.md', 'USER.md', 'IDENTITY.md', 'HEARTBEAT.md'];
+const CURRENT_LAYOUT = 'agents-md-tools-v1';
+const CURRENT_FILES = ['AGENTS.md', 'SOUL.md', 'USER.md', 'IDENTITY.md', 'HEARTBEAT.md'];
+const CURRENT_RECOVERY_FORMAT = 'task-agent-recovery-v4';
 
 export function loadWorkspaceLayout(releasePath) {
   const release = JSON.parse(fs.readFileSync(releasePath, 'utf8'));
-  const layout = release.workspace_layout ?? LEGACY_LAYOUT;
-  if (layout !== LEGACY_LAYOUT && layout !== AGENTS_TOOLS_LAYOUT) {
-    throw new Error(`unsupported workspace layout: ${layout}`);
+  const layout = release.workspace_layout;
+  if (layout !== CURRENT_LAYOUT) {
+    throw new Error(`unsupported workspace layout: ${layout ?? 'missing'}`);
   }
   return { layout, release };
 }
 
 export function targetWorkspaceFiles(layout) {
-  if (layout === AGENTS_TOOLS_LAYOUT) return AGENTS_TOOLS_FILES.slice();
-  if (layout === LEGACY_LAYOUT) return LEGACY_FILES.slice();
+  if (layout === CURRENT_LAYOUT) return CURRENT_FILES.slice();
   throw new Error(`unsupported workspace layout: ${layout}`);
 }
 
 export function recoveryFormat(layout, release = {}) {
-  if (release.shared_contacts) return 'task-agent-recovery-v4';
-  if (layout === AGENTS_TOOLS_LAYOUT) return 'task-agent-recovery-v2';
-  if (layout === LEGACY_LAYOUT) return 'task-agent-recovery-v1';
-  throw new Error(`unsupported workspace layout: ${layout}`);
+  if (layout !== CURRENT_LAYOUT || !release.shared_contacts) {
+    throw new Error('unsupported recovery contract');
+  }
+  return CURRENT_RECOVERY_FORMAT;
 }
 
 if (import.meta.url === `file://${process.argv[1]}`) {
