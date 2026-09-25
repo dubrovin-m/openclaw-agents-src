@@ -217,7 +217,7 @@ TASKS_BEFORE=$(task_state "$BASE")
 CONTACTS_BEFORE=$(contacts_state "$BASE")
 
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
+HOME="$R/home" bash -x "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
 DEPLOY_LOG="$TMP/current-predecessor-deploy.log"
 if ! HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >"$DEPLOY_LOG" 2>&1; then
   cat "$DEPLOY_LOG" >&2
