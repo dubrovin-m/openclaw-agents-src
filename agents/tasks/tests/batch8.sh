@@ -24,8 +24,8 @@ if (!Array.isArray(tools.allow) || tools.allow.filter((name) => name === 'task_d
 if (tools.allow.filter((name) => name === 'task_management_review').length !== 1) {
   fail('task_management_review must be host-allowlisted exactly once');
 }
-if (tools.allow.filter((name) => name === 'task_reminder_dispatch').length !== 1) {
-  fail('task_reminder_dispatch must be host-allowlisted exactly once for scheduler-only execution');
+if (tools.allow.includes('task_reminder_dispatch')) {
+  fail('task_reminder_dispatch must not be exposed to the ordinary Task model surface');
 }
 for (const required of ['deadline_request_get','deadline_request_create','deadline_request_approve','deadline_request_reject']) {
   if (tools.allow.filter((name) => name === required).length !== 1) fail(required + ' must be host-allowlisted exactly once');
