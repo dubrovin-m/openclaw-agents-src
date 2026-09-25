@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { GoogleAuth } from "google-auth-library";
 import { parseCalendarConfig, type CalendarConfig } from "./core.js";
 
@@ -85,6 +86,55 @@ function eventTime(value: unknown) {
   return { value: undefined, allDay: false };
 }
 
+const EVENT_REF_PATTERN = /^evt_(\d{8})_([0-9a-f]{16})$/u;
+const DAY_MS = 86_400_000;
+
+function eventReferenceDate(event: Pick<ProviderEvent, "start">) {
+  const start = eventTime(event.start).value;
+  const match = start?.match(/^(\d{4})-(\d{2})-(\d{2})/u);
+  if (!match) throw new Error("Google Calendar event is missing a resolvable start date.");
+  return `${match[1]}-${match[2]}-${match[3]}`;
+}
+
+function identityDigest(value: string) {
+  return createHash("sha256").update(value).digest("hex").slice(0, 16);
+}
+
+export function eventReference(event: Pick<ProviderEvent, "id" | "start">) {
+  const providerId = bounded(event.id, "provider_event_id", 4096);
+  const date = eventReferenceDate(event).replaceAll("-", "");
+  return `evt_${date}_${identityDigest(providerId)}`;
+}
+
+function recurringReference(providerRecurringEventId: string) {
+  return `series_${identityDigest(bounded(providerRecurringEventId, "provider_recurring_event_id", 4096))}`;
+}
+
+function parseEventReference(value: string) {
+  const ref = bounded(value, "event_id", 64);
+  const match = EVENT_REF_PATTERN.exec(ref);
+  if (!match) {
+    throw new Error("event_id must be a Calendar event reference returned by the provider.");
+  }
+  const compact = match[1];
+  const date = `${compact.slice(0, 4)}-${compact.slice(4, 6)}-${compact.slice(6, 8)}`;
+  const [year, month, day] = date.split("-").map(Number);
+  const dayStart = Date.UTC(year, month - 1, day);
+  if (new Date(dayStart).toISOString().slice(0, 10) !== date) {
+    throw new Error("event_id contains an invalid Calendar event-reference date.");
+  }
+  return { ref, date, dayStart };
+}
+
+function eventReferenceWindow(value: string) {
+  const parsed = parseEventReference(value);
+  return {
+    ref: parsed.ref,
+    timeMin: new Date(parsed.dayStart - DAY_MS).toISOString(),
+    timeMax: new Date(parsed.dayStart + 2 * DAY_MS).toISOString(),
+  };
+}
+
 function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
   const start = eventTime(event.start);
   const end = eventTime(event.end);
@@ -96,7 +146,7 @@ function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
     ? selfAttendee.responseStatus
     : undefined;
   return {
-    id: event.id,
+    id: eventReference(event),
     etag: event.etag,
     status: event.status,
     summary: event.summary,
@@ -110,7 +160,7 @@ function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
     attendees: event.attendees,
     myResponseStatus: responseStatus,
     transparency: event.transparency,
-    recurringEventId: event.recurringEventId,
+    recurringEventId: event.recurringEventId ? recurringReference(event.recurringEventId) : undefined,
     originalStartTime: originalStart.value,
     eventType: event.eventType,
     eventLabelId: event.eventLabelId,
@@ -160,8 +210,8 @@ async function requestJson<T>(
   return await response.json() as T;
 }
 
-function eventPath(config: CalendarConfig, eventId: string) {
-  return `/calendars/${encodePath(config.designatedCalendar)}/events/${encodePath(bounded(eventId, "event_id", 1024))}`;
+function eventPath(config: CalendarConfig, providerEventId: string) {
+  return `/calendars/${encodePath(config.designatedCalendar)}/events/${encodePath(bounded(providerEventId, "provider_event_id", 4096))}`;
 }
 
 function validateConfiguredLabel(config: CalendarConfig, labelId: string) {
@@ -171,30 +221,57 @@ function validateConfiguredLabel(config: CalendarConfig, labelId: string) {
   return id;
 }
 
+async function listProviderEvents(
+  deps: GoogleCalendarProviderDeps,
+  config: CalendarConfig,
+  timeMin: string,
+  timeMax: string,
+) {
+  const items: ProviderEvent[] = [];
+  let pageToken: string | undefined;
+  do {
+    const url = apiUrl(
+      `/calendars/${encodePath(config.designatedCalendar)}/events`,
+      {
+        timeMin,
+        timeMax,
+        singleEvents: true,
+        showDeleted: false,
+        maxResults: 2500,
+        pageToken,
+      },
+    );
+    const page = await requestJson<{ items?: ProviderEvent[]; nextPageToken?: string }>(deps, url);
+    items.push(...(page.items ?? []));
+    pageToken = page.nextPageToken;
+  } while (pageToken);
+  return items;
+}
+
+async function resolveEventReference(
+  deps: GoogleCalendarProviderDeps,
+  config: CalendarConfig,
+  value: string,
+) {
+  const window = eventReferenceWindow(value);
+  const events = await listProviderEvents(deps, config, window.timeMin, window.timeMax);
+  const matches = events.filter((event) => eventReference(event) === window.ref);
+  if (matches.length === 0) {
+    throw new Error("Calendar event reference could not be resolved in its bounded provider window.");
+  }
+  if (matches.length > 1) {
+    throw new Error("Calendar event reference resolved ambiguously; refusing provider mutation.");
+  }
+  return matches[0];
+}
+
 export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = {}) {
   return {
     async listEvents(configValue: unknown, params: { time_min: string; time_max: string }) {
       const config = parseCalendarConfig(configValue);
       const timeMin = bounded(params.time_min, "time_min");
       const timeMax = bounded(params.time_max, "time_max");
-      const items: ProviderEvent[] = [];
-      let pageToken: string | undefined;
-      do {
-        const url = apiUrl(
-          `/calendars/${encodePath(config.designatedCalendar)}/events`,
-          {
-            timeMin,
-            timeMax,
-            singleEvents: true,
-            showDeleted: false,
-            maxResults: 2500,
-            pageToken,
-          },
-        );
-        const page = await requestJson<{ items?: ProviderEvent[]; nextPageToken?: string }>(deps, url);
-        items.push(...(page.items ?? []));
-        pageToken = page.nextPageToken;
-      } while (pageToken);
+      const items = await listProviderEvents(deps, config, timeMin, timeMax);
       return {
         calendarId: config.designatedCalendar,
         events: items.map(normalizeProviderEvent),
@@ -203,7 +280,8 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
 
     async getEvent(configValue: unknown, params: { event_id: string }) {
       const config = parseCalendarConfig(configValue);
-      const url = apiUrl(eventPath(config, params.event_id));
+      const resolved = await resolveEventReference(deps, config, params.event_id);
+      const url = apiUrl(eventPath(config, resolved.id));
       const event = await requestJson<ProviderEvent>(deps, url);
       return normalizeProviderEvent(event);
     },
@@ -301,12 +379,13 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
     async setLabel(configValue: unknown, params: { event_id: string; label_id: string }) {
       const config = parseCalendarConfig(configValue);
       const labelId = validateConfiguredLabel(config, params.label_id);
-      const path = eventPath(config, params.event_id);
+      const resolved = await resolveEventReference(deps, config, params.event_id);
+      const path = eventPath(config, resolved.id);
       const current = await requestJson<ProviderEvent>(deps, apiUrl(path));
       if (current.eventLabelId === labelId) {
         return {
           changed: false,
-          event_id: current.id,
+          event_id: eventReference(current),
           label_id: labelId,
           etag: current.etag,
         };
@@ -324,7 +403,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
       );
       return {
         changed: true,
-        event_id: updated.id,
+        event_id: eventReference(updated),
         label_id: updated.eventLabelId ?? labelId,
         etag: updated.etag,
       };

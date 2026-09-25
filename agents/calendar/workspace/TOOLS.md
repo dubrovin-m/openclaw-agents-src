@@ -11,8 +11,8 @@ OpenClaw-owned deterministic tools:
 OpenClaw-owned Google Calendar provider tools:
 
 - `calendar_provider_list_events` — read events in one bounded time window from the designated calendar;
-- `calendar_provider_get_event` — read one event by provider event id;
+- `calendar_provider_get_event` — read one event by the deterministic event reference returned by Calendar reads;
 - `calendar_provider_get_labels` — read custom event labels from the designated calendar;
-- `calendar_provider_set_label` — set only one configured analytical event label.
+- `calendar_provider_set_label` — set only one configured analytical event label using that deterministic event reference.
 
 The fail-closed Calendar policy blocks every other OpenClaw or provider tool for the `calendar` agent. Google credentials are runtime state and must never be copied into workspace files or prompts.

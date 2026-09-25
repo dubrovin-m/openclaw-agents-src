@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from "vitest";
-import { createGoogleCalendarProvider } from "./provider.js";
+import { createGoogleCalendarProvider, eventReference } from "./provider.js";
 import { VALID_CONFIG } from "./test-fixture.js";
 
 function jsonResponse(body: unknown, status = 200) {
@@ -19,6 +19,7 @@ describe("Google Calendar provider", () => {
           start: { dateTime: "2026-09-22T10:00:00+03:00" },
           end: { dateTime: "2026-09-22T11:00:00+03:00" },
           attendees: [{ self: true, responseStatus: "accepted" }],
+          recurringEventId: "provider-series-a",
         }],
         nextPageToken: "next",
       }))
@@ -40,13 +41,18 @@ describe("Google Calendar provider", () => {
       time_max: "2026-09-23T00:00:00+03:00",
     });
 
-    expect(result.events.map((event) => event.id)).toEqual(["a", "b"]);
+    expect(result.events).toHaveLength(2);
+    expect(result.events[0].id).toMatch(/^evt_20260922_[0-9a-f]{16}$/u);
+    expect(result.events[1].id).toMatch(/^evt_20260922_[0-9a-f]{16}$/u);
+    expect(result.events[0].id).not.toBe(result.events[1].id);
     expect(result.events[0]).toMatchObject({
       start: "2026-09-22T10:00:00+03:00",
       end: "2026-09-22T11:00:00+03:00",
       allDay: false,
       myResponseStatus: "accepted",
+      recurringEventId: expect.stringMatching(/^series_[0-9a-f]{16}$/u),
     });
+    expect(result.events[0].recurringEventId).not.toBe("provider-series-a");
     expect(result.events[1]).toMatchObject({
       start: "2026-09-22",
       end: "2026-09-23",
@@ -83,59 +89,108 @@ describe("Google Calendar provider", () => {
   });
 
   it("is idempotent when the requested label is already present", async () => {
-    const fetchImpl = vi.fn().mockResolvedValue(jsonResponse({
+    const rawEvent = {
       id: "event-1",
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
       etag: "\"v1\"",
       eventLabelId: "label-strategy",
-    }));
+    };
+    const ref = eventReference(rawEvent);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [rawEvent] }))
+      .mockResolvedValueOnce(jsonResponse(rawEvent));
     const provider = createGoogleCalendarProvider({
       getAccessToken: async () => "token",
       fetchImpl,
     });
 
     await expect(provider.setLabel(VALID_CONFIG, {
-      event_id: "event-1",
+      event_id: ref,
       label_id: "label-strategy",
     })).resolves.toMatchObject({
       changed: false,
-      event_id: "event-1",
+      event_id: ref,
       label_id: "label-strategy",
     });
-    expect(fetchImpl).toHaveBeenCalledTimes(1);
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
-  it("sets only eventLabelId with conditional PATCH and no guest updates", async () => {
+  it("keeps long provider identity inside the deterministic layer during label writes", async () => {
+    const providerId = `opaque_${"60o30c1g".repeat(24)}`;
+    const listedEvent = {
+      id: providerId,
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
+      end: { dateTime: "2026-09-22T11:00:00+03:00" },
+    };
+    const currentEvent = {
+      ...listedEvent,
+      etag: "\"v1\"",
+      eventLabelId: "label-delivery",
+    };
+    const updatedEvent = {
+      ...listedEvent,
+      etag: "\"v2\"",
+      eventLabelId: "label-strategy",
+    };
+    const ref = eventReference(listedEvent);
+    expect(ref).toMatch(/^evt_20260922_[0-9a-f]{16}$/u);
+    expect(ref).not.toContain(providerId);
+
     const fetchImpl = vi.fn()
-      .mockResolvedValueOnce(jsonResponse({
-        id: "event-1",
-        etag: "\"v1\"",
-        eventLabelId: "label-delivery",
-      }))
-      .mockResolvedValueOnce(jsonResponse({
-        id: "event-1",
-        etag: "\"v2\"",
-        eventLabelId: "label-strategy",
-      }));
+      .mockResolvedValueOnce(jsonResponse({ items: [listedEvent] }))
+      .mockResolvedValueOnce(jsonResponse(currentEvent))
+      .mockResolvedValueOnce(jsonResponse(updatedEvent));
     const provider = createGoogleCalendarProvider({
       getAccessToken: async () => "token",
       fetchImpl,
     });
 
     await expect(provider.setLabel(VALID_CONFIG, {
-      event_id: "event-1",
+      event_id: ref,
       label_id: "label-strategy",
     })).resolves.toMatchObject({
       changed: true,
+      event_id: ref,
       label_id: "label-strategy",
     });
 
-    const [rawUrl, init] = fetchImpl.mock.calls[1];
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+    const resolutionUrl = new URL(String(fetchImpl.mock.calls[0][0]));
+    expect(resolutionUrl.pathname).toBe("/calendar/v3/calendars/primary/events");
+    expect(resolutionUrl.searchParams.get("singleEvents")).toBe("true");
+
+    const getUrl = new URL(String(fetchImpl.mock.calls[1][0]));
+    expect(getUrl.pathname).toBe(`/calendar/v3/calendars/primary/events/${providerId}`);
+
+    const [rawUrl, init] = fetchImpl.mock.calls[2];
     const url = new URL(String(rawUrl));
+    expect(url.pathname).toBe(`/calendar/v3/calendars/primary/events/${providerId}`);
     expect(url.searchParams.get("eventLabelVersion")).toBe("1");
     expect(url.searchParams.get("sendUpdates")).toBe("none");
     expect(init?.method).toBe("PATCH");
     expect(new Headers(init?.headers).get("if-match")).toBe("\"v1\"");
     expect(JSON.parse(String(init?.body))).toEqual({ eventLabelId: "label-strategy" });
+  });
+
+  it("fails closed when a model-visible event reference is corrupted", async () => {
+    const listedEvent = {
+      id: "provider-event-1",
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
+      end: { dateTime: "2026-09-22T11:00:00+03:00" },
+    };
+    const ref = eventReference(listedEvent);
+    const corrupted = `${ref.slice(0, -1)}${ref.endsWith("a") ? "b" : "a"}`;
+    const fetchImpl = vi.fn().mockResolvedValueOnce(jsonResponse({ items: [listedEvent] }));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.setLabel(VALID_CONFIG, {
+      event_id: corrupted,
+      label_id: "label-strategy",
+    })).rejects.toThrow(/could not be resolved/u);
+    expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
 
   it("rejects labels outside writable configured categories, including technical Unclassified", async () => {
