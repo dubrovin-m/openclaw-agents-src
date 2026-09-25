@@ -167,28 +167,21 @@ validate_recovery_set() {
   test -f "$backup/plugin-registry.before.json" || fail "Missing plugin-registry.before.json"
   node "$PLUGIN_REGISTRY_HELPER" validate-snapshot "$backup/plugin-registry.before.json" || fail "Plugin registry recovery snapshot is invalid"
   node - "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery state is invalid"
-const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));if(x?.format!=="shared-contacts-recovery-v2"||typeof x.db_present!=="boolean"||typeof x.lib_present!=="boolean"||typeof x.contactctl_present!=="boolean"||typeof x.plugin_present!=="boolean"||(x.db_present&&(!Number.isSafeInteger(x.schema_version)||x.schema_version<1))||(!x.db_present&&x.schema_version!==null))process.exit(2);
+const fs=require("fs"),x=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));if(x?.format!=="shared-contacts-recovery-v2"||x.db_present!==true||x.lib_present!==true||x.contactctl_present!==true||x.plugin_present!==true||!Number.isSafeInteger(x.schema_version)||x.schema_version<1)process.exit(2);
 NODE
   (cd "$backup" && sha256sum -c SHA256SUMS >/dev/null) || fail "Recovery checksum verification failed"
   for f in RECOVERY_FORMAT openclaw.json.before taskctl.before tasks.sqlite3 taskctl-managed.before.tar.gz workspace-tasks.before.tar.gz; do
     grep -Eq "^[0-9a-f]{64}  ${f//./\\.}$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: $f"
   done
-    grep -Eq "^[0-9a-f]{64}  contacts-state\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: contacts-state.json"
-    grep -Eq "^[0-9a-f]{64}  plugin-registry\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: plugin-registry.before.json"
-    local cstate; cstate=$(cat "$backup/contacts-state.json")
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then test -f "$backup/contacts.sqlite3" || fail "Missing Contacts database backup"; grep -Eq "^[0-9a-f]{64}  contacts\.sqlite3$" "$backup/SHA256SUMS" || fail "Missing Contacts database checksum"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then test -f "$backup/contacts-lib.before.tar.gz" || fail "Missing Contacts library backup"; grep -Eq "^[0-9a-f]{64}  contacts-lib\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts library checksum"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then test -f "$backup/contactctl.before" || fail "Missing contactctl backup"; grep -Eq "^[0-9a-f]{64}  contactctl\.before$" "$backup/SHA256SUMS" || fail "Missing contactctl checksum"; fi
-    if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then test -f "$backup/contacts-plugin.before.tar.gz" || fail "Missing Contacts plugin backup"; grep -Eq "^[0-9a-f]{64}  contacts-plugin\.before\.tar\.gz$" "$backup/SHA256SUMS" || fail "Missing Contacts plugin checksum"; fi
-
-  local cstate; cstate=$(cat "$backup/contacts-state.json")
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-lib.before.tar.gz" "openclaw-contacts"; fi
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then verify_archive_prefix "$backup/contacts-plugin.before.tar.gz" "contacts"; fi
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then
-    node - "$backup/contacts.sqlite3" "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery database validation failed"
+  for f in contacts-state.json contacts.sqlite3 contacts-lib.before.tar.gz contactctl.before contacts-plugin.before.tar.gz plugin-registry.before.json; do
+    test -f "$backup/$f" || fail "Missing $f"
+    grep -Eq "^[0-9a-f]{64}  ${f//./\\.}$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: $f"
+  done
+  verify_archive_prefix "$backup/contacts-lib.before.tar.gz" "openclaw-contacts"
+  verify_archive_prefix "$backup/contacts-plugin.before.tar.gz" "contacts"
+  node - "$backup/contacts.sqlite3" "$backup/contacts-state.json" <<'NODE' || fail "Contacts recovery database validation failed"
 const fs=require('fs'),{DatabaseSync}=require('node:sqlite'),state=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),expected=state.schema_version,db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(Number(db.prepare('PRAGMA user_version').get().user_version)!==expected||db.prepare('PRAGMA integrity_check').get().integrity_check!=='ok'||db.prepare('PRAGMA foreign_key_check').all().length!==0)process.exit(2);}finally{db.close();}
 NODE
-  fi
   verify_archive_prefix "$backup/taskctl-managed.before.tar.gz" "taskctl"
   verify_archive_prefix "$backup/workspace-tasks.before.tar.gz" "workspace-tasks"
   expected=$(for f in $workspace_files; do printf 'workspace-tasks/%s\n' "$f"; done | LC_ALL=C sort)
@@ -282,18 +275,16 @@ restore_state() {
   install -m 600 "$backup/openclaw.json.before" "$config_path" || fail "Config restore failed"
   install -m 700 "$backup/taskctl.before" "$taskctl_target" || fail "taskctl restore failed"
   rm -f "$db_path-wal" "$db_path-shm"
-  local cstate; cstate=$(cat "$backup/contacts-state.json")
   rm -f "$contacts_db" "$contacts_db-wal" "$contacts_db-shm" "$contactctl_target"; rm -rf "$contacts_lib" "$contacts_plugin_dir"
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.db_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_db")"; install -m 600 "$backup/contacts.sqlite3" "$contacts_db" || fail "Contacts database restore failed"; fi
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.lib_present?0:1)' "$cstate"; then install -d -m 700 "$(dirname "$contacts_lib")"; tar -xzf "$backup/contacts-lib.before.tar.gz" -C "$(dirname "$contacts_lib")" || fail "Contacts library restore failed"; fi
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.contactctl_present?0:1)' "$cstate"; then install -m 700 "$backup/contactctl.before" "$contactctl_target" || fail "contactctl restore failed"; fi
-  if node -e 'const x=JSON.parse(process.argv[1]);process.exit(x.plugin_present?0:1)' "$cstate"; then
-    tar -xzf "$backup/contacts-plugin.before.tar.gz" -C "$(dirname "$contacts_plugin_dir")" || fail "Contacts plugin restore failed"
-    test -d "$contacts_plugin_dir" || fail "Contacts plugin directory missing after restore"
-    if find "$contacts_plugin_dir" -type l -print -quit | grep -q .; then fail "Unexpected symlink in restored Contacts plugin archive"; fi
-    install -d -m 700 "$contacts_plugin_dir/node_modules"
-    ln -s "$host_openclaw_root" "$contacts_plugin_dir/node_modules/openclaw" || fail "Contacts OpenClaw peer link recreation failed"
-  fi
+  install -d -m 700 "$(dirname "$contacts_db")" "$(dirname "$contacts_lib")"
+  install -m 600 "$backup/contacts.sqlite3" "$contacts_db" || fail "Contacts database restore failed"
+  tar -xzf "$backup/contacts-lib.before.tar.gz" -C "$(dirname "$contacts_lib")" || fail "Contacts library restore failed"
+  install -m 700 "$backup/contactctl.before" "$contactctl_target" || fail "contactctl restore failed"
+  tar -xzf "$backup/contacts-plugin.before.tar.gz" -C "$(dirname "$contacts_plugin_dir")" || fail "Contacts plugin restore failed"
+  test -d "$contacts_plugin_dir" || fail "Contacts plugin directory missing after restore"
+  if find "$contacts_plugin_dir" -type l -print -quit | grep -q .; then fail "Unexpected symlink in restored Contacts plugin archive"; fi
+  install -d -m 700 "$contacts_plugin_dir/node_modules"
+  ln -s "$host_openclaw_root" "$contacts_plugin_dir/node_modules/openclaw" || fail "Contacts OpenClaw peer link recreation failed"
   install -m 600 "$backup/tasks.sqlite3" "$db_path" || fail "Database restore failed"
 
   rm -rf "$plugin_dir"
