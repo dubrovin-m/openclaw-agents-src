@@ -58,6 +58,29 @@ verify_archive_prefix() {
   done < <(tar -tzf "$archive")
 }
 
+validate_plugin_archive_against_git_artifact() {
+  local archive=$1 prefix=$2 source=$3 release_path=$4 expected_version=$5 label=$6
+  local release artifact_rel artifact_sha artifact_path actual_sha artifact_files archived_files f expected actual
+  release=$(git -C "$REPO_ROOT" show "$source:$release_path") || fail "Unable to read predecessor $label release"
+  read -r artifact_rel artifact_sha < <(node - "$release" "$expected_version" <<'NODE'
+const r=JSON.parse(process.argv[2]),expected=process.argv[3],artifact=r?.plugin?.artifact,sha=r?.plugin?.sha256,version=r?.plugin?.version;
+if(version!==expected||typeof artifact!=='string'||!artifact||!/^[0-9a-f]{64}$/.test(sha||''))process.exit(2);
+process.stdout.write(artifact+' '+sha+'\n');
+NODE
+  ) || fail "Invalid predecessor $label artifact identity"
+  artifact_path="${release_path%/*}/$artifact_rel"
+  actual_sha=$(git -C "$REPO_ROOT" show "$source:$artifact_path" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint predecessor $label artifact"
+  [ "$actual_sha" = "$artifact_sha" ] || fail "Predecessor $label artifact hash mismatch"
+  artifact_files=$(git -C "$REPO_ROOT" show "$source:$artifact_path" | tar -tzf - | awk 'substr($0,length($0),1)!="/" && index($0,"package/")==1 { print substr($0,9) }' | LC_ALL=C sort) || fail "Unable to list predecessor $label artifact"
+  [ -n "$artifact_files" ] || fail "Predecessor $label artifact is empty"
+  archived_files=$(tar -tzf "$archive" | awk -v p="$prefix/" 'substr($0,length($0),1)!="/" && index($0,p)==1 { x=substr($0,length(p)+1); if(index(x,"node_modules/")!=1) print x }' | LC_ALL=C sort) || fail "Unable to list recovery $label archive"
+  [ "$archived_files" = "$artifact_files" ] || fail "Recovery $label source-owned file set does not match the exact predecessor artifact"
+  while IFS= read -r f; do
+    expected=$(git -C "$REPO_ROOT" show "$source:$artifact_path" | tar -xOzf - "package/$f" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint predecessor $label file: $f"
+    actual=$(tar -xOzf "$archive" "$prefix/$f" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint recovery $label file: $f"
+    [ "$actual" = "$expected" ] || fail "Recovery $label content is not the exact declared predecessor: $f"
+  done <<<"$artifact_files"
+}
 recovery_workspace_files() {
   [ "$1" = "$CONTACTS_RECOVERY_FORMAT" ] || fail "Unsupported recovery format"
   printf '%s\n' "${CURRENT_WORKSPACE_FILES[*]}"
@@ -121,10 +144,8 @@ NODE
   actual=$(sha256sum "$backup/contactctl.before" | awk '{print $1}')
   [ -n "$expected" ] && [ "$actual" = "$expected" ] || fail "Recovery contactctl is not the exact declared predecessor"
 
-  actual=$(tar -xOf "$backup/taskctl-managed.before.tar.gz" taskctl/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version||"")))') || fail "Unable to inspect recovery Task plugin"
-  [ "$actual" = "$task_plugin" ] || fail "Recovery Task plugin is not the exact declared predecessor"
-  actual=$(tar -xOf "$backup/contacts-plugin.before.tar.gz" contacts/package.json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>process.stdout.write(String(JSON.parse(s).version||"")))') || fail "Unable to inspect recovery Contacts plugin"
-  [ "$actual" = "$contacts_plugin" ] || fail "Recovery Contacts plugin is not the exact declared predecessor"
+  validate_plugin_archive_against_git_artifact "$backup/taskctl-managed.before.tar.gz" taskctl "$source" agents/tasks/release.json "$task_plugin" "Task plugin"
+  validate_plugin_archive_against_git_artifact "$backup/contacts-plugin.before.tar.gz" contacts "$source" shared/contacts/release.json "$contacts_plugin" "Contacts plugin"
 
   for f in "${CURRENT_WORKSPACE_FILES[@]}"; do
     expected=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.from.workspace_sha256[process.argv[2]]||"")' "$ROOT/release.json" "$f")
@@ -296,6 +317,7 @@ restore_state() {
   [ "$(readlink -f "$peer_link")" = "$host_openclaw_root" ] || fail "OpenClaw peer link target mismatch"
 
   for f in "${CURRENT_WORKSPACE_FILES[@]}"; do rm -f "$workspace/$f"; done
+  rm -f "$workspace/TOOLS.md"
   tar -xzf "$backup/workspace-tasks.before.tar.gz" -C "$(dirname "$workspace")" || fail "Workspace restore failed"
   for f in $workspace_files; do
     test -f "$workspace/$f" || fail "Missing restored workspace file: $f"
