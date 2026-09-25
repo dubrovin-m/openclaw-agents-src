@@ -20,6 +20,7 @@ fail(){
   echo "$*" >&2
   [ ! -f "$GATEWAY_LOG" ] || tail -120 "$GATEWAY_LOG" >&2 || true
   [ ! -f "$API_LOG" ] || tail -120 "$API_LOG" >&2 || true
+  [ ! -f "$CAPTURE" ] || { echo "synthetic Telegram capture:" >&2; cat "$CAPTURE" >&2 || true; }
   exit 2
 }
 
@@ -210,6 +211,12 @@ if(x?.created!==true||typeof j?.id!=='string'||!j.id||j.declarationKey!==key||j.
 NODE
 ) || fail "real OpenClaw did not create exact disabled Reminder command job"
 
+PROBE=$(oc_env "$OPENCLAW_BIN" message send --channel telegram --account tasks --target 111 --message 'Native Reminder transport probe' --json) || fail "native OpenClaw message send probe failed"
+node - "$PROBE" <<'NODE' || fail "native OpenClaw message send probe returned unconfirmed success: $PROBE"
+const x=JSON.parse(process.argv[2]),mid=x?.messageId==null?'':String(x.messageId),pmid=x?.payload?.messageId==null?'':String(x.payload.messageId);
+if(x?.action!=='send'||x?.channel!=='telegram'||x?.dryRun!==false||!mid||!((x?.deliveryStatus==='sent')||(x?.payload?.ok===true&&pmid===mid)))process.exit(1);
+NODE
+
 set +e
 DIRECT=$(oc_env "$RUNTIME/bin/taskctl" reminder-internal dispatch-send 2>&1)
 DIRECT_RC=$?
@@ -217,7 +224,7 @@ set -e
 [ "$DIRECT_RC" -eq 0 ] || fail "direct frozen Reminder smoke failed rc=$DIRECT_RC output=$DIRECT"
 node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.count!==1||x.delivered!==1)process.exit(1)' "$DIRECT" || fail "direct frozen Reminder smoke did not confirm delivery: $DIRECT"
 node - "$CAPTURE" <<'NODE' || fail "direct frozen Reminder smoke did not hit Telegram route"
-const fs=require('node:fs'),rows=fs.readFileSync(process.argv[2],'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);if(rows.length!==1||rows[0].chat!=='111'||rows[0].text!=='🔔 Напоминание: Frozen direct smoke')process.exit(1);
+const fs=require('node:fs'),rows=fs.readFileSync(process.argv[2],'utf8').trim().split('\n').filter(Boolean).map(JSON.parse);if(rows.length!==2||rows[0].chat!=='111'||rows[0].text!=='Native Reminder transport probe'||rows[1].chat!=='111'||rows[1].text!=='🔔 Напоминание: Frozen direct smoke')process.exit(1);
 NODE
 
 create_due automation-smoke 'Frozen automation smoke' >/dev/null
@@ -235,7 +242,7 @@ automation edit "$JOB_ID" --disable --json >/dev/null
 node - "$CAPTURE" "$RUNTIME/state/data/tasks/tasks.sqlite3" <<'NODE' || fail "real Reminder Automation delivery/settlement mismatch"
 const fs=require('node:fs'),{DatabaseSync}=require('node:sqlite'),rows=fs.readFileSync(process.argv[2],'utf8').trim().split('\n').filter(Boolean).map(JSON.parse),db=new DatabaseSync(process.argv[3],{readOnly:true});
 try{
-  if(rows.length!==2||rows[1].chat!=='111'||rows[1].text!=='🔔 Напоминание: Frozen automation smoke')process.exit(1);
+  if(rows.length!==3||rows[2].chat!=='111'||rows[2].text!=='🔔 Напоминание: Frozen automation smoke')process.exit(1);
   const rem=db.prepare("select status,close_reason,claim_token from reminders order by id").all();
   if(rem.length!==2||rem.some(r=>r.status!=='CLOSED'||r.close_reason!=='DELIVERED'||r.claim_token!==null))process.exit(1);
 }finally{db.close();}
