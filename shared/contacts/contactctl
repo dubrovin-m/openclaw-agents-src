@@ -29,7 +29,7 @@ function openDb({create=false,migrate=false}={}){
   const db=new DatabaseSync(DB_PATH,{timeout:5000});
   db.exec('PRAGMA foreign_keys=ON; PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL;');
   try{
-    if(migrate)contacts.ensureSchema(db,'main',{fault:process.env.CONTACTCTL_TEST_MIGRATION_FAULT});
+    if(migrate)contacts.ensureSchema(db,'main');
     else contacts.requireSchema(db);
     if(create)contacts.ensureSingleSelf(db);
   }catch(error){try{db.close();}catch{}throw error;}
