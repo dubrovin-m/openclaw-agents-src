@@ -268,6 +268,14 @@ calendar_materializer_jobs_json(){
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
 }
+calendar_materializer_exact(){
+  [ "$MATERIALIZER_ENABLED" = "1" ] || return 0
+  local jobs; jobs=$(calendar_materializer_jobs_json) || return 1
+  node - "$jobs" "$MATERIALIZER_DECLARATION" "$MATERIALIZER_NAME" "$MATERIALIZER_CRON" "$MATERIALIZER_TIMEZONE" "$MATERIALIZER_TIMEOUT" "$MATERIALIZER_COMMAND_JSON" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],timeout=Number(process.argv[7]),argv=JSON.parse(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||j.enabled!==true||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||j.delivery?.mode!=='none')process.exit(1);
+NODE
+}
+
 resolve_reminder_delivery_to(){
   [ "$REMINDER_ENABLED" = "1" ] || { printf '\n'; return 0; }
   node - "$CONFIG" "$REMINDER_ACCOUNT" <<'NODE'
@@ -285,6 +293,14 @@ reminder_dispatcher_jobs_json(){
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
 }
+reminder_dispatcher_exact(){
+  [ "$REMINDER_ENABLED" = "1" ] || return 0
+  local jobs; jobs=$(reminder_dispatcher_jobs_json) || return 1
+  node - "$jobs" "$REMINDER_DECLARATION" "$REMINDER_NAME" "$REMINDER_CRON" "$REMINDER_TIMEZONE" "$REMINDER_COMMAND_JSON" "$REMINDER_TIMEOUT" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],argv=JSON.parse(process.argv[7]),timeout=Number(process.argv[8]);if(jobs.length!==1)process.exit(1);const j=jobs[0],tools=j.payload?.toolsAllow,toolsExact=tools===undefined||(Array.isArray(tools)&&tools.length===0);if(j.declarationKey!==key||j.name!==name||typeof j.enabled!=='boolean'||j.agentId!=='tasks'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule?.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='command'||JSON.stringify(j.payload?.argv)!==JSON.stringify(argv)||j.payload?.timeoutSeconds!==timeout||!toolsExact||j.delivery?.mode!=='none'||j.scheduledToolPolicy!=null)process.exit(1);
+NODE
+}
+
 resolve_important_date_delivery_to(){
   [ "$IMPORTANT_DATE_ENABLED" = "1" ] || { printf '\n'; return 0; }
   node - "$CONFIG" "$IMPORTANT_DATE_ACCOUNT" <<'NODE'
@@ -303,6 +319,14 @@ important_date_dispatcher_jobs_json(){
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);process.stdout.write(JSON.stringify(jobs.filter(j=>j?.declarationKey===key)));
 NODE
 }
+important_date_dispatcher_exact(){
+  [ "$IMPORTANT_DATE_ENABLED" = "1" ] || return 0
+  local jobs destination; jobs=$(important_date_dispatcher_jobs_json) || return 1; destination=$IMPORTANT_DATE_DELIVERY_TO; [ -n "$destination" ] || destination=$(resolve_important_date_delivery_to) || return 1
+  node - "$jobs" "$IMPORTANT_DATE_DECLARATION" "$IMPORTANT_DATE_NAME" "$IMPORTANT_DATE_CRON" "$IMPORTANT_DATE_TIMEZONE" "$IMPORTANT_DATE_SCRIPT" "$IMPORTANT_DATE_TOOL" "$IMPORTANT_DATE_TIMEOUT" "$IMPORTANT_DATE_TOOL_BUDGET" "$IMPORTANT_DATE_CHANNEL" "$IMPORTANT_DATE_ACCOUNT" "$destination" <<'NODE'
+const jobs=JSON.parse(process.argv[2]),key=process.argv[3],name=process.argv[4],expr=process.argv[5],tz=process.argv[6],script=process.argv[7],tool=process.argv[8],timeout=Number(process.argv[9]),budget=Number(process.argv[10]),channel=process.argv[11],account=process.argv[12],to=process.argv[13];if(jobs.length!==1)process.exit(1);const j=jobs[0];if(j.declarationKey!==key||j.name!==name||j.enabled!==true||j.agentId!=='main'||j.schedule?.kind!=='cron'||j.schedule?.expr!==expr||j.schedule?.tz!==tz||(j.schedule.staggerMs??0)!==0||j.sessionTarget!=='isolated'||j.payload?.kind!=='script'||j.payload?.script!==script||JSON.stringify(j.payload?.toolsAllow)!==JSON.stringify([tool])||j.payload?.timeoutSeconds!==timeout||j.payload?.toolBudget!==budget||j.delivery?.mode!=='announce'||j.delivery?.channel!==channel||String(j.delivery?.to)!==to||j.delivery?.accountId!==account||(j.delivery?.bestEffort!==undefined&&j.delivery?.bestEffort!==false))process.exit(1);
+NODE
+}
+
 taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
 taskctl_migrate(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" init; else "$TASKCTL_TARGET" init; fi; }
 contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; else CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; fi; }
