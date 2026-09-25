@@ -129,6 +129,26 @@ jobs:
           timeout 180s npm run plugin:build
           timeout 180s npm run plugin:validate
 
+      - name: Export candidate package for control-plane materialization
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          pack_dir="$(mktemp -d)"
+          artifact_name="$(npm pack ./agents/tasks/plugins/taskctl --pack-destination "$pack_dir" | tail -n 1)"
+          artifact="$pack_dir/$artifact_name"
+          printf 'TASKCTL_CANDIDATE_SHA256=%s\n' "$(sha256sum "$artifact" | awk '{print $1}')"
+          printf 'TASKCTL_CANDIDATE_BASE64_BEGIN\n'
+          base64 -w0 "$artifact"
+          printf '\nTASKCTL_CANDIDATE_BASE64_END\n'
+          for file in agents/tasks/plugins/taskctl/dist/daily-review-runtime.js agents/tasks/plugins/taskctl/dist/daily-review-runtime.d.ts; do
+            tag="$(basename "$file" | tr '.-' '__' | tr '[:lower:]' '[:upper:]')"
+            printf '%s_BASE64_BEGIN\n' "$tag"
+            base64 -w0 "$file"
+            printf '\n%s_BASE64_END\n' "$tag"
+          done
+          rm -rf "$pack_dir"
+
       - name: Validate release identity and artifact
         if: steps.scope.outputs.relevant == 'true'
         shell: bash
