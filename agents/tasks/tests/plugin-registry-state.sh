@@ -36,17 +36,12 @@ NODE
 )
 [ "$BEFORE" = "$AFTER" ]
 
-DB2="$TMP/absent.sqlite"; SNAP2="$TMP/absent.json"
-node - "$DB2" <<'NODE'
-const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2]);db.exec('CREATE TABLE config_machine_state(state_key TEXT NOT NULL PRIMARY KEY,value_json TEXT NOT NULL,updated_at_ms INTEGER NOT NULL) STRICT');db.close();
-NODE
-node "$HELPER" snapshot "$DB2" "$SNAP2"
-node "$HELPER" validate-snapshot "$SNAP2"
-node - "$DB2" "$HOST" <<'NODE'
-const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2]);const w={revision:1,index:{version:1,hostContractVersion:process.argv[3],installRecords:{},plugins:[]}};db.prepare('INSERT INTO config_machine_state VALUES(?,?,?)').run('plugins.installedIndex',JSON.stringify(w),1);db.close();
-NODE
-node "$HELPER" restore "$DB2" "$SNAP2"
-node - "$DB2" <<'NODE'
-const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],{readOnly:true});try{if(db.prepare("SELECT 1 FROM config_machine_state WHERE state_key='plugins.installedIndex'").get())process.exit(1);}finally{db.close();}
-NODE
+BAD="$TMP/invalid-absent.json"
+printf '{"format":"openclaw-plugin-registry-recovery-v1","row_present":false}\n' > "$BAD"
+set +e
+node "$HELPER" validate-snapshot "$BAD" >/dev/null 2>&1
+RC=$?
+set -e
+[ "$RC" -eq 2 ]
+
 echo TASK_PLUGIN_REGISTRY_STATE_PASS
