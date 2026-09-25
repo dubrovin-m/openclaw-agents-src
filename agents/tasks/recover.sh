@@ -141,7 +141,7 @@ NODE
   if [ -f "$backup/reminder-dispatcher.before.json" ]; then
     grep -Eq "^[0-9a-f]{64}  reminder-dispatcher\.before\.json$" "$backup/SHA256SUMS" || fail "Recovery checksum manifest is incomplete: reminder-dispatcher.before.json"
     node - "$backup/reminder-dispatcher.before.json" <<'NODE' || fail "Recovery Reminder dispatcher snapshot is invalid"
-const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(x?.format!=='task-agent-reminder-dispatcher-recovery-v1'||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||x.jobs.length!==0)process.exit(2);
+const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),v1=x?.format==='task-agent-reminder-dispatcher-recovery-v1',v2=x?.format==='task-agent-reminder-dispatcher-recovery-v2';if((!v1&&!v2)||typeof x?.declaration_key!=='string'||!x.declaration_key||!Array.isArray(x?.jobs)||(v1&&x.jobs.length!==0)||(v2&&(x.jobs.length>1||x.jobs.some(j=>j?.declarationKey!==x.declaration_key||typeof j?.id!=='string'||!j.id))))process.exit(2);
 NODE
   fi
 
@@ -218,21 +218,50 @@ NODE
 }
 
 reconcile_reminder_dispatcher_before() {
-  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/reminder-dispatcher.before.json" key current ids id
+  local backup=$1 openclaw_bin=$2 home_dir=$3 state_dir=$4 config_path=$5 snapshot="$backup/reminder-dispatcher.before.json"
+  local key format count current ids id script tools timeout budget channel account to enabled restored
   [ -f "$snapshot" ] || return 0
-  key=$(node -e 'const x=require(process.argv[1]);if(x.format!=="task-agent-reminder-dispatcher-recovery-v1"||!Array.isArray(x.jobs)||x.jobs.length!==0)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery Reminder dispatcher snapshot unsupported"
+  key=$(node -e 'const x=require(process.argv[1]);if(!["task-agent-reminder-dispatcher-recovery-v1","task-agent-reminder-dispatcher-recovery-v2"].includes(x.format)||!Array.isArray(x.jobs)||x.jobs.length>1)process.exit(2);process.stdout.write(x.declaration_key)' "$snapshot") || fail "Recovery Reminder dispatcher snapshot unsupported"
+  format=$(node -e 'process.stdout.write(require(process.argv[1]).format)' "$snapshot") || fail "Recovery Reminder dispatcher format unavailable"
+  count=$(node -e 'process.stdout.write(String(require(process.argv[1]).jobs.length))' "$snapshot") || fail "Recovery Reminder dispatcher count unavailable"
   if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to inspect Reminder Automation before recovery"; fi
   ids=$(node - "$key" "$current" <<'NODE'
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);for(const j of jobs)if(j?.declarationKey===key&&typeof j?.id==='string')process.stdout.write(j.id+'\n');
 NODE
 ) || fail "Unable to resolve Reminder dispatcher jobs"
-  while IFS= read -r id; do
-    [ -n "$id" ] || continue
-    if [ -n "${TEST_ROOT:-}" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; fi
-  done <<<"$ids"
-  if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; fi
-  node - "$key" "$current" <<'NODE' || fail "Reminder dispatcher Automation remains after cleanup"
+  if [ "$count" = "0" ]; then
+    while IFS= read -r id; do
+      [ -n "$id" ] || continue
+      if [ -n "${TEST_ROOT:-}" ]; then HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; else "$openclaw_bin" automations rm "$id" --json >/dev/null || fail "Failed to remove Reminder dispatcher Automation"; fi
+    done <<<"$ids"
+    if [ -n "${TEST_ROOT:-}" ]; then current=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; else current=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify Reminder Automation after cleanup"; fi
+    node - "$key" "$current" <<'NODE' || fail "Reminder dispatcher Automation remains after cleanup"
 const key=process.argv[2],x=JSON.parse(process.argv[3]),jobs=Array.isArray(x)?x:(Array.isArray(x?.jobs)?x.jobs:[]);if(jobs.some(j=>j?.declarationKey===key))process.exit(1);
+NODE
+    return 0
+  fi
+  [ "$format" = "task-agent-reminder-dispatcher-recovery-v2" ] || fail "Recovery Reminder dispatcher snapshot cannot restore a pre-existing job"
+  id=$(node -e 'const j=require(process.argv[1]).jobs[0];if(typeof j?.id!=="string"||!j.id)process.exit(2);process.stdout.write(j.id)' "$snapshot") || fail "Recovery Reminder dispatcher id unavailable"
+  node - "$key" "$id" "$current" <<'NODE' || fail "Recovery Reminder dispatcher identity changed"
+const key=process.argv[2],id=process.argv[3],x=JSON.parse(process.argv[4]),jobs=(Array.isArray(x)?x:(x.jobs||[])).filter(j=>j?.declarationKey===key);if(jobs.length!==1||jobs[0]?.id!==id)process.exit(1);
+NODE
+  script=$(node -e 'const j=require(process.argv[1]).jobs[0];if(j?.payload?.kind!=="script"||typeof j.payload.script!=="string")process.exit(2);process.stdout.write(j.payload.script)' "$snapshot") || fail "Recovery Reminder script unavailable"
+  tools=$(node -e 'const a=require(process.argv[1]).jobs[0]?.payload?.toolsAllow;if(!Array.isArray(a)||a.length!==1||a[0]!=="task_reminder_dispatch")process.exit(2);process.stdout.write(a.join(","))' "$snapshot") || fail "Recovery Reminder tools unavailable"
+  timeout=$(node -e 'const x=require(process.argv[1]).jobs[0]?.payload?.timeoutSeconds;if(!Number.isSafeInteger(x)||x<1)process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder timeout unavailable"
+  budget=$(node -e 'const x=require(process.argv[1]).jobs[0]?.payload?.toolBudget;if(!Number.isSafeInteger(x)||x<1)process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder tool budget unavailable"
+  channel=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.channel;if(typeof x!=="string"||!x)process.exit(2);process.stdout.write(x)' "$snapshot") || fail "Recovery Reminder channel unavailable"
+  account=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.accountId;if(typeof x!=="string"||!x)process.exit(2);process.stdout.write(x)' "$snapshot") || fail "Recovery Reminder account unavailable"
+  to=$(node -e 'const x=require(process.argv[1]).jobs[0]?.delivery?.to;if(x===undefined||x===null||String(x).trim()==="")process.exit(2);process.stdout.write(String(x))' "$snapshot") || fail "Recovery Reminder recipient unavailable"
+  enabled=$(node -e 'process.stdout.write(require(process.argv[1]).jobs[0]?.enabled===true?"1":"0")' "$snapshot") || fail "Recovery Reminder enabled state unavailable"
+  if [ -n "${TEST_ROOT:-}" ]; then
+    printf '%s\n' "$script" | HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations edit "$id" --script - --tools "$tools" --script-timeout-seconds "$timeout" --script-tool-budget "$budget" --announce --channel "$channel" --account "$account" --to "$to" --no-best-effort-deliver $([ "$enabled" = "1" ] && printf '%s' --enable || printf '%s' --disable) --json >/dev/null || fail "Failed to restore Reminder dispatcher Automation"
+    restored=$(HOME="$home_dir" OPENCLAW_HOME="$home_dir" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" automations list --all --json) || fail "Unable to verify restored Reminder Automation"
+  else
+    printf '%s\n' "$script" | "$openclaw_bin" automations edit "$id" --script - --tools "$tools" --script-timeout-seconds "$timeout" --script-tool-budget "$budget" --announce --channel "$channel" --account "$account" --to "$to" --no-best-effort-deliver $([ "$enabled" = "1" ] && printf '%s' --enable || printf '%s' --disable) --json >/dev/null || fail "Failed to restore Reminder dispatcher Automation"
+    restored=$("$openclaw_bin" automations list --all --json) || fail "Unable to verify restored Reminder Automation"
+  fi
+  node - "$snapshot" "$restored" <<'NODE' || fail "Restored Reminder dispatcher does not match recovery snapshot"
+const snap=require(process.argv[2]),x=JSON.parse(process.argv[3]),want=snap.jobs[0],jobs=(Array.isArray(x)?x:(x.jobs||[])).filter(j=>j?.declarationKey===snap.declaration_key);if(jobs.length!==1)process.exit(1);const got=jobs[0],same=got.id===want.id&&got.name===want.name&&got.enabled===want.enabled&&got.agentId===want.agentId&&JSON.stringify(got.schedule)===JSON.stringify(want.schedule)&&got.sessionTarget===want.sessionTarget&&got.payload?.kind==='script'&&got.payload.script===want.payload.script&&JSON.stringify(got.payload.toolsAllow)===JSON.stringify(want.payload.toolsAllow)&&got.payload.timeoutSeconds===want.payload.timeoutSeconds&&got.payload.toolBudget===want.payload.toolBudget&&got.delivery?.mode===want.delivery?.mode&&got.delivery?.channel===want.delivery?.channel&&String(got.delivery?.to)===String(want.delivery?.to)&&got.delivery?.accountId===want.delivery?.accountId&&(got.delivery?.bestEffort??false)===(want.delivery?.bestEffort??false)&&JSON.stringify(got.scheduledToolPolicy??null)===JSON.stringify(want.scheduledToolPolicy??null);if(!same)process.exit(1);
 NODE
 }
 
