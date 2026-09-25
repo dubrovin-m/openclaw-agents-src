@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASKCTL=${1:-$ROOT/taskctl}
-PREDECESSOR_SHA=${TASK_BATCH7_PREDECESSOR_SHA:-c8fc1df5d77cb15a8dfd567ca76fb29bcb6fec8a}
+EXPECTED_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 NOW="2026-09-03T12:00:00Z"
@@ -15,7 +15,7 @@ contains(){ [[ "$1" == *"$2"* ]] || { echo "missing: $2" >&2; echo "$1" >&2; exi
 json_assert(){ node -e "$1" "$2"; }
 
 # TA-PRJ-001..040 deterministic Project entity, lifecycle, association, and progress contract.
-a=$(plain init); contains "$a" '"implementation_version":"0.4.14"'; contains "$a" '"schema_version":9'
+a=$(plain init); contains "$a" "\"implementation_version\":\"$EXPECTED_TASKCTL_VERSION\""; contains "$a" '"schema_version":9'
 
 p1=$(run '{"operation_key":"p1","title":"  Внедрить ИИ-обзор задач  "}' project create)
 contains "$p1" '"id":"PRJ-1"'; contains "$p1" '"title":"Внедрить ИИ-обзор задач"'; contains "$p1" '"status":"ACTIVE"'; contains "$p1" '"total":0'
