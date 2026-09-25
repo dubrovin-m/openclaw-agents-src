@@ -84,12 +84,5 @@
     "delivery_recipient_source": "commands.ownerAllowFrom-singleton",
     "best_effort": false,
     "predecessor_mode": "exact"
-  },
-  "task_governance": {
-    "kind": "private-bootstrap-v1",
-    "bootstrap_path": "data/tasks/task-governance-bootstrap.json",
-    "office_ceo_group_display_name": "Office CEO",
-    "office_ceo_binding_key": "OFFICE_CEO_GROUP",
-    "personal_label_binding_key": "PERSONAL_LABEL"
   }
 }
