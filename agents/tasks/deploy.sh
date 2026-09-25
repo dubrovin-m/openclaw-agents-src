@@ -56,8 +56,8 @@ const bad=()=>process.exit(2);
 if(r?.format!=='task-agent-release-v2')bad();
 const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.sqlite_schema;
 const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const satisfies=(v,range)=>{const m=/^>=(\d+)\.(\d+)\.(\d+)$/.exec(range||''),x=tuple(v);if(!m||!x)return false;const f=m.slice(1).map(Number);return x[0]>f[0]||(x[0]===f[0]&&(x[1]>f[1]||(x[1]===f[1]&&x[2]>=f[2])))};
-if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||!satisfies(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
+const exactHost=(v,range)=>tuple(v)!==null&&v===range;
+if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!exactHost(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
 if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
 if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
 const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||!['absent','exact'].includes(sc.predecessor_mode??'absent')))bad();
@@ -388,6 +388,7 @@ NODE
   important_date_dispatcher_exact
 }
 taskctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" health; else "$TASKCTL_TARGET" health; fi; }
+taskctl_migrate(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL_TARGET" init; else "$TASKCTL_TARGET" init; fi; }
 contactctl_health(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; else CONTACTCTL_PAYLOAD='{}' "$CONTACTCTL_TARGET" health; fi; }
 contactctl_migrate(){ if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CONTACTS_DB" "$CONTACTCTL_TARGET" init; else "$CONTACTCTL_TARGET" init; fi; }
 taskctl_payload(){ local payload=$1 scope=$2 action=$3; if [ -n "$TEST_ROOT" ]; then HOME="$HOME_DIR" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" TASKCTL_PAYLOAD="$payload" "$TASKCTL_TARGET" "$scope" "$action"; else TASKCTL_PAYLOAD="$payload" "$TASKCTL_TARGET" "$scope" "$action"; fi; }
@@ -799,9 +800,11 @@ main(){
     oc plugins install "$CONTACTS_PLUGIN_ARTIFACT" --force --accept-capabilities || abort_deploy "CONTACTS_PLUGIN_INSTALL" "Contacts plugin install failed"
   fi
   install -m 700 "$ROOT/taskctl" "$TASKCTL_TARGET" || abort_deploy "TASKCTL_INSTALL" "taskctl install failed"
-  local migrated_health
-  migrated_health=$(taskctl_health) || abort_deploy "SCHEMA_MIGRATION" "target taskctl failed to migrate/validate database"
-  node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2],s=Number(process.argv[3]);if(h.implementation_version!==v||h.schema_version!==s)process.exit(1)' "$migrated_health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA" || abort_deploy "SCHEMA_MIGRATION" "target taskctl/schema identity validation failed"
+  local migration_result migrated_health
+  migration_result=$(taskctl_migrate) || abort_deploy "SCHEMA_MIGRATION" "target taskctl failed to migrate database"
+  node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2],s=Number(process.argv[3]);if(h.implementation_version!==v||h.schema_version!==s)process.exit(1)' "$migration_result" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA" || abort_deploy "SCHEMA_MIGRATION" "target taskctl migration identity validation failed"
+  migrated_health=$(taskctl_health) || abort_deploy "SCHEMA_MIGRATION" "target taskctl failed read-only health validation"
+  node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2],s=Number(process.argv[3]);if(h.ok!==true||h.implementation_version!==v||h.schema_version!==s||h.integrity?.ok!==true)process.exit(1)' "$migrated_health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA" || abort_deploy "SCHEMA_MIGRATION" "target taskctl/schema health validation failed"
   db_generation_exact || abort_deploy "SCHEMA_MIGRATION" "target database generation validation failed"
   maybe_fault "after-migration"
   if [ "$GOVERNANCE_ENABLED" = "1" ]; then activate_governance || abort_deploy "GOVERNANCE_ACTIVATION" "failed to create or validate Office CEO Person Group and Task governance bindings"; fi

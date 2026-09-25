@@ -8,7 +8,8 @@ The supported steady state follows the repository-wide OpenClaw version declared
 
 ## Current contract
 
-- OpenClaw: repository-wide version from [`runtime-contract.json`](../../runtime-contract.json) (`2026.8.2` for this generation)
+- OpenClaw: exact repository-wide qualified version from [`runtime-contract.json`](../../runtime-contract.json)
+- CLI attachment contract: supported `{{AttachmentPath}}` input with `{{OutputBase}}` output scratch base
 - transcription engine: pinned `whisper.cpp` `whisper-cli`
 - model: pinned `ggml-small.bin` with SHA-256 verification
 - media configuration: [`config/tools-media-audio.json`](config/tools-media-audio.json)

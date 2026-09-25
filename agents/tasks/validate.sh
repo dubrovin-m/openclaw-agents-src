@@ -36,7 +36,7 @@ bash -n "$ROOT/tests/deadline-governance.sh"
 test -x "$ROOT/deploy.sh"
 test -x "$ROOT/recover.sh"
 test -x "$ROOT/install.sh"
-test -x "$ROOT/tests/deploy.sh"
+test -f "$ROOT/tests/deploy.sh"
 test -x "$ROOT/tests/batch4.sh"
 test -x "$ROOT/tests/batch5.sh"
 
@@ -71,13 +71,13 @@ const lock=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
 const release=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
 const runtime=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
 const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const satisfies=(v,r)=>{const m=/^>=(\d+)\.(\d+)\.(\d+)$/.exec(r||''),x=tuple(v);if(!m||!x)return false;const f=m.slice(1).map(Number);return x[0]>f[0]||(x[0]===f[0]&&(x[1]>f[1]||(x[1]===f[1]&&x[2]>=f[2])))};
+const exactHost=(v,r)=>tuple(v)!==null&&v===r;
 const root=lock.packages?.[''];
 const typebox=lock.packages?.['node_modules/typebox'];
 if(pkg.version!==release.plugin?.version||lock.version!==pkg.version||root?.version!==pkg.version)throw new Error('taskctl package/lock version must match the frozen release plugin version');
 if(release.format!=='task-agent-release-v2')throw new Error('unsupported Task release format');
 const build=release.generation?.openclaw_build_version,compat=release.generation?.openclaw_compat;
-if(!tuple(build)||!satisfies(runtime?.openclaw?.version,compat))throw new Error('OpenClaw release compatibility invalid');
+if(!tuple(build)||build!==runtime?.openclaw?.version||!exactHost(runtime?.openclaw?.version,compat))throw new Error('OpenClaw release compatibility invalid');
 if(build!==pkg.devDependencies?.openclaw||build!==pkg.openclaw?.build?.openclawVersion||build!==root?.devDependencies?.openclaw)throw new Error('OpenClaw build identity mismatch');
 if(compat!==pkg.peerDependencies?.openclaw||compat!==pkg.openclaw?.compat?.pluginApi||compat!==root?.peerDependencies?.openclaw)throw new Error('OpenClaw compatibility contract mismatch');
 if(release.generation?.typebox_version!==pkg.dependencies?.typebox)throw new Error('TypeBox release identity mismatch');
@@ -106,6 +106,7 @@ init=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$(mktemp -u)/tasks.sqlite3" "$ROO
 node -e 'const x=JSON.parse(process.argv[1]);const r=require(process.argv[2]);if(x.implementation_version!==r.generation.taskctl_version||x.schema_version!==r.generation.sqlite_schema)process.exit(1)' "$init" "$ROOT/release.json"
 
 bash "$ROOT/tests/smoke.sh" "$ROOT/taskctl"
+bash "$ROOT/tests/health-readonly.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/batch4.sh"
 bash "$ROOT/tests/batch6.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/batch7.sh" "$ROOT/taskctl"

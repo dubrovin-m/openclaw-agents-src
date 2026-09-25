@@ -10,7 +10,7 @@ DB="$TMP/contacts.sqlite3"
 run(){ CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" CONTACTCTL_PAYLOAD="$1" "$CONTACTCTL" "$2"; }
 fail_action(){ local payload=$1 action=$2 code=$3 out rc; set +e; out=$(run "$payload" "$action"); rc=$?; set -e; [ "$rc" -ne 0 ]; node -e 'const x=JSON.parse(process.argv[1]);if(x?.error?.code!==process.argv[2])process.exit(1)' "$out" "$code"; }
 
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.4")process.exit(1)})'
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$DB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.5")process.exit(1)})'
 run '{"operation_key":"p1","display_name":"Иванов И."}' create >/dev/null
 
 # Birthday creation requires an explicit reminders array; zero means intentionally no reminder.

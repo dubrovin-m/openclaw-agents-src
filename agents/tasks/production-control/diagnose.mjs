@@ -234,13 +234,8 @@ function provenanceCheck(expectedProductionBaselineSha = null) {
   }
 }
 
-function satisfiesOpenClawFloor(version, range) {
-  const value = /^(\d+)\.(\d+)\.(\d+)$/.exec(version ?? '');
-  const floor = /^>=(\d+)\.(\d+)\.(\d+)$/.exec(range ?? '');
-  if (!value || !floor) return false;
-  const v = value.slice(1).map(Number);
-  const f = floor.slice(1).map(Number);
-  return v[0] > f[0] || (v[0] === f[0] && (v[1] > f[1] || (v[1] === f[1] && v[2] >= f[2])));
+function matchesOpenClawVersion(version, range) {
+  return /^(\d+)\.(\d+)\.(\d+)$/.test(version ?? '') && version === range;
 }
 
 function releaseCheck({ database, taskctl, plugin, runtime, provenance }) {
@@ -272,8 +267,8 @@ function releaseCheck({ database, taskctl, plugin, runtime, provenance }) {
       && expected.taskctl_version === actual.taskctl_version
       && expected.sqlite_schema === actual.sqlite_schema
       && runtime?.ok === true
-      && satisfiesOpenClawFloor(actual.openclaw_version, expected.openclaw_compat)
-      && satisfiesOpenClawFloor(runtime?.expected_openclaw_version, expected.openclaw_compat)
+      && matchesOpenClawVersion(actual.openclaw_version, expected.openclaw_compat)
+      && matchesOpenClawVersion(runtime?.expected_openclaw_version, expected.openclaw_compat)
       && expected.openclaw_compat === actual.openclaw_peer_range
       && expected.openclaw_compat === actual.openclaw_plugin_api_range
       && expected.openclaw_build_version === actual.openclaw_build_version

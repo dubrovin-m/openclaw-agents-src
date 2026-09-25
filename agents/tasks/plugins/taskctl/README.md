@@ -1,6 +1,6 @@
 # Taskctl plugin 0.4.12
 
-OpenClaw `2026.8.2` typed tool plugin for the fixed local Task Agent executable and the bounded Task Agent production-control interface.
+Typed tool plugin for the fixed local Task Agent executable and bounded Task Agent production-control interface. The exact qualified OpenClaw host version is owned by the repository `runtime-contract.json` and mirrored in package/release metadata.
 
 The deterministic `taskctl` backend is implementation `0.4.3` with SQLite schema v4. The plugin exposes 39 model-visible Task Agent data tools, one for each deterministic action, plus one optional `task_production_control` tool. It does not expose a generic multiplexed `taskctl(action, payload)` or generic shell tool.
 

@@ -34,7 +34,8 @@ jq -e '
   .tools.media.models[0].command == "/home/dubrovin/.local/bin/whisper-cli" and
   (.tools.media.models[0].args | index("/home/dubrovin/.local/share/whisper.cpp/models/ggml-small.bin")) != null and
   (.tools.media.models[0].args | index("{{OutputBase}}")) != null and
-  (.tools.media.models[0].args | index("{{MediaPath}}")) != null and
+  (.tools.media.models[0].args | index("{{AttachmentPath}}")) != null and
+  (.tools.media.models[0].args | index(("{{Media" + "Path}}"))) == null and
   (.tools.media.models[0].args | index("auto")) != null and
   .tools.media.models[0].timeoutSeconds == 180 and
   .tools.media.audio.echoTranscript == false

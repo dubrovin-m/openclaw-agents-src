@@ -37,7 +37,7 @@ set -e
 rm -rf "$TMP/lost"
 TASKCTL_VERSION=$(node -e 'process.stdout.write(require(process.argv[1]).generation.taskctl_version)' "$ROOT/agents/tasks/release.json")
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$DB" TASKCTL_CONTACTS_DB="$CDB" "$TASKCTL" init | node -e 'let s="";const v=process.argv[1];process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==9||x.implementation_version!==v)process.exit(1)})' "$TASKCTL_VERSION"
-CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.4")process.exit(1)})'
+CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$CDB" "$CONTACTCTL" init | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.schema_version!==3||x.implementation_version!=="0.1.5")process.exit(1)})'
 # Explicit Contact identity plus Task reuse.
 crun '{"operation_key":"c1","display_name":"Побединская Н.","organization":"Компания","title":"Директор"}' create >/dev/null
 trun '{"reference":"Побединская"}' person resolve | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);if(x.outcome!=="MATCH"||x.matches[0].id!=="P-2")process.exit(1)})'
@@ -88,6 +88,7 @@ oldrun '{"operation_key":"r","mode":"AFTER_COMPLETION","rule":{"interval":7,"uni
 node - "$MDB" > "$TMP/before.json" <<'NODE'
 const {DatabaseSync}=require('node:sqlite');const d=new DatabaseSync(process.argv[2],{readOnly:true});const out={people:d.prepare('select id,display_name,created_at from people order by id').all(),aliases:d.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:d.prepare('select id,assignee_id from tasks order by id').all(),recurrences:d.prepare('select id,assignee_id from recurrences order by id').all()};process.stdout.write(JSON.stringify(out));d.close();
 NODE
+TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_CONTACTS_DB="$MCDB" "$TASKCTL" init >/dev/null
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$MDB" TASKCTL_CONTACTS_DB="$MCDB" "$TASKCTL" health >/dev/null
 node - "$MDB" "$MCDB" "$TMP/before.json" <<'NODE'
 const fs=require('node:fs');const {DatabaseSync}=require('node:sqlite');const before=JSON.parse(fs.readFileSync(process.argv[4]));const t=new DatabaseSync(process.argv[2],{readOnly:true}),c=new DatabaseSync(process.argv[3],{readOnly:true});const after={people:c.prepare('select id,display_name,created_at from people order by id').all(),aliases:c.prepare('select person_id,alias from person_aliases order by person_id,alias').all(),tasks:t.prepare('select id,assignee_id from tasks order by id').all(),recurrences:t.prepare('select id,assignee_id from recurrences order by id').all()};if(t.prepare('pragma user_version').get().user_version!==9||c.prepare('pragma user_version').get().user_version!==3)process.exit(1);if(JSON.stringify(before)!==JSON.stringify(after))process.exit(2);if(t.prepare("select count(*) n from sqlite_master where type='table' and name in ('people','person_aliases')").get().n!==0)process.exit(3);if(c.prepare("select count(*) n from people where is_self=1 and status='ACTIVE'").get().n!==1)process.exit(4);if(t.prepare('pragma foreign_key_check').all().length||c.prepare('pragma foreign_key_check').all().length)process.exit(5);t.close();c.close();
@@ -97,7 +98,7 @@ NODE
 FDB="$TMP/fault/tasks.sqlite3"; FCDB="$TMP/fault/contacts.sqlite3"; mkdir -p "$TMP/fault"
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FDB" "$PRE" init >/dev/null
 set +e
-fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FDB" TASKCTL_CONTACTS_DB="$FCDB" TASKCTL_TEST_CONTACTS_MIGRATION_FAULT=after-contacts-copy "$TASKCTL" health); frc=$?
+fault=$(TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$FDB" TASKCTL_CONTACTS_DB="$FCDB" TASKCTL_TEST_CONTACTS_MIGRATION_FAULT=after-contacts-copy "$TASKCTL" init); frc=$?
 set -e
 [ "$frc" -ne 0 ]
 [ ! -e "$FCDB" ]
