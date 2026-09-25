@@ -11,8 +11,8 @@ fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||r?.task_governance?.kind!=='private-bootstrap-v1'||!c?.from)process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,GOV_BOOTSTRAP:r.task_governance.bootstrap_path,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
+if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||!c?.from)process.exit(2);
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
@@ -125,13 +125,6 @@ NODE
 ) || fail "predecessor self identity unavailable"
 PERSONAL_RESULT=$(HOME="$BASE/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$BASE/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$BASE/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{"operation_key":"governance-personal-fixture","display_name":"Bootstrap Personal","emoji":"🏠"}' "$BASE/bin/taskctl" label create) || fail "unable to create predecessor personal Label fixture"
 PERSONAL_LABEL=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.label?.id;if(!/^L-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$PERSONAL_RESULT") || fail "invalid personal Label fixture"
-BOOTSTRAP="$BASE/state/$GOV_BOOTSTRAP"
-mkdir -p "$(dirname "$BOOTSTRAP")"
-node - "$BOOTSTRAP" "$SELF_PERSON" "$PERSONAL_LABEL" <<'NODE'
-const fs=require('fs'),out={format:'task-governance-bootstrap-v1',office_ceo_members:[process.argv[3]],personal_label_id:process.argv[4]};fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
-NODE
-chmod 600 "$BOOTSTRAP"
-
 GROUP_RESULT=$(HOME="$BASE/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$BASE/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{"operation_key":"wave1-group","display_name":"Office CEO"}' "$BASE/bin/contactctl" group_create) || fail "unable to create predecessor Office CEO group"
 GROUP_ID=$(node -e 'const x=JSON.parse(process.argv[1]),id=x?.group?.id;if(!/^PG-[1-9]\d*$/.test(id||""))process.exit(2);process.stdout.write(id)' "$GROUP_RESULT") || fail "invalid predecessor group"
 HOME="$BASE/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$BASE/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD="$(node -e 'process.stdout.write(JSON.stringify({operation_key:"wave1-member",group_id:process.argv[1],person:process.argv[2]}))' "$GROUP_ID" "$SELF_PERSON")" "$BASE/bin/contactctl" group_member_add >/dev/null
@@ -160,6 +153,8 @@ assert_predecessor(){
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "predecessor materializer missing"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "predecessor Reminder dispatcher missing"
   [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "predecessor Important Dates dispatcher missing"
+  local gov; gov=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{}' "$r/bin/taskctl" config validate) || fail "predecessor governance bindings invalid"
+  node -e 'const x=JSON.parse(process.argv[1]);if(x.office_ceo_group_id!=="PG-1"||x.personal_label_id!==process.argv[2])process.exit(1)' "$gov" "$PERSONAL_LABEL" || fail "predecessor governance binding mismatch"
   assert_reminder_shape "$r"
   assert_important_shape "$r"
 }
@@ -178,7 +173,9 @@ const {DatabaseSync}=require('node:sqlite'),db=new DatabaseSync(process.argv[2],
 NODE
   [ "$(automation_count "$r" "$MATERIALIZER_KEY")" = 1 ] || fail "Recurrence materializer changed"
   [ "$(automation_count "$r" "$REMINDER_KEY")" = 1 ] || fail "Task Reminder dispatcher changed"
-  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "Important Dates dispatcher missing"\n  assert_reminder_shape "$r"
+  [ "$(automation_count "$r" "$IMPORTANT_KEY")" = 1 ] || fail "Important Dates dispatcher missing"
+  assert_reminder_shape "$r"
+  assert_important_shape "$r"
 }
 assert_reminder_shape(){
   node - "$1/state/automations-test.json" "$REMINDER_KEY" "$REMINDER_SUFFIX" "$1/bin/taskctl" <<'NODE' || fail "Reminder dispatcher shape mismatch"
@@ -207,18 +204,9 @@ NODE
 assert_predecessor "$BASE"
 CONTACTS_BEFORE=$(contacts_state "$BASE")
 
-MISSING="$TMP/missing-governance-bootstrap"; clone_runtime "$BASE" "$MISSING"; echo active > "$MISSING/gateway.state"
-rm -f "$MISSING/state/$GOV_BOOTSTRAP"
-set +e
-HOME="$MISSING/home" bash "$ROOT/deploy.sh" --test-root "$MISSING" --preflight >/dev/null 2>&1
-MISSING_CODE=$?
-set -e
-[ "$MISSING_CODE" -eq 2 ] || fail "missing governance bootstrap did not block preflight"
-assert_predecessor "$MISSING"
-
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "Important Dates preflight failed"
-HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "Important Dates deploy failed"
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
+HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --apply >/dev/null || fail "current predecessor deploy failed"
 assert_target "$R"; assert_important_shape "$R"
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "exact predecessor deploy changed Contacts logical state"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
@@ -228,8 +216,10 @@ RECOVERY=$(find "$R/backups" -maxdepth 1 -type d -name 'task-agent-stage-*' -pri
 node - "$RECOVERY/contacts-state.json" "$PRED_CONTACTS_SCHEMA" <<'NODE' || fail "Contacts recovery snapshot does not preserve declared predecessor"
 const x=require(process.argv[2]),schema=Number(process.argv[3]);if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.schema_version!==schema)process.exit(1);
 NODE
-test ! -f "$RECOVERY/important-date-dispatcher.before.json" || fail "preexisting exact Important Dates dispatcher must not be captured as an absent-predecessor recovery artifact"
-bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual Important Dates recovery failed"
+for f in calendar-materializer.before.json reminder-dispatcher.before.json important-date-dispatcher.before.json; do
+  test ! -f "$RECOVERY/$f" || fail "exact predecessor Automation must not require transition recovery snapshot: $f"
+done
+bash "$ROOT/recover.sh" --test-root "$R" --apply --confirm-outage --from "$RECOVERY" >/dev/null || fail "manual current predecessor recovery failed"
 assert_predecessor "$R"
 node - "$CONTACTS_BEFORE" "$(contacts_state "$R")" <<'NODE' || fail "manual recovery changed Contacts predecessor data"
 const a=JSON.parse(process.argv[2]),b=JSON.parse(process.argv[3]);if(JSON.stringify(a)!==JSON.stringify(b))process.exit(1);
