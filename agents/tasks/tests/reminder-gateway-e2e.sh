@@ -7,7 +7,7 @@ REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 NODE_BIN_DIR=$(dirname "$(command -v node)")
 TARGET_OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
 TMP=$(mktemp -d /tmp/task-reminder-gateway-e2e.XXXXXX)
-TARGET_OPENCLAW_PREFIX="$TMP/openclaw-target"
+TARGET_OPENCLAW_PREFIX=""
 RUNTIME="$TMP/runtime"
 GATEWAY_LOG="$TMP/gateway.log"
 API_LOG="$TMP/telegram-api.log"
@@ -25,6 +25,7 @@ fail(){
 
 stop_runtime_children(){
   local pids
+  [ -n "$TARGET_OPENCLAW_PREFIX" ] || return 0
   pids=$(pgrep -f "$TARGET_OPENCLAW_PREFIX" 2>/dev/null || true)
   [ -z "$pids" ] || kill -TERM $pids 2>/dev/null || true
   for _ in $(seq 1 40); do
@@ -50,10 +51,17 @@ cleanup(){
 }
 trap cleanup EXIT INT TERM
 
-command -v npm >/dev/null 2>&1 || fail "npm is required to qualify the exact OpenClaw target"
-npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$TARGET_OPENCLAW_VERSION" >/dev/null
-OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || fail "Unable to install exact OpenClaw target $TARGET_OPENCLAW_VERSION"
+OPENCLAW_BIN=$(command -v openclaw || true)
+CURRENT_OPENCLAW_VERSION=""
+if [ -n "$OPENCLAW_BIN" ] && [ -x "$OPENCLAW_BIN" ]; then CURRENT_OPENCLAW_VERSION=$("$OPENCLAW_BIN" --version | awk '{print $2}') || true; fi
+if [ "$CURRENT_OPENCLAW_VERSION" != "$TARGET_OPENCLAW_VERSION" ]; then
+  command -v npm >/dev/null 2>&1 || fail "npm is required to qualify the exact OpenClaw target"
+  TARGET_OPENCLAW_PREFIX="$TMP/openclaw-target"
+  npm install --prefix "$TARGET_OPENCLAW_PREFIX" --no-save --package-lock=false "openclaw@$TARGET_OPENCLAW_VERSION" >/dev/null
+  OPENCLAW_BIN="$TARGET_OPENCLAW_PREFIX/node_modules/.bin/openclaw"
+fi
+[ -x "$OPENCLAW_BIN" ] || fail "Unable to select exact OpenClaw target $TARGET_OPENCLAW_VERSION"
+[ "$("$OPENCLAW_BIN" --version | awk '{print $2}')" = "$TARGET_OPENCLAW_VERSION" ] || fail "Reminder Gateway E2E selected the wrong OpenClaw version"
 OPENCLAW_BIN_DIR=$(dirname "$OPENCLAW_BIN")
 export PATH="$OPENCLAW_BIN_DIR:$PATH"
 ISOLATED_PATH="$OPENCLAW_BIN_DIR:$NODE_BIN_DIR:/usr/bin:/bin"
