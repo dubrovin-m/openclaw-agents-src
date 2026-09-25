@@ -109,6 +109,7 @@ node -e 'const x=JSON.parse(process.argv[1]);const r=require(process.argv[2]);if
 
 bash "$ROOT/tests/smoke.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/health-readonly.sh" "$ROOT/taskctl"
+bash "$ROOT/tests/compatibility-window.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/batch4.sh"
 bash "$ROOT/tests/batch6.sh" "$ROOT/taskctl"
 bash "$ROOT/tests/batch7.sh" "$ROOT/taskctl"
