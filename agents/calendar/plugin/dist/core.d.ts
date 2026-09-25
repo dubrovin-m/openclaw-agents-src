@@ -44,7 +44,8 @@ export declare function addCivilDays(date: string, days: number): string;
 export declare function localDate(epochMs: number): string;
 export declare function isWorkingDate(date: string): boolean;
 export declare function previousWorkingDates(endDate: string, count: number): string[];
-export type ReviewKind = "daily" | "biweekly";
+export declare function nextWorkingDate(fromDate: string): string;
+export type ReviewKind = "daily" | "next_workday" | "biweekly";
 export declare function reviewWindow(kind: ReviewKind, boundaryIso?: string): {
     kind: ReviewKind;
     timeZone: string;

@@ -52,6 +52,8 @@ The v1 provider is an implementation-owned narrow adapter over the official Goog
 
 The adapter authenticates through Google Application Default Credentials (ADC) supplied by live runtime state. It requests Calendar event access plus Calendar-property write scope because Google requires `calendar.calendars` to define or rename custom labels. The model-facing tool boundary still restricts Calendar-property mutation to configured analytical label definitions only. No Google credential, refresh token, OAuth client secret, or ADC file is committed here.
 
+Google provider event IDs remain inside the deterministic provider layer. Model-visible event reads expose a short deterministic event reference derived from the provider ID and event date. Before a single-event read or classification write, the provider resolves that reference within a bounded Calendar window, requires exactly one provider event match, then performs a fresh provider read using the original Google event ID. A malformed, stale, missing, or ambiguous reference fails closed rather than allowing the model to reconstruct or mutate provider identity.
+
 `calendar_provider_set_label` performs a fresh event read, returns idempotently when the requested label is already present, and otherwise sends a conditional Calendar API PATCH containing only `eventLabelId`, with `eventLabelVersion=1`, `sendUpdates=none`, and the current ETag when available.
 
 `calendar_provider_sync_labels` reads the current Calendar resource, merges the configured analytical label definitions into the existing label list by stable label ID, preserves unrelated labels and Calendar properties, updates the Calendar, and verifies that the configured IDs/names/colors persisted. It accepts no model-supplied label body. There is no model-facing general Calendar/event update/create/delete/respond tool.
@@ -76,6 +78,6 @@ Activation additionally requires:
 - owner-authorized Google ADC with the minimum required scopes;
 - representative provider read and label-write validation against the designated calendar;
 - owner-only Telegram account and route;
-- Daily and Biweekly native OpenClaw Automations;
+- Daily, Next Workday, and Biweekly native OpenClaw Automations;
 - representative allowed and forbidden behavior tests;
 - post-activation Nexus runtime reconciliation.

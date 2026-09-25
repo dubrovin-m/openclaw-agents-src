@@ -43,7 +43,7 @@ const calendarConfigSchema = Type.Object({
 
 const configGetParameters = Type.Object({}, { additionalProperties: false });
 const reviewWindowParameters = Type.Object({
-  kind: Type.Union([Type.Literal("daily"), Type.Literal("biweekly")]),
+  kind: Type.Union([Type.Literal("daily"), Type.Literal("next_workday"), Type.Literal("biweekly")]),
   boundary: Type.Optional(Type.String()),
 }, { additionalProperties: false });
 const eventParameters = Type.Object({
@@ -62,11 +62,16 @@ const providerListParameters = Type.Object({
   time_min: Type.String({ minLength: 1 }),
   time_max: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
+const eventReferenceSchema = Type.String({
+  minLength: 29,
+  maxLength: 29,
+  pattern: "^evt_[0-9]{8}_[0-9a-f]{16}$",
+});
 const providerEventParameters = Type.Object({
-  event_id: Type.String({ minLength: 1, maxLength: 1024 }),
+  event_id: eventReferenceSchema,
 }, { additionalProperties: false });
 const providerSetLabelParameters = Type.Object({
-  event_id: Type.String({ minLength: 1, maxLength: 1024 }),
+  event_id: eventReferenceSchema,
   label_id: Type.String({ minLength: 1, maxLength: 1024 }),
 }, { additionalProperties: false });
 
@@ -89,7 +94,7 @@ const entry = defineToolPlugin({
     tool({
       name: "calendar_review_window",
       label: "Calendar review window",
-      description: "Resolve the canonical Daily or Biweekly Calendar analysis window in Europe/Moscow.",
+      description: "Resolve the canonical Daily, Next-Workday, or Biweekly Calendar review window in Europe/Moscow.",
       parameters: reviewWindowParameters,
       optional: true,
       execute: async (params) => reviewWindow(params.kind, params.boundary),
@@ -113,7 +118,7 @@ const entry = defineToolPlugin({
     tool({
       name: "calendar_provider_get_event",
       label: "Calendar event",
-      description: "Read one event from the designated Google Calendar by event id.",
+      description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads.",
       parameters: providerEventParameters,
       optional: true,
       execute: async (params, config) => provider.getEvent(config, params),
@@ -137,7 +142,7 @@ const entry = defineToolPlugin({
     tool({
       name: "calendar_provider_set_label",
       label: "Set Calendar analytical label",
-      description: "Assign one configured analytical event label after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
+      description: "Assign one configured analytical event label to the deterministic event reference returned by Calendar reads after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
       parameters: providerSetLabelParameters,
       optional: true,
       execute: async (params, config) => provider.setLabel(config, params),

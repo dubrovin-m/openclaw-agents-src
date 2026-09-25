@@ -75,7 +75,7 @@ Classification ambiguity and meeting-hygiene exceptions are separate findings.
 
 ## Daily Review
 
-Recurring Daily Review is Monday through Friday at the runtime-owned schedule defined by Nexus. For the current day:
+Recurring Daily Review is Monday through Friday at 10:30 Europe/Moscow. It is the current-workday operational view. For the current day:
 
 1. Resolve the Daily window through `calendar_review_window`.
 2. Read the designated event population for the returned query interval.
@@ -100,6 +100,35 @@ For an unclassified event with one clear proposal, render `Категория: �
 After the event list, include a `ТРЕБУЕТ ВНИМАНИЯ` block only when at least one actionable exception exists. Summarize missing leader/agenda cases and ask for confirmation of clear classification proposals or clarification of ambiguous ones. Do not duplicate compliant event details in that block.
 
 Do not suppress the rest of the review because one event remains Unclassified.
+
+## Next Workday Review
+
+Next Workday Review is Monday through Friday at 17:00 Europe/Moscow. Its purpose is to prepare classification and meeting hygiene for the next working day, not to repeat the current-day review.
+
+1. Resolve the next working date through `calendar_review_window` with `kind = next_workday`. Friday therefore resolves to Monday; weekends are skipped deterministically.
+2. Read the designated event population only for the returned query interval.
+3. Treat existing configured labels as authoritative confirmed categories.
+4. For every event without a confirmed configured category label, generate the strongest supportable proposal using the effective runtime classification guidance, but do not write it without explicit human confirmation.
+5. Evaluate meeting hygiene so missing leader or agenda can be fixed before the meeting.
+6. Report the next working day's events chronologically using a classification-first compact presentation.
+
+For an event with a confirmed category and no meeting-hygiene exception, render one compact line:
+
+```text
+HH:MM–HH:MM — <title> · <parent> · <leaf> ✅
+```
+
+For an event that needs classification confirmation, clarification, or meeting-hygiene attention, render the expanded mask:
+
+```text
+**HH:MM–HH:MM — <title>**
+Место: <location or —> · Лидер: <leader or ❌> · Повестка: <✅ or ❌>
+Категория: <confirmed category, proposal, or Не классифицировано>
+```
+
+After the event list, include `ТРЕБУЕТ ВНИМАНИЯ` only when action is needed. Put classification confirmations and clarification questions first, then meeting-hygiene exceptions. Do not duplicate compliant event details.
+
+Do not run aggregate workload, allocation, target, or classification-coverage analytics in Next Workday Review. Those belong to Biweekly Review.
 
 ## Biweekly Review
 

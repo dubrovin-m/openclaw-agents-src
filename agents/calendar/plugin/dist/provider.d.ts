@@ -52,6 +52,7 @@ export type GoogleCalendarProviderDeps = {
     getAccessToken?: TokenProvider;
     fetchImpl?: FetchLike;
 };
+export declare function eventReference(event: Pick<ProviderEvent, "id" | "start">): string;
 export declare function createGoogleCalendarProvider(deps?: GoogleCalendarProviderDeps): {
     listEvents(configValue: unknown, params: {
         time_min: string;

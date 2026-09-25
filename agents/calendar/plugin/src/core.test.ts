@@ -38,6 +38,13 @@ describe("Review windows", () => {
     expect(window.queryEnd).toBe("2026-09-21T21:00:00.000Z");
   });
 
+  it("resolves Friday Next Workday Review to Monday", () => {
+    const window = reviewWindow("next_workday", "2026-09-25T14:00:00.000Z");
+    expect(window.workDates).toEqual(["2026-09-28"]);
+    expect(window.queryStart).toBe("2026-09-27T21:00:00.000Z");
+    expect(window.queryEnd).toBe("2026-09-28T21:00:00.000Z");
+  });
+
   it("uses the last ten working days for Biweekly Review", () => {
     expect(reviewWindow("biweekly", "2026-09-18T15:00:00.000Z").workDates).toEqual([
       "2026-09-07", "2026-09-08", "2026-09-09", "2026-09-10", "2026-09-11",

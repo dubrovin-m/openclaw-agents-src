@@ -261,14 +261,22 @@ export function previousWorkingDates(endDate: string, count: number) {
   return dates.reverse();
 }
 
-export type ReviewKind = "daily" | "biweekly";
+export function nextWorkingDate(fromDate: string) {
+  let cursor = addCivilDays(fromDate, 1);
+  while (!isWorkingDate(cursor)) cursor = addCivilDays(cursor, 1);
+  return cursor;
+}
+
+export type ReviewKind = "daily" | "next_workday" | "biweekly";
 export function reviewWindow(kind: ReviewKind, boundaryIso = new Date().toISOString()) {
   const boundaryMs = Date.parse(boundaryIso);
   if (!Number.isFinite(boundaryMs)) throw new Error("boundary must be a valid ISO timestamp");
   const boundaryDate = localDate(boundaryMs);
   const workDates = kind === "daily"
     ? (isWorkingDate(boundaryDate) ? [boundaryDate] : [])
-    : previousWorkingDates(boundaryDate, 10);
+    : kind === "next_workday"
+      ? [nextWorkingDate(boundaryDate)]
+      : previousWorkingDates(boundaryDate, 10);
   if (kind === "daily" && workDates.length === 0) {
     throw new Error("Daily Review is not defined for weekends");
   }

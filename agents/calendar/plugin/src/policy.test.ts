@@ -2,6 +2,8 @@ import { describe, expect, it } from "vitest";
 import { calendarToolPolicy } from "./policy.js";
 import { VALID_CONFIG } from "./test-fixture.js";
 
+const EVENT_REF = "evt_20260922_0123456789abcdef";
+
 describe("Calendar tool policy", () => {
   it("does not affect unrelated tools for other agents", () => {
     expect(calendarToolPolicy(VALID_CONFIG, { toolName: "task_list", params: {} }, { agentId: "tasks" })).toBeUndefined();
@@ -33,7 +35,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-strategy" },
+        params: { event_id: EVENT_REF, label_id: "label-strategy" },
       },
       { agentId: "calendar" },
     )).toBeUndefined();
@@ -42,7 +44,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-strategy", title: "mutate me" },
+        params: { event_id: "raw-provider-event-id", label_id: "label-strategy" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -51,7 +53,16 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "unknown-label" },
+        params: { event_id: EVENT_REF, label_id: "label-strategy", title: "mutate me" },
+      },
+      { agentId: "calendar" },
+    )).toMatchObject({ block: true });
+
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      {
+        toolName: "calendar_provider_set_label",
+        params: { event_id: EVENT_REF, label_id: "unknown-label" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -75,7 +86,7 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "event-1", label_id: "label-unclassified" },
+        params: { event_id: EVENT_REF, label_id: "label-unclassified" },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
