@@ -118,12 +118,15 @@ TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 PATH="$OPENCLAW_BIN_DIR:$PATH" bas
 [ ! -e "$RUNTIME/home/.openclaw" ] && [ ! -L "$RUNTIME/home/.openclaw" ] || fail "isolated home already contains .openclaw"
 ln -s "$RUNTIME/state" "$RUNTIME/home/.openclaw"
 
-node - "$RUNTIME/state/openclaw.json" "$GATEWAY_PORT" "$TOKEN" "$API_ROOT" <<'NODE'
-const fs=require('node:fs'),p=process.argv[2],port=Number(process.argv[3]),token=process.argv[4],apiRoot=process.argv[5],c=JSON.parse(fs.readFileSync(p,'utf8'));
+mkdir -p "$RUNTIME/state/secrets"
+printf '%s\n' '123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA' > "$RUNTIME/state/secrets/tasks.token"
+chmod 600 "$RUNTIME/state/secrets/tasks.token"
+node - "$RUNTIME/state/openclaw.json" "$GATEWAY_PORT" "$TOKEN" "$API_ROOT" "$RUNTIME/state/secrets/tasks.token" <<'NODE'
+const fs=require('node:fs'),p=process.argv[2],port=Number(process.argv[3]),token=process.argv[4],apiRoot=process.argv[5],tokenFile=process.argv[6],c=JSON.parse(fs.readFileSync(p,'utf8'));
 c.gateway={mode:'local',port,bind:'loopback',auth:{mode:'token',token}};
 c.agents??={};c.agents.defaults??={};c.agents.defaults.systemAgent={...(c.agents.defaults.systemAgent??{}),agentId:'main'};
 c.channels??={};c.channels.telegram??={};c.channels.telegram.enabled=true;c.channels.telegram.accounts??={};
-c.channels.telegram.accounts.tasks={enabled:true,botToken:'123456789:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA',apiRoot,dmPolicy:'allowlist',allowFrom:['111'],groupPolicy:'allowlist',groupAllowFrom:['111']};
+c.channels.telegram.accounts.tasks={enabled:true,tokenFile,apiRoot,dmPolicy:'allowlist',allowFrom:['111'],groupPolicy:'allowlist',groupAllowFrom:['111']};
 c.bindings=(Array.isArray(c.bindings)?c.bindings:[]).filter(x=>!(x?.agentId==='tasks'&&x?.match?.channel==='telegram'&&x?.match?.accountId==='tasks'));
 c.bindings.push({agentId:'tasks',match:{channel:'telegram',accountId:'tasks'}});
 fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
