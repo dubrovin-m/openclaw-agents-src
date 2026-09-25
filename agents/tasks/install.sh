@@ -5,8 +5,6 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 RELEASE_FILE="$ROOT/release.json"
 WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
-RELEASE_METADATA_HELPER="$ROOT/deploy-lib/release-metadata.cjs"
-TASKCTL_RUNTIME_HELPER="$ROOT/deploy-lib/taskctl-runtime.cjs"
 RUNTIME_CONTRACT="$REPO_ROOT/runtime-contract.json"
 RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
 CONTACTS_ROOT="$REPO_ROOT/shared/contacts"
@@ -17,11 +15,19 @@ if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${TASK_AGENT_ALLOW_LOCAL_QUALIFICAT
 fi
 [ -f "$RELEASE_FILE" ] || { echo "Task Agent release metadata missing" >&2; exit 2; }
 [ -f "$WORKSPACE_LAYOUT_HELPER" ] || { echo "Task Agent workspace layout helper missing" >&2; exit 2; }
-[ -f "$RELEASE_METADATA_HELPER" ] && [ -f "$TASKCTL_RUNTIME_HELPER" ] || { echo "Task Agent deployment helpers missing" >&2; exit 2; }
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Runtime contract source missing" >&2; exit 2; }
 EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || { echo "Invalid runtime contract" >&2; exit 2; }
 node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || { echo "Repository runtime contract mismatch" >&2; exit 2; }
-RELEASE_ENV=$(node "$RELEASE_METADATA_HELPER" env "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION") || { echo "Invalid Task Agent release metadata" >&2; exit 2; }
+RELEASE_ENV=$(EXPECTED_OPENCLAW_VERSION="$EXPECTED_OPENCLAW_VERSION" node - "$RELEASE_FILE" <<'NODE'
+const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.sqlite_schema;
+const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
+const exactHost=(v,range)=>tuple(v)!==null&&v===range;
+const sc=r?.shared_contacts;if(!sc||sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0\.1\.[0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1)process.exit(2);
+if(r?.format!=='task-agent-release-v2'||!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!exactHost(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15'||r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||'')||r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))process.exit(2);
+const q=s=>`'${String(s).replace(/'/g,"'\\''")}'`;console.log(`TARGET_TASKCTL_VERSION=${q(targetTaskctl)}`);console.log(`TARGET_SQLITE_SCHEMA=${q(targetSchema)}`);console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);console.log(`ARTIFACT_REL=${q(r.plugin.artifact)}`);console.log(`EXPECTED_ARTIFACT_SHA=${q(r.plugin.sha256)}`);
+NODE
+) || { echo "Invalid Task Agent release metadata" >&2; exit 2; }
 eval "$RELEASE_ENV"
 TARGET_WORKSPACE_LAYOUT=$(node "$WORKSPACE_LAYOUT_HELPER" layout "$RELEASE_FILE") || { echo "Invalid Task Agent workspace layout" >&2; exit 2; }
 TARGET_WORKSPACE_FILES=$(node "$WORKSPACE_LAYOUT_HELPER" target-files "$RELEASE_FILE") || { echo "Invalid Task Agent workspace layout" >&2; exit 2; }
@@ -36,10 +42,6 @@ TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify
 MAIN_CONTACTS_TOOLS_JSON=$(node -e "const fs=require('fs');const x=JSON.parse(fs.readFileSync(process.argv[1],'utf8'));if(JSON.stringify(x)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(2);process.stdout.write(JSON.stringify(x))" "$ROOT/config/main-contacts-tools.json") || fail "Invalid main Contacts tool policy"
 
 validate_source(){
-  node --check "$RELEASE_METADATA_HELPER" >/dev/null || fail "release metadata helper syntax invalid"
-  node --check "$TASKCTL_RUNTIME_HELPER" >/dev/null || fail "taskctl runtime helper syntax invalid"
-  node "$RELEASE_METADATA_HELPER" validate "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION" >/dev/null || fail "Task release metadata invalid"
-  node "$TASKCTL_RUNTIME_HELPER" source-check "$ROOT" "$RELEASE_FILE" >/dev/null || fail "taskctl modular source invalid"
   local contacts_release="$ROOT/$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.shared_contacts.release_path)' "$RELEASE_FILE")" expected_contacts_sha; expected_contacts_sha=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.shared_contacts.release_sha256)' "$RELEASE_FILE"); [ -f "$contacts_release" ] && [ "$(sha256sum "$contacts_release"|awk '{print $1}')" = "$expected_contacts_sha" ] || fail "Shared Contacts release fingerprint mismatch"
   [ -f "$CONTACTS_ROOT/core.cjs" ] && [ -f "$CONTACTS_ROOT/task-store.cjs" ] && [ -f "$CONTACTS_ROOT/contactctl" ] && [ -f "$CONTACTS_ARTIFACT" ] || fail "Shared Contacts source missing"
   node "$CONTACTS_ROOT/validate-release.mjs" >/dev/null || fail "Shared Contacts frozen release invalid"
@@ -56,30 +58,15 @@ validate_source
 
 normalize_test_root(){ local candidate=$1 resolved; case "$candidate" in /*) ;; *) fail "--test-root must be an absolute path";; esac; install -d -m 700 "$candidate"; resolved=$(realpath -e "$candidate"); case "$resolved" in /|/home/dubrovin|/home/dubrovin/.openclaw|/home/dubrovin/.openclaw/*|/home/dubrovin/.local|/home/dubrovin/.local/*|/home/dubrovin/.config/systemd|/home/dubrovin/.config/systemd/*) fail "Refusing unsafe test root: $resolved";; esac; printf '%s\n' "$resolved"; }
 
-install_taskctl_runtime(){
-  local entry_target=$1 lib_root=$2 target_dir="$2/$TARGET_TASKCTL_VERSION" stage="$2/.stage-$TARGET_TASKCTL_VERSION-$$" f
-  rm -rf "$stage"
-  install -d -m 700 "$lib_root" "$stage" || return 1
-  while IFS= read -r f; do
-    [ -n "$f" ] || continue
-    install -m 600 "$ROOT/taskctl-lib/$f" "$stage/$f" || { rm -rf "$stage"; return 1; }
-  done < <(node "$TASKCTL_RUNTIME_HELPER" files "$RELEASE_FILE")
-  node "$TASKCTL_RUNTIME_HELPER" module-dir-check "$ROOT" "$RELEASE_FILE" "$stage" >/dev/null || { rm -rf "$stage"; return 1; }
-  rm -rf "$target_dir"
-  mv "$stage" "$target_dir" || { rm -rf "$stage"; return 1; }
-  install -m 700 "$ROOT/taskctl" "$entry_target" || return 1
-  node "$TASKCTL_RUNTIME_HELPER" installed-check "$ROOT" "$RELEASE_FILE" "$entry_target" "$lib_root" >/dev/null
-}
-
 run_isolated_install(){
   local test_root=$1; test_root=$(normalize_test_root "$test_root"); find "$test_root" -mindepth 1 -maxdepth 1 -print -quit | grep -q . && fail "Isolated install requires an empty test root: $test_root"
-  local openclaw_bin node_bin_dir isolated_path test_home state_dir config_path workspace agent_dir bin_dir taskctl_target taskctl_lib_root contactctl_target contacts_lib_dir db_path agent_json health f workspace_files
+  local openclaw_bin node_bin_dir isolated_path test_home state_dir config_path workspace agent_dir bin_dir taskctl_target contactctl_target contacts_lib_dir db_path agent_json health f workspace_files
   openclaw_bin=$(command -v openclaw || true); [ -n "$openclaw_bin" ] || openclaw_bin="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"; [ -x "$openclaw_bin" ] || fail "Unable to locate OpenClaw executable for isolated install"
-  node_bin_dir=$(dirname "$(command -v node)"); isolated_path="$node_bin_dir:/usr/bin:/bin"; test_home="$test_root/home"; state_dir="$test_root/state"; config_path="$state_dir/openclaw.json"; workspace="$test_root/workspace-tasks"; agent_dir="$state_dir/agents/tasks/agent"; bin_dir="$test_root/bin"; taskctl_target="$bin_dir/taskctl"; taskctl_lib_root="$test_home/.local/lib/openclaw-taskctl"; contactctl_target="$bin_dir/contactctl"; contacts_lib_dir="$test_home/.local/lib/openclaw-contacts"; db_path="$state_dir/data/tasks/tasks.sqlite3"
+  node_bin_dir=$(dirname "$(command -v node)"); isolated_path="$node_bin_dir:/usr/bin:/bin"; test_home="$test_root/home"; state_dir="$test_root/state"; config_path="$state_dir/openclaw.json"; workspace="$test_root/workspace-tasks"; agent_dir="$state_dir/agents/tasks/agent"; bin_dir="$test_root/bin"; taskctl_target="$bin_dir/taskctl"; contactctl_target="$bin_dir/contactctl"; contacts_lib_dir="$test_home/.local/lib/openclaw-contacts"; db_path="$state_dir/data/tasks/tasks.sqlite3"
   node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/null || fail "Unsupported Node runtime"
   test "$(env -i HOME="$test_home" PATH="$isolated_path" LANG=C.UTF-8 TZ=Europe/Moscow OPENCLAW_HOME="$test_home" OPENCLAW_STATE_DIR="$state_dir" OPENCLAW_CONFIG_PATH="$config_path" "$openclaw_bin" --version|awk '{print $2}')" = "$EXPECTED_OPENCLAW_VERSION"
   node --check "$ROOT/taskctl"; bash "$ROOT/tests/smoke.sh" "$ROOT/taskctl"; bash "$ROOT/tests/batch4.sh"
-  install -d -m 700 "$test_home" "$state_dir" "$workspace" "$agent_dir" "$bin_dir" "$(dirname "$db_path")" "$contacts_lib_dir"; install -m 600 "$CONTACTS_ROOT/core.cjs" "$contacts_lib_dir/core.cjs"; install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$contacts_lib_dir/task-store.cjs"; install -m 700 "$CONTACTS_ROOT/contactctl" "$contactctl_target"; install_taskctl_runtime "$taskctl_target" "$taskctl_lib_root"
+  install -d -m 700 "$test_home" "$state_dir" "$workspace" "$agent_dir" "$bin_dir" "$(dirname "$db_path")" "$contacts_lib_dir"; install -m 600 "$CONTACTS_ROOT/core.cjs" "$contacts_lib_dir/core.cjs"; install -m 600 "$CONTACTS_ROOT/task-store.cjs" "$contacts_lib_dir/task-store.cjs"; install -m 700 "$CONTACTS_ROOT/contactctl" "$contactctl_target"; install -m 700 "$ROOT/taskctl" "$taskctl_target"
   for f in $TARGET_WORKSPACE_FILES; do install -m 644 "$ROOT/workspace/$f" "$workspace/$f"; done
   agent_json=$(node - "$ROOT/config/tasks-agent.fragment.json" "$workspace" "$agent_dir" <<'NODE'
 const fs=require('fs'),a=JSON.parse(fs.readFileSync(process.argv[2]));delete a.id;a.workspace=process.argv[3];a.agentDir=process.argv[4];process.stdout.write(JSON.stringify(a));
@@ -95,7 +82,7 @@ NODE
   node -e 'const h=JSON.parse(process.argv[1]),v=process.argv[2];if(h.implementation_version!==v||h.schema_version!==Number(process.argv[3]))process.exit(2)' "$health" "$TARGET_TASKCTL_VERSION" "$TARGET_SQLITE_SCHEMA"
   test "$(node -e 'const p=require(process.argv[1]);process.stdout.write(String(p.version||""))' "$state_dir/extensions/taskctl/package.json")" = "$TARGET_PLUGIN_VERSION"
   contacts_inspect=$(oc plugins inspect contacts --runtime --json); node -e 'const x=JSON.parse(process.argv[1]),p=x?.plugin;if(p?.id!=="contacts"||p?.packageVersion!==process.argv[2]||p?.status!=="loaded"||p?.enabled!==true||p?.toolNames?.length!==Number(process.argv[3]))process.exit(1)' "$contacts_inspect" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACT_TOOL_COUNT"
-  test "$(stat -c %a "$config_path")" = 600; test "$(stat -c %a "$taskctl_target")" = 700; node "$TASKCTL_RUNTIME_HELPER" installed-check "$ROOT" "$RELEASE_FILE" "$taskctl_target" "$taskctl_lib_root" >/dev/null; test "$(stat -c %a "$contactctl_target")" = 700; test "$(stat -c %a "$contacts_lib_dir/core.cjs")" = 600; test "$(stat -c %a "$db_path")" = 600; test "$(stat -c %a "$state_dir/data/contacts/contacts.sqlite3")" = 600
+  test "$(stat -c %a "$config_path")" = 600; test "$(stat -c %a "$taskctl_target")" = 700; test "$(stat -c %a "$contactctl_target")" = 700; test "$(stat -c %a "$contacts_lib_dir/core.cjs")" = 600; test "$(stat -c %a "$db_path")" = 600; test "$(stat -c %a "$state_dir/data/contacts/contacts.sqlite3")" = 600
   printf '\nTASK_AGENT_TEST_ROOT_DEPLOYED\n'
 }
 
@@ -113,7 +100,7 @@ install -d -m 700 /home/dubrovin/.local/lib/openclaw-contacts
 install -m 600 "$CONTACTS_ROOT/core.cjs" /home/dubrovin/.local/lib/openclaw-contacts/core.cjs
 install -m 600 "$CONTACTS_ROOT/task-store.cjs" /home/dubrovin/.local/lib/openclaw-contacts/task-store.cjs
 install -m 700 "$CONTACTS_ROOT/contactctl" /home/dubrovin/.local/bin/contactctl
-install_taskctl_runtime /home/dubrovin/.local/bin/taskctl /home/dubrovin/.local/lib/openclaw-taskctl
+install -m 700 "$ROOT/taskctl" /home/dubrovin/.local/bin/taskctl
 for f in $TARGET_WORKSPACE_FILES; do install -m 644 "$ROOT/workspace/$f" "/home/dubrovin/.openclaw/workspace-tasks/$f"; done
 openclaw plugins install "$CONTACTS_ARTIFACT" --force --accept-capabilities; openclaw plugins install "$ARTIFACT" --force --accept-capabilities; openclaw config set "agents.entries.tasks.tools" "$TOOLS_JSON" --strict-json; openclaw config set "agents.entries.main.tools" "$MAIN_CONTACTS_TOOLS_JSON" --strict-json
 openclaw config validate
