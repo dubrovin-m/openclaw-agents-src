@@ -497,6 +497,23 @@ NODE
 const {execFileSync}=require('child_process'),x=JSON.parse(process.argv[2]),p=x?.plugin,v=process.argv[3],repo=process.argv[4],sha=process.argv[5];const m=JSON.parse(execFileSync('git',['-C',repo,'show',sha+':shared/contacts/plugin/openclaw.plugin.json'],{encoding:'utf8'})),expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.id!=='contacts'||p?.packageVersion!==v||p?.enabled!==true||p?.status!=='loaded'||!expected.every(t=>p.toolNames?.includes(t)))process.exit(1);
 NODE
 }
+contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_predecessor_exact; }
+taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
+taskctl_starting_eligible(){ local identity; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$FROM_TASKCTL_VERSIONS $FROM_SQLITE_SCHEMAS" ]; }
+db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||!s.physical_current)process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }
+db_starting_eligible(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||!s.physical_current)process.exit(1)' "$state" "$FROM_SQLITE_SCHEMAS"; }
+target_runtime_exact(){ db_generation_exact && contacts_runtime_exact && taskctl_target_exact && governance_bindings_exact && plugin_identity_matches_target && workspace_matches_target && config_tools_match_target && main_contacts_policy_target_exact && oc config validate >/dev/null 2>&1; }
+starting_runtime_eligible(){
+  db_starting_eligible || return 1
+  taskctl_starting_eligible || return 1
+  contacts_starting_eligible || return 1
+  main_contacts_policy_starting_eligible || return 1
+  [ "$(plugin_version)" = "$FROM_PLUGIN_VERSIONS" ] || return 1
+  workspace_matches_from || return 1
+  [ "$(current_tools_sha)" = "$FROM_TOOLS_SHA" ] || return 1
+  oc config validate >/dev/null 2>&1 || return 1
+}
+
 source_taskctl_identity_exact(){
   [ -x "$ROOT/taskctl" ] || return 1
   local tmp out code=0; tmp=$(mktemp -d) || return 1
