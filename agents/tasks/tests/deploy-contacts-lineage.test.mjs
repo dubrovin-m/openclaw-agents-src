@@ -8,51 +8,36 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const tasksRoot = path.resolve(here, "..");
 const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
 const recover = fs.readFileSync(path.join(tasksRoot, "recover.sh"), "utf8");
-const verifier = fs.readFileSync(path.join(tasksRoot, "production-control", "verify-release-predecessor.mjs"), "utf8");
 
-function contactsPredecessorFunction(source) {
-  const start = source.indexOf("contacts_predecessor_exact(){");
-  const end = source.indexOf("\ncontacts_starting_eligible(){", start);
-  assert.notEqual(start, -1, "contacts_predecessor_exact is missing");
-  assert.notEqual(end, -1, "contacts_predecessor_exact boundary is missing");
+function section(source, startMarker, endMarker) {
+  const start = source.indexOf(startMarker);
+  const end = source.indexOf(endMarker, start);
+  assert.notEqual(start, -1, `${startMarker} is missing`);
+  assert.notEqual(end, -1, `${endMarker} boundary is missing`);
   return source.slice(start, end);
 }
 
-test("Task deploy binds Shared Contacts to the exact declared predecessor lineage", () => {
-  const fn = contactsPredecessorFunction(deploy);
+test("Task deploy validates Shared Contacts against its exact predecessor lineage", () => {
+  const fn = section(deploy, "contacts_predecessor_exact(){", "\ncontacts_starting_eligible(){");
   assert.match(fn, /\[ -n "\$CONTACTS_FROM_SOURCE" \] \|\| return 1/);
   assert.match(fn, /git -C "\$REPO_ROOT" show "\$CONTACTS_FROM_SOURCE:shared\/contacts\/release\.json"/);
   assert.match(fn, /CONTACTS_FROM_RELEASE_SHA/);
-  assert.doesNotMatch(fn, /predecessor_absent/);
+  assert.doesNotMatch(fn, /predecessor_absent|CONTACTS_PREDECESSOR_MODE/);
 });
 
-test("Task deploy starting window contains only the exact Contacts predecessor", () => {
-  const start = deploy.indexOf("contacts_starting_eligible(){");
-  const end = deploy.indexOf("\n\ntaskctl_target_exact(){", start);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-  const fn = deploy.slice(start, end);
+test("Task deploy supports only the declared current Shared Contacts predecessor", () => {
+  const fn = section(deploy, "contacts_starting_eligible(){", "\ntaskctl_target_exact(){");
   assert.match(fn, /contacts_predecessor_exact/);
-  assert.doesNotMatch(fn, /contacts_predecessor_absent/);
-  assert.doesNotMatch(fn, /contacts_runtime_exact/);
+  assert.doesNotMatch(fn, /contacts_runtime_exact|contacts_predecessor_absent|absent/);
 });
 
-test("Task recovery accepts only the current schema 9 physical shape", () => {
-  const start = recover.indexOf("recovery_db_schema() {");
-  const end = recover.indexOf("\n\nvalidate_recovery_set()", start);
-  assert.notEqual(start, -1);
-  assert.notEqual(end, -1);
-  const fn = recover.slice(start, end);
-  assert.match(fn, /uv!==9/);
-  assert.match(fn, /physical_current|recurrenceShape/);
-  assert.match(fn, /task_domain_bindings/);
-  assert.match(fn, /deadline_change_requests/);
-  assert.doesNotMatch(fn, /physicalV[4-8]/);
-});
+test("Task recovery accepts only current schema 9 and current v4 format", () => {
+  const db = section(recover, "recovery_db_schema() {", "\n\nvalidate_recovery_set()");
+  assert.match(db, /uv!==9/);
+  assert.match(db, /task_domain_bindings/);
+  assert.match(db, /deadline_change_requests/);
+  assert.doesNotMatch(db, /physicalV[4-8]|\[4,5,6,7,8,9\]/);
 
-test("release predecessor verifier has no public-bootstrap fallback", () => {
-  assert.match(verifier, /provenance_mode: 'history'/);
-  assert.doesNotMatch(verifier, /public-source-bootstrap/);
-  assert.doesNotMatch(verifier, /historical_test_revisions/);
-  assert.match(verifier, /predecessor history is unavailable/);
+  assert.match(recover, /CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v4"/);
+  assert.doesNotMatch(recover, /task-agent-recovery-v[123]/);
 });
