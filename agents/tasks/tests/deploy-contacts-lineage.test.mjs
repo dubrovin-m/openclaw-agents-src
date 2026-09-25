@@ -8,6 +8,7 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const tasksRoot = path.resolve(here, "..");
 const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
 const recover = fs.readFileSync(path.join(tasksRoot, "recover.sh"), "utf8");
+const verifier = fs.readFileSync(path.join(tasksRoot, "production-control", "verify-release-predecessor.mjs"), "utf8");
 
 function section(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -40,4 +41,10 @@ test("Task recovery accepts only current schema 9 and current v4 format", () => 
 
   assert.match(recover, /CONTACTS_RECOVERY_FORMAT="task-agent-recovery-v4"/);
   assert.doesNotMatch(recover, /task-agent-recovery-v[123]/);
+});
+
+test("release predecessor verification uses only normal Git history", () => {
+  assert.match(verifier, /provenance_mode: 'history'/);
+  assert.match(verifier, /predecessor history is unavailable/);
+  assert.doesNotMatch(verifier, /public-source-bootstrap|historical_test_revisions|bootstrapPath|bootstrapRevision/);
 });
