@@ -1,8 +1,8 @@
-# Taskctl plugin 0.4.12
+# Taskctl plugin 0.4.27
 
 Typed tool plugin for the fixed local Task Agent executable and bounded Task Agent production-control interface. The exact qualified OpenClaw host version is owned by the repository `runtime-contract.json` and mirrored in package/release metadata.
 
-The deterministic `taskctl` backend is implementation `0.4.3` with SQLite schema v4. The plugin exposes 39 model-visible Task Agent data tools, one for each deterministic action, plus one optional `task_production_control` tool. It does not expose a generic multiplexed `taskctl(action, payload)` or generic shell tool.
+The deterministic `taskctl` backend is implementation `0.4.14` with SQLite schema v9. The plugin defines 63 model-visible Task Agent data tools, one for each deterministic action, plus one optional `task_production_control` tool. It also registers three scheduler-only tools that are intentionally excluded from the ordinary model-visible tool surface. The manifest therefore declares 67 tool contracts, while the ordinary model-visible surface contains 64. It does not expose a generic multiplexed `taskctl(action, payload)` or generic shell tool.
 
 ## Batch 6
 
@@ -24,7 +24,7 @@ Batch 6 keeps the existing Task data model, SQLite schema, tool inventory, permi
 - model-facing label;
 - semantic model-facing description.
 
-All 39 Task data parameter schemas are generated through the same registry-driven path. Entity identifiers are typed to the deterministic entity boundary (`I-*`, `T-*`, `P-*`, or `L-*`) before backend execution. The deterministic validator remains an independent fail-closed boundary and continues to enforce value-level and semantic constraints that are not fully represented in provider-facing JSON Schema.
+All 63 Task data parameter schemas are generated through the same registry-driven path. Entity identifiers are typed to the deterministic entity boundary (`I-*`, `T-*`, `P-*`, or `L-*`) before backend execution. The deterministic validator remains an independent fail-closed boundary and continues to enforce value-level and semantic constraints that are not fully represented in provider-facing JSON Schema.
 
 ## Task production control
 
@@ -44,10 +44,10 @@ The existing owner-authorized GitHub production-control request channel remains 
 
 The plugin regression suite verifies that:
 
-- all 39 deterministic Task actions plus the one optional production-control tool are registered exactly once;
+- all 63 deterministic Task actions plus the one optional production-control tool are registered exactly once;
 - no generic `taskctl` or shell dispatcher is model-visible;
 - every Task data root schema comes from the single action registry;
-- all 40 contracts survive the pinned OpenAI Responses normalization path;
+- all 64 ordinary model-visible contracts survive the pinned OpenAI Responses normalization path;
 - every Task data tool has a semantic description rather than a mechanical fallback;
 - the Task Label association contracts remain canonical-ID-only through model-visible schema normalization;
 - entity-id, the remaining `task_create` exact-one boundary, status-transition, and fail-closed boundaries remain intact;
