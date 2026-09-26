@@ -1,5 +1,6 @@
 import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
 import { TASKCTL_ACTIONS, actionToolParameters, getActionDefinition } from "./contract.js";
+import { TASK_DAILY_REVIEW_TOOL, dailyReviewParameters } from "./daily-review.js";
 import { registerDailyReviewCli } from "./daily-review-runtime.js";
 import { executeTaskctl } from "./index.js";
 import { TASK_MANAGEMENT_REVIEW_TOOL, createManagementReviewTool, managementReviewParameters } from "./management-review.js";
@@ -34,6 +35,14 @@ const entry = defineToolPlugin({
       parameters: productionControlParameters,
       optional: true,
       execute: async (params, _config, context) => executeProductionControl(params, { signal: context.signal }),
+    }),
+    tool({
+      name: TASK_DAILY_REVIEW_TOOL,
+      label: "Task Daily Review",
+      description: "Legacy scheduler-only contract retained inert while Daily Review executes through the native command Automation runtime.",
+      parameters: dailyReviewParameters,
+      optional: true,
+      factory: () => null,
     }),
     tool({
       name: TASK_MANAGEMENT_REVIEW_TOOL,
