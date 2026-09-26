@@ -23,14 +23,17 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
+          fetch-depth: 0
           persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 26.7.0
-      - name: Build, test, and package candidate
+      - name: Build, test, package, and fingerprint candidate
         working-directory: agents/tasks/plugins/taskctl
         shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           npm ci
@@ -41,11 +44,49 @@ jobs:
           npm pack --pack-destination "$GITHUB_WORKSPACE/.candidate" >/dev/null
           artifact="$GITHUB_WORKSPACE/.candidate/openclaw-plugin-taskctl-0.4.28.tgz"
           test -f "$artifact"
+          cp package-lock.json "$GITHUB_WORKSPACE/.candidate/package-lock.json"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const path = process.env.GITHUB_WORKSPACE + '/.candidate/package-lock.json';
+          const lock = JSON.parse(fs.readFileSync(path, 'utf8'));
+          lock.version = '0.4.28';
+          lock.packages[''].version = '0.4.28';
+          fs.writeFileSync(path, JSON.stringify(lock, null, 2) + '\n');
+          NODE
+          cd "$GITHUB_WORKSPACE"
+          node - <<'NODE'
+          const fs = require('node:fs');
+          const { createHash } = require('node:crypto');
+          const { execFileSync } = require('node:child_process');
+          const base = process.env.BASE_SHA;
+          const files = ['AGENTS.md','SOUL.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
+          const sha256 = (value) => createHash('sha256').update(value).digest('hex');
+          const stableJson = (value) => value === null || typeof value !== 'object'
+            ? JSON.stringify(value)
+            : Array.isArray(value)
+              ? `[${value.map(stableJson).join(',')}]`
+              : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
+          const show = (file) => execFileSync('git', ['show', `${base}:${file}`], { encoding: 'utf8' });
+          const release = JSON.parse(show('agents/tasks/release.json'));
+          const workspace_sha256 = Object.fromEntries(files.map((file) => [file, sha256(show(`agents/tasks/workspace/${file}`))]));
+          const tools_sha256 = sha256(stableJson(JSON.parse(show('agents/tasks/config/tasks-tools.json'))));
+          fs.writeFileSync('.candidate/predecessor.json', JSON.stringify({
+            source_revision: base,
+            sqlite_schema: release.generation.sqlite_schema,
+            taskctl_version: release.generation.taskctl_version,
+            plugin_version: release.plugin.version,
+            workspace_sha256,
+            tools_sha256,
+          }, null, 2) + '\n');
+          NODE
           printf 'TASK_PLUGIN_SHA256=%s\n' "$(sha256sum "$artifact" | awk '{print $1}')"
       - name: Upload exact package candidate
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
         with:
           name: task-plugin-0.4.28-candidate
-          path: .candidate/openclaw-plugin-taskctl-0.4.28.tgz
+          path: |
+            .candidate/openclaw-plugin-taskctl-0.4.28.tgz
+            .candidate/package-lock.json
+            .candidate/predecessor.json
           if-no-files-found: error
           retention-days: 1
