@@ -60,6 +60,7 @@ else if (evidence?.result === 'BLOCKED' && evidence?.mutation_started === false)
 else if (evidence?.result === 'BLOCKED' && evidence?.mutation_started === true) { outcome = 'RECOVERY_REQUIRED'; block = true; }
 const result = {
   request_id: requestId,
+  operation: 'deploy',
   outcome,
   block_further_deployments: block,
   wrapper_exit_code: exitCode,
@@ -80,7 +81,5 @@ NODE
 mv -f "$TMP" "$RESULT"
 chmod 600 "$RESULT"
 
-if [ "$DEPLOY_EXIT" -eq 0 ]; then
-  exit 0
-fi
+if [ "$DEPLOY_EXIT" -eq 0 ]; then exit 0; fi
 exit "$DEPLOY_EXIT"

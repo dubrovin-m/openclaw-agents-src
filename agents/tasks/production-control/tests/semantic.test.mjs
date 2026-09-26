@@ -21,15 +21,7 @@ test.after(() => {
   fs.rmSync(root, { recursive: true, force: true });
 });
 
-test('semantic request ids are numeric, unique, and independent from GitHub comment ids', () => {
-  const state = { requests: { '1700000000000': { source: 'semantic' } } };
-  assert.equal(controller.allocateSemanticRequestId(state, () => 1700000000000), 1700000000001);
-  assert.equal(controller.recordAdvancesGitHubWatermark({ source: 'semantic' }), false);
-  assert.equal(controller.recordAdvancesGitHubWatermark({ source: 'github' }), true);
-  assert.equal(controller.recordAdvancesGitHubWatermark({}), true, 'legacy records remain GitHub-sourced');
-});
-
-test('semantic status exposes bounded controller facts without raw request payloads', () => {
+test('semantic status remains a bounded read-only compatibility view', () => {
   fs.writeFileSync(path.join(root, 'state.json'), JSON.stringify({
     version: 1,
     ...binding,
@@ -40,7 +32,7 @@ test('semantic status exposes bounded controller facts without raw request paylo
     production_baseline_sha: '2'.repeat(40),
     last_diagnostic: { ok: true, checked_at: '2026-09-02T18:00:00.000Z', request_id: 42, secret: 'must-not-leak' },
     requests: {
-      '99': { type: 'deploy', source: 'semantic', sha: '3'.repeat(40), state: 'IN_PROGRESS', unit: 'hidden-unit', reason: 'hidden-reason' },
+      '99': { type: 'deploy', source: 'github', sha: '3'.repeat(40), state: 'IN_PROGRESS', unit: 'hidden-unit', reason: 'hidden-reason' },
     },
   }, null, 2));
 
@@ -48,7 +40,7 @@ test('semantic status exposes bounded controller facts without raw request paylo
   assert.deepEqual(result.active_request, {
     id: 99,
     type: 'deploy',
-    source: 'semantic',
+    source: 'github',
     sha: '3'.repeat(40),
     state: 'IN_PROGRESS',
   });
@@ -62,12 +54,17 @@ test('semantic status exposes bounded controller facts without raw request paylo
   assert.equal(JSON.stringify(result).includes(binding.control_repository), false);
 });
 
-test('malformed semantic deploy fails before lock or network activity', async () => {
+test('semantic deployment compatibility entrypoint is fail-closed and cannot mutate', async () => {
   await assert.rejects(() => controller.requestSemanticDeployment('main'), /exact 40-character lowercase SHA/);
+  await assert.rejects(
+    () => controller.requestSemanticDeployment('3'.repeat(40)),
+    /semantic production deployment is disabled/u,
+  );
   assert.equal(fs.existsSync(path.join(root, 'controller.lock')), false);
+  assert.equal(fs.existsSync(path.join(root, 'state.json')), true);
 });
 
-test('semantic deployment rejects installed-controller revision drift before deployment work', () => {
+test('installed-controller revision drift remains independently rejected', () => {
   const expected = '4'.repeat(40);
   fs.writeFileSync(path.join(root, 'installed-revision'), `${'5'.repeat(40)}\n`, { mode: 0o600 });
   assert.throws(

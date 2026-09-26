@@ -2,10 +2,24 @@ export const CONTROL_VERSION = 1;
 export const REQUIRED_WORKFLOW = 'task-agent-ci.yml';
 export const ROLLOUT_REQUIRED_WORKFLOWS = ['task-agent-ci.yml', 'task-production-control-ci.yml', 'engineer-agent-ci.yml'];
 
+const CONTROL_RUNTIME_PATHS = [
+  'agents/tasks/production-control/controller.mjs',
+  'agents/tasks/production-control/lib.mjs',
+  'agents/tasks/production-control/diagnose.mjs',
+  'agents/tasks/production-control/execute-deploy.sh',
+  'agents/tasks/production-control/execute-rollout.sh',
+  'agents/tasks/production-control/poll.sh',
+  'agents/tasks/production-control/install.sh',
+  'agents/tasks/production-control/bootstrap.sh',
+  'agents/tasks/production-control/plugin-registry-state.cjs',
+  'agents/tasks/production-control/openclaw-task-production-control.service',
+  'agents/tasks/production-control/openclaw-task-production-control.timer',
+];
+
 export const PROTECTED_DEPLOYMENT_PATHS = [
   'runtime-contract.json',
   'shared/runtime-contract/',
-  'agents/tasks/production-control/',
+  ...CONTROL_RUNTIME_PATHS,
   'agents/tasks/deploy.sh',
   'agents/tasks/deploy-support.cjs',
   'agents/tasks/recover.sh',
@@ -16,7 +30,7 @@ export const PROTECTED_DEPLOYMENT_PATHS = [
 
 export const ROLLOUT_PROTECTED_PATHS = [
   'shared/runtime-contract/',
-  'agents/tasks/production-control/',
+  ...CONTROL_RUNTIME_PATHS,
   'agents/tasks/deploy.sh',
   'agents/tasks/deploy-support.cjs',
   'agents/tasks/recover.sh',
@@ -33,7 +47,12 @@ export const STAGED_VALIDATION_ONLY_PATHS = [
   'agents/tasks/deploy.sh',
   'agents/tasks/deploy-support.cjs',
   'agents/tasks/tests/deploy.sh',
-  'agents/tasks/production-control/',
+  ...CONTROL_RUNTIME_PATHS,
+  'agents/tasks/production-control/tests/',
+  'agents/tasks/production-control/README.md',
+  'agents/tasks/production-control/BREAK-GLASS-RECONCILE.md',
+  'agents/tasks/production-control/BASELINE-BREAK-GLASS-RECONCILE.md',
+  'agents/tasks/production-control/SEMANTIC-OPERATIONS.md',
   '.github/workflows/task-production-control-ci.yml',
   '.github/workflows/task-agent-ci.yml',
 ];
@@ -41,6 +60,14 @@ export const STAGED_VALIDATION_ONLY_PATHS = [
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u;
 const LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/u;
+const OPERATION_OUTCOMES = new Set([
+  'SUCCESS',
+  'ROLLED_BACK',
+  'BLOCKED_PRE_MUTATION',
+  'BLOCKED_REQUIRES_JUDGMENT',
+  'RECOVERY_REQUIRED',
+  'UNKNOWN',
+]);
 
 export function validateOperationalBinding(candidate) {
   if (!candidate || typeof candidate !== 'object') throw new Error('production-control binding missing');
@@ -117,52 +144,42 @@ export function validateControlComment(comment, minimumCommentId = 0, binding) {
   return { ok: true, id, command };
 }
 
+function pathMatches(path, entries) {
+  return entries.some((entry) => entry.endsWith('/') ? path.startsWith(entry) : path === entry);
+}
+
 export function isProtectedDeploymentPath(path) {
-  return PROTECTED_DEPLOYMENT_PATHS.some((entry) => entry.endsWith('/') ? path.startsWith(entry) : path === entry);
+  return pathMatches(path, PROTECTED_DEPLOYMENT_PATHS);
 }
 
 export function isRolloutProtectedPath(path) {
-  return ROLLOUT_PROTECTED_PATHS.some((entry) => entry.endsWith('/') ? path.startsWith(entry) : path === entry);
+  return pathMatches(path, ROLLOUT_PROTECTED_PATHS);
 }
 
 export function isStagedValidationOnlyPath(path) {
-  return STAGED_VALIDATION_ONLY_PATHS.some((entry) => entry.endsWith('/') ? path.startsWith(entry) : path === entry);
+  return pathMatches(path, STAGED_VALIDATION_ONLY_PATHS);
 }
 
-export function validateRolloutEvidence(record, evidence, requestId) {
+export function validateOperationEvidence(record, evidence, requestId) {
   const invalid = (reason) => ({ ok: false, outcome: 'UNKNOWN', block: true, reason });
-  if (!record || typeof record !== 'object' || !evidence || typeof evidence !== 'object') return invalid('rollout evidence missing');
-  if (!Number.isSafeInteger(requestId) || requestId < 1 || Number(evidence.request_id) !== requestId) return invalid('rollout request identity mismatch');
-  if (evidence.source_revision !== record.sha) return invalid('rollout source revision mismatch');
-  if (evidence.predecessor_openclaw_version !== record.predecessor_openclaw_version) return invalid('rollout predecessor version mismatch');
-  if (evidence.target_openclaw_version !== record.target_openclaw_version) return invalid('rollout target version mismatch');
+  if (!record || typeof record !== 'object' || !evidence || typeof evidence !== 'object') return invalid('operation evidence missing');
+  if (!Number.isSafeInteger(requestId) || requestId < 1 || Number(evidence.request_id) !== requestId) return invalid('operation request identity mismatch');
+  if (!['deploy', 'rollout-openclaw'].includes(record.type)) return invalid('unsupported operation record type');
+  const evidenceOperation = evidence.operation ?? record.type;
+  if (evidenceOperation !== record.type) return invalid('operation type mismatch');
+  if (!SHA_RE.test(record.sha ?? '') || evidence.source_revision !== record.sha) return invalid('operation source revision mismatch');
+  if (typeof evidence.mutation_started !== 'boolean' || typeof evidence.block_further_deployments !== 'boolean') return invalid('operation terminal flags are incomplete');
 
-  const allowed = new Set(['SUCCESS', 'BLOCKED_REQUIRES_JUDGMENT', 'RECOVERY_REQUIRED', 'UNKNOWN']);
-  const outcome = allowed.has(evidence.outcome) ? evidence.outcome : 'UNKNOWN';
-  const mutationStarted = evidence.mutation_started === true;
-  const block = evidence.block_further_deployments === true;
+  const outcome = OPERATION_OUTCOMES.has(evidence.outcome) ? evidence.outcome : 'UNKNOWN';
+  const mutationStarted = evidence.mutation_started;
+  const block = evidence.block_further_deployments;
 
-  if (outcome === 'SUCCESS') {
-    const taskStage = evidence.task_deploy_stage;
-    const backupSha = typeof evidence.backup_sha256 === 'string' ? evidence.backup_sha256 : '';
-    const success = evidence.stage === 'COMPLETE'
-      && mutationStarted
-      && !block
-      && evidence.backup_created === true
-      && typeof evidence.backup_archive === 'string'
-      && evidence.backup_archive.length > 0
-      && /^[0-9a-f]{64}$/u.test(backupSha)
-      && evidence.core_version === record.target_openclaw_version
-      && evidence.gateway_ready === true
-      && evidence.codex_version === record.target_openclaw_version
-      && evidence.task_deploy_result === 'PASS'
-      && (taskStage === 'COMPLETE' || taskStage === 'NOOP');
-    return success ? { ok: true, outcome, block: false, reason: null } : invalid('rollout success evidence is incomplete');
-  }
-
+  if (outcome === 'SUCCESS' && block) return invalid('successful operation cannot block further changes');
+  if (outcome === 'BLOCKED_PRE_MUTATION' && (mutationStarted || block)) return invalid('pre-mutation refusal evidence is inconsistent');
+  if (outcome === 'ROLLED_BACK' && (!mutationStarted || block)) return invalid('rolled-back evidence is inconsistent');
   if (outcome === 'RECOVERY_REQUIRED' && (!mutationStarted || !block)) return invalid('recovery-required evidence is inconsistent');
-  if (outcome === 'UNKNOWN' && !block) return invalid('unknown rollout evidence must block further changes');
-  if (outcome === 'BLOCKED_REQUIRES_JUDGMENT' && mutationStarted && !block) return invalid('post-mutation judgment evidence must block further changes');
+  if (outcome === 'UNKNOWN' && !block) return invalid('unknown operation evidence must block further changes');
+  if (outcome === 'BLOCKED_REQUIRES_JUDGMENT' && mutationStarted && !block) return invalid('post-mutation judgment-required evidence must block further changes');
   return { ok: true, outcome, block, reason: null };
 }
 
