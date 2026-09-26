@@ -2,7 +2,7 @@
 
 const {
   fs, path, DatabaseSync, contacts, contactStore, IMPLEMENTATION_VERSION, SCHEMA_VERSION, TZ,
-  DB_PATH, AppError, ci, localDate, localTime,
+  SELF_NAME, DB_PATH, AppError, ci, localDate, localTime,
 } = require('./runtime.cjs');
 
 const CREATE_CURRENT = [
