@@ -7,6 +7,7 @@ import {
 import {
   dailyReviewRuntimeInternals,
   prepareDailyReviewRuntimeProjection,
+  registerDailyReviewSchedulerAccess,
 } from "./daily-review-runtime.js";
 
 const BOOTSTRAP = "2026-09-05T06:00:00.000Z";
@@ -120,6 +121,64 @@ function projectionDeps(service: ReturnType<typeof scheduler>["service"], abortS
     abortSignal: abortSignal ?? new AbortController().signal,
   };
 }
+
+describe("Daily Review scheduler runtime", () => {
+  it("uses service-bound scheduler access without cron_reconciled replay and refreshes after service replacement", async () => {
+    dailyReviewRuntimeInternals.resetState();
+    const hooks = new Map<string, (...args: any[]) => any>();
+    const services: Array<{ id: string; start: (context: any) => any; stop?: (context: any) => any }> = [];
+    const api = {
+      on: (name: string, handler: (...args: any[]) => any) => { hooks.set(name, handler); },
+      registerService: (service: { id: string; start: (context: any) => any; stop?: (context: any) => any }) => {
+        services.push(service);
+      },
+    };
+    registerDailyReviewSchedulerAccess(api as never);
+    const runtimeService = services.find((entry) => entry.id === "taskctl-daily-review-scheduler-access");
+    expect(runtimeService).toBeDefined();
+
+    const first = scheduler(pair()).service;
+    await runtimeService!.start({ getCron: () => first });
+    expect(dailyReviewRuntimeInternals.requireSchedulerGeneration().service).toBe(first);
+
+    await runtimeService!.stop?.({});
+    const second = scheduler(pair()).service;
+    await runtimeService!.start({ getCron: () => second });
+    expect(dailyReviewRuntimeInternals.requireSchedulerGeneration().service).toBe(second);
+    expect(hooks.has("cron_reconciled")).toBe(true);
+
+    dailyReviewRuntimeInternals.resetState();
+  });
+
+  it("fails closed when a service-bound scheduler is unavailable instead of using a stale reconciliation fallback", async () => {
+    dailyReviewRuntimeInternals.resetState();
+    const hooks = new Map<string, (...args: any[]) => any>();
+    const services: Array<{ id: string; start: (context: any) => any; stop?: (context: any) => any }> = [];
+    const api = {
+      on: (name: string, handler: (...args: any[]) => any) => { hooks.set(name, handler); },
+      registerService: (service: { id: string; start: (context: any) => any; stop?: (context: any) => any }) => {
+        services.push(service);
+      },
+    };
+    registerDailyReviewSchedulerAccess(api as never);
+
+    const reconciled = scheduler(pair()).service;
+    const controller = new AbortController();
+    hooks.get("cron_reconciled")?.(
+      { enabled: true },
+      { getCron: () => reconciled, abortSignal: controller.signal },
+    );
+
+    const runtimeService = services.find((entry) => entry.id === "taskctl-daily-review-scheduler-access");
+    expect(runtimeService).toBeDefined();
+    await runtimeService!.start({ getCron: () => undefined });
+
+    expect(() => dailyReviewRuntimeInternals.requireSchedulerGeneration()).toThrow(
+      /scheduler projection is unavailable or stale/,
+    );
+    dailyReviewRuntimeInternals.resetState();
+  });
+});
 
 describe("Daily Review native Automation receipt", () => {
   it("round-trips one exact receipt while preserving operator description", () => {
