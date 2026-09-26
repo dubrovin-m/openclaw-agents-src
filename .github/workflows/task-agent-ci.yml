@@ -5,12 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    paths:
-      - "runtime-contract.json"
-      - "shared/runtime-contract/**"
-      - "shared/contacts/**"
-      - "agents/tasks/**"
-      - ".github/workflows/task-agent-ci.yml"
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -21,14 +15,18 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: true
 
+env:
+  npm_config_audit: "false"
+  npm_config_fund: "false"
+  npm_config_update_notifier: "false"
+
 jobs:
-  validate:
+  route:
+    name: Task Agent relevance
     runs-on: ubuntu-latest
-    timeout-minutes: 30
-    env:
-      npm_config_audit: "false"
-      npm_config_fund: "false"
-      npm_config_update_notifier: "false"
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.scope.outputs.relevant }}
     steps:
       - name: Checkout exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
@@ -41,23 +39,35 @@ jobs:
         id: scope
         shell: bash
         env:
-          BEFORE_SHA: ${{ github.event.before }}
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
         run: |
           set -euo pipefail
           relevant=true
-          if [ "$GITHUB_EVENT_NAME" = "push" ]; then
+          if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
-            if [[ ! "${BEFORE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] || [ "$BEFORE_SHA" = "0000000000000000000000000000000000000000" ] || ! git cat-file -e "$BEFORE_SHA^{commit}" 2>/dev/null; then
-              relevant=true
-            elif git diff --name-only "$BEFORE_SHA" "$GITHUB_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|shared/contacts/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)'; then
+            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|shared/contacts/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)'; then
               relevant=true
             fi
           fi
           printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
           printf 'task_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
 
+  fast:
+    name: Task Agent fast
+    needs: route
+    if: ${{ needs.route.outputs.relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
       - name: Read runtime contract
-        if: steps.scope.outputs.relevant == 'true'
         id: runtime
         shell: bash
         run: |
@@ -76,26 +86,87 @@ jobs:
           PY
 
       - name: Set up Node.js
-        if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ steps.runtime.outputs.node_version }}
 
       - name: Validate repository runtime contract
-        if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           node --check shared/runtime-contract/runtime-contract.mjs
           node shared/runtime-contract/runtime-contract.mjs repo-check .
           node --test shared/runtime-contract/runtime-contract.test.mjs
 
+      - name: Static Task Agent checks
+        shell: bash
+        run: |
+          set -euo pipefail
+          node --check shared/contacts/core.cjs
+          node --check shared/contacts/task-store.cjs
+          node --check shared/contacts/contactctl
+          node --check agents/tasks/taskctl
+          node agents/tasks/build-taskctl.mjs --check
+          bash -n agents/tasks/validate.sh
+          bash -n agents/tasks/install.sh
+          bash -n agents/tasks/deploy.sh
+          bash -n agents/tasks/recover.sh
+          bash -n agents/tasks/tests/batch6.sh
+          bash -n agents/tasks/tests/health-readonly.sh
+          bash -n agents/tasks/tests/compatibility-window.sh
+          bash -n agents/tasks/tests/current-predecessor-deploy.sh
+          bash -n agents/tasks/tests/isolated-runtime.sh
+          bash -n agents/tasks/tests/batch7.sh
+          bash -n agents/tasks/tests/batch8.sh
+          bash -n agents/tasks/tests/batch9.sh
+          bash -n agents/tasks/tests/recurrence-qualification.sh
+          bash -n agents/tasks/tests/recurrence-gateway-e2e.sh
+          bash -n agents/tasks/tests/reminder-gateway-e2e.sh
+          bash -n agents/tasks/tests/reminders.sh
+          bash -n agents/tasks/tests/deadline-governance.sh
+          node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
+
+  heavy:
+    name: Task Agent heavy qualification
+    needs: [route, fast]
+    if: ${{ needs.route.outputs.relevant == 'true' && needs.fast.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read runtime contract
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          with open('runtime-contract.json', encoding='utf-8') as handle:
+              contract = json.load(handle)
+          version = str(contract.get('node', {}).get('ci_version', ''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('invalid node.ci_version in runtime-contract.json')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'node_version={version}\n')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+
       - name: Install Shared Contacts plugin dependencies
-        if: steps.scope.outputs.relevant == 'true'
         working-directory: shared/contacts/plugin
         run: timeout 300s npm ci
 
       - name: Test and validate Shared Contacts
-        if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           node --check shared/contacts/core.cjs
@@ -116,19 +187,16 @@ jobs:
           rm -rf "$pack_dir"
 
       - name: Install plugin dependencies
-        if: steps.scope.outputs.relevant == 'true'
         working-directory: agents/tasks/plugins/taskctl
         run: timeout 300s npm ci
 
       - name: Verify modular Task CLI generated artifact
-        if: steps.scope.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
           node agents/tasks/build-taskctl.mjs --check
 
       - name: Test and validate plugin
-        if: steps.scope.outputs.relevant == 'true'
         working-directory: agents/tasks/plugins/taskctl
         run: |
           set -euo pipefail
@@ -137,7 +205,6 @@ jobs:
           timeout 180s npm run plugin:validate
 
       - name: Validate release identity and artifact
-        if: steps.scope.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -209,7 +276,6 @@ jobs:
           rm -rf "$pack_dir"
 
       - name: Verify exact predecessor source binding
-        if: steps.scope.outputs.relevant == 'true'
         env:
           PREDECESSOR_BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before || github.sha }}
         run: |
@@ -217,7 +283,6 @@ jobs:
           node agents/tasks/production-control/verify-release-predecessor.mjs "$PREDECESSOR_BASE_SHA"
 
       - name: Deterministic Task Agent regressions
-        if: steps.scope.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -265,7 +330,6 @@ jobs:
           timeout 300s bash agents/tasks/tests/reminder-gateway-e2e.sh
 
       - name: Verify generated outputs are frozen
-        if: steps.scope.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
@@ -276,3 +340,37 @@ jobs:
             shared/contacts/plugin/package-lock.json \
             shared/contacts/plugin/openclaw.plugin.json \
             shared/contacts/plugin/dist
+
+  gate:
+    name: Task Agent gate
+    needs: [route, fast, heavy]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      ROUTE_RESULT: ${{ needs.route.result }}
+      RELEVANT: ${{ needs.route.outputs.relevant }}
+      FAST_RESULT: ${{ needs.fast.result }}
+      HEAVY_RESULT: ${{ needs.heavy.result }}
+    steps:
+      - name: Enforce Task Agent qualification
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "$ROUTE_RESULT" != "success" ]; then
+            echo "Task Agent relevance routing did not succeed: $ROUTE_RESULT" >&2
+            exit 1
+          fi
+          if [ "$RELEVANT" != "true" ]; then
+            echo "Task Agent is not relevant to this change; gate passes without heavy qualification."
+            exit 0
+          fi
+          if [ "$FAST_RESULT" != "success" ]; then
+            echo "Task Agent fast validation did not succeed: $FAST_RESULT" >&2
+            exit 1
+          fi
+          if [ "$HEAVY_RESULT" != "success" ]; then
+            echo "Task Agent heavy qualification did not succeed: $HEAVY_RESULT" >&2
+            exit 1
+          fi
+          echo "Task Agent qualification passed."
