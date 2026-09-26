@@ -28,7 +28,7 @@ jobs:
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 26.7.0
-      - name: Build, test, and emit frozen package candidate
+      - name: Build, test, and package candidate
         working-directory: agents/tasks/plugins/taskctl
         shell: bash
         run: |
@@ -37,11 +37,15 @@ jobs:
           npm test
           npm run plugin:build
           npm run plugin:validate
-          out="$(mktemp -d)"
-          npm pack --pack-destination "$out" >/dev/null
-          artifact="$out/openclaw-plugin-taskctl-0.4.28.tgz"
+          mkdir -p "$GITHUB_WORKSPACE/.candidate"
+          npm pack --pack-destination "$GITHUB_WORKSPACE/.candidate" >/dev/null
+          artifact="$GITHUB_WORKSPACE/.candidate/openclaw-plugin-taskctl-0.4.28.tgz"
           test -f "$artifact"
           printf 'TASK_PLUGIN_SHA256=%s\n' "$(sha256sum "$artifact" | awk '{print $1}')"
-          printf '%s\n' 'TASK_PLUGIN_BASE64_BEGIN'
-          base64 -w 120 "$artifact"
-          printf '%s\n' 'TASK_PLUGIN_BASE64_END'
+      - name: Upload exact package candidate
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: task-plugin-0.4.28-candidate
+          path: .candidate/openclaw-plugin-taskctl-0.4.28.tgz
+          if-no-files-found: error
+          retention-days: 1
