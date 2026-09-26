@@ -55,9 +55,19 @@ const index = read('plugins/taskctl/src/index.ts');
 for (const required of ['argv:["review","snapshot"]', 'shell:false', 'runDailyReviewSnapshot', 'argv:["review","management-snapshot"]', 'runManagementReviewSnapshot']) {
   if (!index.includes(required)) fail(`hidden taskctl snapshot bridge lost invariant: ${required}`);
 }
-const taskctl = read('taskctl');
-for (const required of [`const IMPLEMENTATION_VERSION = '${expectedTaskctlVersion}';`, 'function openReadDb()', 'readOnly:true', 'PRAGMA query_only=ON', "scope==='review'&&action==='snapshot'", "scope==='review'&&action==='management-snapshot'"]) {
-  if (!taskctl.includes(required)) fail(`taskctl hidden review snapshot lost invariant: ${required}`);
+const runtimeSource = read('taskctl-src/runtime.cjs');
+const databaseSource = read('taskctl-src/database.cjs');
+const reviewsSource = read('taskctl-src/reviews.cjs');
+const cliSource = read('taskctl-src/cli.cjs');
+for (const [source, required] of [
+  [runtimeSource, `const IMPLEMENTATION_VERSION = '${expectedTaskctlVersion}';`],
+  [databaseSource, 'function openReadDb()'],
+  [databaseSource, 'readOnly:true'],
+  [reviewsSource, 'PRAGMA query_only=ON'],
+  [cliSource, "scope==='review'&&action==='snapshot'"],
+  [cliSource, "scope==='review'&&action==='management-snapshot'"],
+]) {
+  if (!source.includes(required)) fail(`Task modular source hidden review snapshot lost invariant: ${required}`);
 }
 if (/review[_-]?snapshot|review snapshot/.test(contract)) fail('hidden review snapshot must not enter ordinary Task contracts');
 const plugin = read('plugins/taskctl/src/plugin.ts');

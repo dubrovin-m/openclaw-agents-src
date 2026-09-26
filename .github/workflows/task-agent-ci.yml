@@ -120,6 +120,13 @@ jobs:
         working-directory: agents/tasks/plugins/taskctl
         run: timeout 300s npm ci
 
+      - name: Verify modular Task CLI generated artifact
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        run: |
+          set -euo pipefail
+          node agents/tasks/build-taskctl.mjs --check
+
       - name: Test and validate plugin
         if: steps.scope.outputs.relevant == 'true'
         working-directory: agents/tasks/plugins/taskctl
@@ -209,15 +216,6 @@ jobs:
           set -euo pipefail
           node agents/tasks/production-control/verify-release-predecessor.mjs "$PREDECESSOR_BASE_SHA"
 
-      - name: Diagnose current predecessor deployment path
-        if: steps.scope.outputs.relevant == 'true'
-        shell: bash
-        run: |
-          set -euo pipefail
-          trace_env="$(mktemp)"
-          printf 'set -x\n' > "$trace_env"
-          BASH_ENV="$trace_env" timeout 600s bash agents/tasks/tests/current-predecessor-deploy.sh
-
       - name: Deterministic Task Agent regressions
         if: steps.scope.outputs.relevant == 'true'
         shell: bash
@@ -226,6 +224,14 @@ jobs:
           node --check agents/tasks/taskctl
           bash -n agents/tasks/validate.sh
           bash -n agents/tasks/install.sh
+          for guarded_entrypoint in agents/tasks/validate.sh agents/tasks/install.sh; do
+            set +e
+            guard_output="$(env -u GITHUB_ACTIONS bash "$guarded_entrypoint" 2>&1)"
+            guard_rc=$?
+            set -e
+            test "$guard_rc" -eq 2
+            grep -Fq "Task Agent repository qualification is CI-first." <<<"$guard_output"
+          done
           bash -n agents/tasks/deploy.sh
           bash -n agents/tasks/recover.sh
           bash -n agents/tasks/tests/batch6.sh

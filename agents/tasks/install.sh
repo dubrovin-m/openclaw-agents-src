@@ -8,6 +8,11 @@ WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
 RUNTIME_CONTRACT="$REPO_ROOT/runtime-contract.json"
 RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
 CONTACTS_ROOT="$REPO_ROOT/shared/contacts"
+
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${TASK_AGENT_ALLOW_LOCAL_QUALIFICATION:-}" != "1" ]; then
+  echo "Task Agent repository qualification is CI-first. Use GitHub Actions; set TASK_AGENT_ALLOW_LOCAL_QUALIFICATION=1 only in a disposable non-production workspace." >&2
+  exit 2
+fi
 [ -f "$RELEASE_FILE" ] || { echo "Task Agent release metadata missing" >&2; exit 2; }
 [ -f "$WORKSPACE_LAYOUT_HELPER" ] || { echo "Task Agent workspace layout helper missing" >&2; exit 2; }
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Runtime contract source missing" >&2; exit 2; }

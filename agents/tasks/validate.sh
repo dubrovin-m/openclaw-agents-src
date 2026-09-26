@@ -3,6 +3,11 @@ set -euo pipefail
 ROOT=$(cd "$(dirname "$0")" && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 
+if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${TASK_AGENT_ALLOW_LOCAL_QUALIFICATION:-}" != "1" ]; then
+  echo "Task Agent repository qualification is CI-first. Use GitHub Actions; set TASK_AGENT_ALLOW_LOCAL_QUALIFICATION=1 only in a disposable non-production workspace." >&2
+  exit 2
+fi
+
 VALIDATION_TMP=$(mktemp -d "${TMPDIR:-/tmp}/task-agent-validate.XXXXXX")
 cleanup_validation_tmp(){ rm -rf "$VALIDATION_TMP"; }
 handle_validation_int(){ exit 130; }

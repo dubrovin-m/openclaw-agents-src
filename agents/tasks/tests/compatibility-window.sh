@@ -4,6 +4,7 @@ umask 077
 
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 TASKCTL=${1:-"$ROOT/taskctl"}
+EXPECTED_TASKCTL_VERSION=$(node -e 'process.stdout.write(require(process.argv[1]).generation.taskctl_version)' "$ROOT/release.json")
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/task-compatibility-window.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT INT TERM
 fail(){ echo "compatibility-window: $*" >&2; exit 1; }
@@ -34,10 +35,10 @@ mkdir -p "$BASE"
 TASK_DB="$BASE/tasks.sqlite3"
 CONTACTS_DB="$BASE/contacts.sqlite3"
 fresh=$(HOME="$TMP/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TASK_DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL" init)
-node - "$fresh" "$TASK_DB" "$CONTACTS_DB" <<'NODE' || fail "fresh install did not create current schemas"
-const {DatabaseSync}=require('node:sqlite'),out=JSON.parse(process.argv[2]),t=new DatabaseSync(process.argv[3],{readOnly:true}),c=new DatabaseSync(process.argv[4],{readOnly:true});
+node - "$fresh" "$TASK_DB" "$CONTACTS_DB" "$EXPECTED_TASKCTL_VERSION" <<'NODE' || fail "fresh install did not create current schemas"
+const {DatabaseSync}=require('node:sqlite'),out=JSON.parse(process.argv[2]),t=new DatabaseSync(process.argv[3],{readOnly:true}),c=new DatabaseSync(process.argv[4],{readOnly:true}),expected=process.argv[5];
 try{
-  if(out.implementation_version!=='0.4.15'||out.schema_version!==9)process.exit(1);
+  if(out.implementation_version!==expected||out.schema_version!==9)process.exit(1);
   if(Number(t.prepare('PRAGMA user_version').get().user_version)!==9||Number(c.prepare('PRAGMA user_version').get().user_version)!==3)process.exit(2);
   if(t.prepare("SELECT count(*) n FROM sqlite_master WHERE type='table' AND name IN ('people','person_aliases')").get().n!==0)process.exit(3);
   for(const table of ['projects','recurrences','reminders','task_domain_bindings','deadline_change_requests'])if(!t.prepare("SELECT 1 ok FROM sqlite_master WHERE type='table' AND name=?").get(table))process.exit(4);
@@ -49,8 +50,8 @@ TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TASK_DB" TASKCTL_CONTACTS_DB="$CONTACTS
 TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TASK_DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" TASKCTL_PAYLOAD='{"operation_key":"compat-task","title":"Compatibility sentinel","assignee":"Дубровин М.","labels":["L-1"]}' "$TASKCTL" task create >/dev/null
 before=$(logical_fingerprint "$TASK_DB" "$CONTACTS_DB")
 current=$(HOME="$TMP/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$TASK_DB" TASKCTL_CONTACTS_DB="$CONTACTS_DB" "$TASKCTL" init)
-node - "$current" <<'NODE' || fail "current schema init did not remain current"
-const x=JSON.parse(process.argv[2]);if(x.implementation_version!=='0.4.15'||x.schema_version!==9)process.exit(1);
+node - "$current" "$EXPECTED_TASKCTL_VERSION" <<'NODE' || fail "current schema init did not remain current"
+const x=JSON.parse(process.argv[2]);if(x.implementation_version!==process.argv[3]||x.schema_version!==9)process.exit(1);
 NODE
 after=$(logical_fingerprint "$TASK_DB" "$CONTACTS_DB")
 [ "$before" = "$after" ] || fail "current schema init changed logical data"
