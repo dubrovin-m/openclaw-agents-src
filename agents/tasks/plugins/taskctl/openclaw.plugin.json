@@ -83,72 +83,206 @@
     ]
   },
   "toolMetadata": {
-    "deadline_request_get": {"optional": true},
-    "deadline_request_create": {"optional": true},
-    "deadline_request_approve": {"optional": true},
-    "deadline_request_reject": {"optional": true},
-    "task_update": {"optional": true},
-    "task_complete": {"optional": true},
-    "task_cancel": {"optional": true},
-    "inbox_add": {"optional": true},
-    "inbox_list": {"optional": true},
-    "inbox_get": {"optional": true},
-    "inbox_discard": {"optional": true},
-    "inbox_commit": {"optional": true},
-    "task_create": {"optional": true},
-    "task_list": {"optional": true},
-    "task_search": {"optional": true},
-    "task_get": {"optional": true},
-    "task_detail": {"optional": true},
-    "task_history": {"optional": true},
-    "reminder_create": {"optional": true},
-    "reminder_list": {"optional": true},
-    "reminder_reschedule": {"optional": true},
-    "reminder_cancel": {"optional": true},
-    "recurrence_create": {"optional": true},
-    "recurrence_list": {"optional": true},
-    "recurrence_get": {"optional": true},
-    "recurrence_detail": {"optional": true},
-    "recurrence_history": {"optional": true},
-    "recurrence_update": {"optional": true},
-    "recurrence_pause": {"optional": true},
-    "recurrence_resume": {"optional": true},
-    "recurrence_cancel": {"optional": true},
-    "project_create": {"optional": true},
-    "project_list": {"optional": true},
-    "project_get": {"optional": true},
-    "project_rename": {"optional": true},
-    "project_complete": {"optional": true},
-    "project_cancel": {"optional": true},
-    "task_project_set": {"optional": true},
-    "person_list": {"optional": true},
-    "person_resolve": {"optional": true},
-    "person_create": {"optional": true},
-    "person_rename": {"optional": true},
-    "person_alias_add": {"optional": true},
-    "person_alias_remove": {"optional": true},
-    "person_merge": {"optional": true},
-    "label_list": {"optional": true},
-    "label_resolve": {"optional": true},
-    "label_create": {"optional": true},
-    "label_rename": {"optional": true},
-    "label_set_emoji": {"optional": true},
-    "label_alias_add": {"optional": true},
-    "label_alias_remove": {"optional": true},
-    "label_delete": {"optional": true},
-    "label_merge": {"optional": true},
-    "term_list": {"optional": true},
-    "term_resolve": {"optional": true},
-    "term_set": {"optional": true},
-    "term_remove": {"optional": true},
-    "task_label_add": {"optional": true},
-    "task_label_remove": {"optional": true},
-    "comment_add": {"optional": true},
-    "comment_list": {"optional": true},
-    "ref_resolve": {"optional": true},
-    "task_production_control": {"optional": true},
-    "task_daily_review": {"optional": true},
-    "task_management_review": {"optional": true},
-    "task_reminder_dispatch": {"optional": true}
+    "deadline_request_get": {
+      "optional": true
+    },
+    "deadline_request_create": {
+      "optional": true
+    },
+    "deadline_request_approve": {
+      "optional": true
+    },
+    "deadline_request_reject": {
+      "optional": true
+    },
+    "task_update": {
+      "optional": true
+    },
+    "task_complete": {
+      "optional": true
+    },
+    "task_cancel": {
+      "optional": true
+    },
+    "inbox_add": {
+      "optional": true
+    },
+    "inbox_list": {
+      "optional": true
+    },
+    "inbox_get": {
+      "optional": true
+    },
+    "inbox_discard": {
+      "optional": true
+    },
+    "inbox_commit": {
+      "optional": true
+    },
+    "task_create": {
+      "optional": true
+    },
+    "task_list": {
+      "optional": true
+    },
+    "task_search": {
+      "optional": true
+    },
+    "task_get": {
+      "optional": true
+    },
+    "task_detail": {
+      "optional": true
+    },
+    "task_history": {
+      "optional": true
+    },
+    "reminder_create": {
+      "optional": true
+    },
+    "reminder_list": {
+      "optional": true
+    },
+    "reminder_reschedule": {
+      "optional": true
+    },
+    "reminder_cancel": {
+      "optional": true
+    },
+    "recurrence_create": {
+      "optional": true
+    },
+    "recurrence_list": {
+      "optional": true
+    },
+    "recurrence_get": {
+      "optional": true
+    },
+    "recurrence_detail": {
+      "optional": true
+    },
+    "recurrence_history": {
+      "optional": true
+    },
+    "recurrence_update": {
+      "optional": true
+    },
+    "recurrence_pause": {
+      "optional": true
+    },
+    "recurrence_resume": {
+      "optional": true
+    },
+    "recurrence_cancel": {
+      "optional": true
+    },
+    "project_create": {
+      "optional": true
+    },
+    "project_list": {
+      "optional": true
+    },
+    "project_get": {
+      "optional": true
+    },
+    "project_rename": {
+      "optional": true
+    },
+    "project_complete": {
+      "optional": true
+    },
+    "project_cancel": {
+      "optional": true
+    },
+    "task_project_set": {
+      "optional": true
+    },
+    "person_list": {
+      "optional": true
+    },
+    "person_resolve": {
+      "optional": true
+    },
+    "person_create": {
+      "optional": true
+    },
+    "person_rename": {
+      "optional": true
+    },
+    "person_alias_add": {
+      "optional": true
+    },
+    "person_alias_remove": {
+      "optional": true
+    },
+    "person_merge": {
+      "optional": true
+    },
+    "label_list": {
+      "optional": true
+    },
+    "label_resolve": {
+      "optional": true
+    },
+    "label_create": {
+      "optional": true
+    },
+    "label_rename": {
+      "optional": true
+    },
+    "label_set_emoji": {
+      "optional": true
+    },
+    "label_alias_add": {
+      "optional": true
+    },
+    "label_alias_remove": {
+      "optional": true
+    },
+    "label_delete": {
+      "optional": true
+    },
+    "label_merge": {
+      "optional": true
+    },
+    "term_list": {
+      "optional": true
+    },
+    "term_resolve": {
+      "optional": true
+    },
+    "term_set": {
+      "optional": true
+    },
+    "term_remove": {
+      "optional": true
+    },
+    "task_label_add": {
+      "optional": true
+    },
+    "task_label_remove": {
+      "optional": true
+    },
+    "comment_add": {
+      "optional": true
+    },
+    "comment_list": {
+      "optional": true
+    },
+    "ref_resolve": {
+      "optional": true
+    },
+    "task_production_control": {
+      "optional": true
+    },
+    "task_daily_review": {
+      "optional": true
+    },
+    "task_management_review": {
+      "optional": true
+    },
+    "task_reminder_dispatch": {
+      "optional": true
+    }
   }
 }
