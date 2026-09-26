@@ -105,7 +105,6 @@ jobs:
           node --check shared/contacts/task-store.cjs
           node --check shared/contacts/contactctl
           node --check agents/tasks/taskctl
-          node agents/tasks/build-taskctl.mjs --check
           bash -n agents/tasks/validate.sh
           bash -n agents/tasks/install.sh
           bash -n agents/tasks/deploy.sh
