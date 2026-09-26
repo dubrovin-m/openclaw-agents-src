@@ -2,7 +2,7 @@
   "format": "task-agent-release-v2",
   "workspace_layout": "agents-md-tools-v1",
   "generation": {
-    "taskctl_version": "0.4.15",
+    "taskctl_version": "0.4.16",
     "sqlite_schema": 9,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.9.5",
@@ -15,12 +15,12 @@
     "sha256": "5e921e93da453b5ba74d56449b523f4e4ef61ef9033283e5ed24d5b82403f0f5"
   },
   "from": {
-    "source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
+    "source_revision": "3259f95bb4df2ac9a2e78cc94a7fc69fe3bbc58d",
     "sqlite_schemas": [
       9
     ],
     "taskctl_versions": [
-      "0.4.14"
+      "0.4.15"
     ],
     "plugin_versions": [
       "0.4.27"
@@ -45,7 +45,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "29fe7da1390c940b339ab3168204242883f6d228880224e1ee598948e7a8c35a",
+    "release_sha256": "d213fa842424811e139cf89894d31a1db8913196ae617c047e84c9a43fe60a08",
     "implementation_version": "0.1.5",
     "sqlite_schema": 3,
     "predecessor_mode": "exact"
