@@ -15,18 +15,8 @@ on:
       - 'agents/tasks/production-control/**'
       - '.github/workflows/task-production-control-ci.yml'
   pull_request:
-    paths:
-      - 'runtime-contract.json'
-      - 'shared/runtime-contract/**'
-      - 'agents/tasks/deploy.sh'
-      - 'agents/tasks/recover.sh'
-      - 'agents/tasks/install.sh'
-      - 'agents/tasks/workspace-layout.mjs'
-      - 'agents/tasks/tests/current-predecessor-deploy.sh'
-      - 'agents/tasks/tests/compatibility-window.sh'
-      - 'agents/tasks/tests/isolated-runtime.sh'
-      - 'agents/tasks/production-control/**'
-      - '.github/workflows/task-production-control-ci.yml'
+    branches: [main]
+    types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
 permissions:
@@ -38,8 +28,44 @@ env:
   npm_config_update_notifier: false
 
 jobs:
-  validate:
+  route:
+    name: Task production control relevance
     runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      relevant: ${{ steps.scope.outputs.relevant }}
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine Task production control relevance
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            relevant=false
+            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/tasks/deploy\.sh$|agents/tasks/recover\.sh$|agents/tasks/install\.sh$|agents/tasks/workspace-layout\.mjs$|agents/tasks/tests/current-predecessor-deploy\.sh$|agents/tasks/tests/compatibility-window\.sh$|agents/tasks/tests/isolated-runtime\.sh$|agents/tasks/production-control/|\.github/workflows/task-production-control-ci\.yml$)'; then
+              relevant=true
+            fi
+          fi
+          printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
+          printf 'task_production_control_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
+
+  fast:
+    name: Task production control fast
+    needs: route
+    if: ${{ needs.route.outputs.relevant == 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - name: Checkout exact source revision
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -81,6 +107,7 @@ jobs:
 
       - name: Static syntax checks
         run: |
+          set -euo pipefail
           node --check agents/tasks/production-control/controller.mjs
           node --check agents/tasks/production-control/diagnose.mjs
           node --check agents/tasks/production-control/lib.mjs
@@ -106,6 +133,74 @@ jobs:
 
       - name: Core and diagnostic tests
         run: node --test agents/tasks/production-control/tests/*.test.mjs
+
+      - name: Security boundary assertions
+        run: |
+          set -euo pipefail
+          grep -q "validateOperationalBinding" agents/tasks/production-control/lib.mjs
+          grep -q "control_repository" agents/tasks/production-control/controller.mjs
+          grep -q "implementation_repository" agents/tasks/production-control/controller.mjs
+          grep -q -- "--control-repository" agents/tasks/production-control/bootstrap.sh
+          grep -q -- "--implementation-repository" agents/tasks/production-control/bootstrap.sh
+          grep -q "/rollout openclaw" agents/tasks/production-control/lib.mjs
+          grep -q "'runtime-contract.json'" agents/tasks/production-control/lib.mjs
+          grep -q "'shared/runtime-contract/'" agents/tasks/production-control/lib.mjs
+          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/deploy.sh
+          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/recover.sh
+          grep -q "flock -n 9" agents/tasks/production-control/poll.sh
+          grep -q "flock -n 9" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "flock -n 9" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "installed-revision" agents/tasks/production-control/bootstrap.sh
+          grep -q "CONTROLLER_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "TASK_PRODUCTION_BASELINE_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "Controller revision changed during baseline-only reconciliation" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "Task deploy result does not prove the exact target baseline" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-break-glass.sh
+          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
+          ! grep -R -E "Authorization:.*(ghp_|github_pat_)|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" agents/tasks/production-control .github/workflows/task-production-control-ci.yml
+          ! grep -q "/statuses/" agents/tasks/production-control/controller.mjs
+          ! grep -q "githubGet.*POST" agents/tasks/production-control/controller.mjs
+          ! grep -q "issues/.*/comments.*POST" agents/tasks/production-control/controller.mjs
+
+  heavy:
+    name: Task production control heavy qualification
+    needs: [route, fast]
+    if: ${{ needs.route.outputs.relevant == 'true' && needs.fast.result == 'success' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read runtime contract
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json
+          import os
+          import re
+          with open('runtime-contract.json', encoding='utf-8') as handle:
+              contract = json.load(handle)
+          version = str(contract.get('node', {}).get('ci_version', ''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+              raise SystemExit('invalid node.ci_version in runtime-contract.json')
+          with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
+              output.write(f'node_version={version}\n')
+          PY
+
+      - name: Setup Node
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020 # v7.0.0
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+          cache: ''
 
       - name: Bounded compatibility window
         run: bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
@@ -134,31 +229,36 @@ jobs:
       - name: OpenClaw rollout wrapper outcomes
         run: bash agents/tasks/production-control/tests/rollout-wrapper.sh
 
-      - name: Security boundary assertions
+  gate:
+    name: Task production control gate
+    needs: [route, fast, heavy]
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    env:
+      ROUTE_RESULT: ${{ needs.route.result }}
+      RELEVANT: ${{ needs.route.outputs.relevant }}
+      FAST_RESULT: ${{ needs.fast.result }}
+      HEAVY_RESULT: ${{ needs.heavy.result }}
+    steps:
+      - name: Enforce Task production control qualification
+        shell: bash
         run: |
-          grep -q "validateOperationalBinding" agents/tasks/production-control/lib.mjs
-          grep -q "control_repository" agents/tasks/production-control/controller.mjs
-          grep -q "implementation_repository" agents/tasks/production-control/controller.mjs
-          grep -q -- "--control-repository" agents/tasks/production-control/bootstrap.sh
-          grep -q -- "--implementation-repository" agents/tasks/production-control/bootstrap.sh
-          grep -q "/rollout openclaw" agents/tasks/production-control/lib.mjs
-          grep -q "'runtime-contract.json'" agents/tasks/production-control/lib.mjs
-          grep -q "'shared/runtime-contract/'" agents/tasks/production-control/lib.mjs
-          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/deploy.sh
-          grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/recover.sh
-          grep -q "flock -n 9" agents/tasks/production-control/poll.sh
-          grep -q "flock -n 9" agents/tasks/production-control/reconcile-break-glass.sh
-          grep -q "flock -n 9" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          grep -q "installed-revision" agents/tasks/production-control/bootstrap.sh
-          grep -q "CONTROLLER_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-break-glass.sh
-          grep -q "TASK_PRODUCTION_BASELINE_BREAK_GLASS_RECONCILIATION_RECOVERY_INCOMPLETE" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          grep -q "Controller revision changed during baseline-only reconciliation" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          grep -q "Task deploy result does not prove the exact target baseline" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-break-glass.sh
-          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-break-glass.sh
-          grep -q "r.stage==='NOOP'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          grep -q "r.stage==='COMPLETE'" agents/tasks/production-control/reconcile-baseline-break-glass.sh
-          ! grep -R -E "Authorization:.*(ghp_|github_pat_)|BEGIN (RSA|OPENSSH|EC) PRIVATE KEY" agents/tasks/production-control .github/workflows/task-production-control-ci.yml
-          ! grep -q "/statuses/" agents/tasks/production-control/controller.mjs
-          ! grep -q "githubGet.*POST" agents/tasks/production-control/controller.mjs
-          ! grep -q "issues/.*/comments.*POST" agents/tasks/production-control/controller.mjs
+          set -euo pipefail
+          if [ "$ROUTE_RESULT" != "success" ]; then
+            echo "Task production control relevance routing did not succeed: $ROUTE_RESULT" >&2
+            exit 1
+          fi
+          if [ "$RELEVANT" != "true" ]; then
+            echo "Task production control is not relevant to this change; gate passes without heavy qualification."
+            exit 0
+          fi
+          if [ "$FAST_RESULT" != "success" ]; then
+            echo "Task production control fast validation did not succeed: $FAST_RESULT" >&2
+            exit 1
+          fi
+          if [ "$HEAVY_RESULT" != "success" ]; then
+            echo "Task production control heavy qualification did not succeed: $HEAVY_RESULT" >&2
+            exit 1
+          fi
+          echo "Task production control qualification passed."

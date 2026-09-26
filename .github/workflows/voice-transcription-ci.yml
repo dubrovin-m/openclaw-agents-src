@@ -7,9 +7,6 @@ on:
       - ".github/workflows/voice-transcription-ci.yml"
   pull_request:
     branches: [main]
-    paths:
-      - "shared/voice-transcription/**"
-      - ".github/workflows/voice-transcription-ci.yml"
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -22,6 +19,7 @@ concurrency:
 
 jobs:
   validate:
+    name: Voice Transcription gate
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
@@ -29,13 +27,33 @@ jobs:
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha || github.sha }}
-          fetch-depth: 1
+          fetch-depth: 0
           persist-credentials: false
 
+      - name: Determine Voice Transcription relevance
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            relevant=false
+            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(shared/voice-transcription/|\.github/workflows/voice-transcription-ci\.yml$)'; then
+              relevant=true
+            fi
+          fi
+          printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
+          printf 'voice_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
+
       - name: Validate steady-state voice source
+        if: steps.scope.outputs.relevant == 'true'
         run: bash shared/voice-transcription/validate.sh
 
       - name: Verify source remains unchanged
+        if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           git diff --exit-code -- shared/voice-transcription
