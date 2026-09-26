@@ -8,32 +8,32 @@ on:
       - ".github/workflows/daily-review-fix-prep.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  package:
+  finalize:
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.actor == 'dubrovin-m'
     runs-on: ubuntu-latest
     timeout-minutes: 10
     env:
       npm_config_audit: "false"
       npm_config_fund: "false"
       npm_config_update_notifier: "false"
+      BASE_SHA: ${{ github.event.pull_request.base.sha }}
+      HEAD_BRANCH: ${{ github.event.pull_request.head.ref }}
     steps:
       - name: Checkout exact candidate
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
           ref: ${{ github.event.pull_request.head.sha }}
           fetch-depth: 0
-          persist-credentials: false
       - name: Set up Node.js
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: 26.7.0
-      - name: Build, test, package, and fingerprint candidate
+      - name: Build and validate exact candidate
         working-directory: agents/tasks/plugins/taskctl
         shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha }}
         run: |
           set -euo pipefail
           npm ci
@@ -42,18 +42,16 @@ jobs:
           npm run plugin:validate
           mkdir -p "$GITHUB_WORKSPACE/.candidate"
           npm pack --pack-destination "$GITHUB_WORKSPACE/.candidate" >/dev/null
+          test -f "$GITHUB_WORKSPACE/.candidate/openclaw-plugin-taskctl-0.4.28.tgz"
+      - name: Freeze release and remove preparation state
+        shell: bash
+        run: |
+          set -euo pipefail
           artifact="$GITHUB_WORKSPACE/.candidate/openclaw-plugin-taskctl-0.4.28.tgz"
-          test -f "$artifact"
-          cp package-lock.json "$GITHUB_WORKSPACE/.candidate/package-lock.json"
-          node - <<'NODE'
-          const fs = require('node:fs');
-          const path = process.env.GITHUB_WORKSPACE + '/.candidate/package-lock.json';
-          const lock = JSON.parse(fs.readFileSync(path, 'utf8'));
-          lock.version = '0.4.28';
-          lock.packages[''].version = '0.4.28';
-          fs.writeFileSync(path, JSON.stringify(lock, null, 2) + '\n');
-          NODE
-          cd "$GITHUB_WORKSPACE"
+          digest="$(sha256sum "$artifact" | awk '{print $1}')"
+          test "$digest" = "1eebbc6ec88b6d7fb03c6f6190dc72e99fe1349d85b34f45f85e8044f449c15b"
+          cp "$artifact" agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.28.tgz
+          printf '%s  %s\n' "$digest" "openclaw-plugin-taskctl-0.4.28.tgz" > agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.28.sha256
           node - <<'NODE'
           const fs = require('node:fs');
           const { createHash } = require('node:crypto');
@@ -67,26 +65,46 @@ jobs:
               ? `[${value.map(stableJson).join(',')}]`
               : `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`;
           const show = (file) => execFileSync('git', ['show', `${base}:${file}`], { encoding: 'utf8' });
-          const release = JSON.parse(show('agents/tasks/release.json'));
+          const predecessor = JSON.parse(show('agents/tasks/release.json'));
           const workspace_sha256 = Object.fromEntries(files.map((file) => [file, sha256(show(`agents/tasks/workspace/${file}`))]));
           const tools_sha256 = sha256(stableJson(JSON.parse(show('agents/tasks/config/tasks-tools.json'))));
-          fs.writeFileSync('.candidate/predecessor.json', JSON.stringify({
+          const releasePath = 'agents/tasks/release.json';
+          const release = JSON.parse(fs.readFileSync(releasePath, 'utf8'));
+          release.plugin = {
+            name: 'openclaw-plugin-taskctl',
+            version: '0.4.28',
+            artifact: 'artifacts/openclaw-plugin-taskctl-0.4.28.tgz',
+            sha256: '1eebbc6ec88b6d7fb03c6f6190dc72e99fe1349d85b34f45f85e8044f449c15b',
+          };
+          release.from = {
             source_revision: base,
-            sqlite_schema: release.generation.sqlite_schema,
-            taskctl_version: release.generation.taskctl_version,
-            plugin_version: release.plugin.version,
+            sqlite_schemas: [predecessor.generation.sqlite_schema],
+            taskctl_versions: [predecessor.generation.taskctl_version],
+            plugin_versions: [predecessor.plugin.version],
             workspace_sha256,
             tools_sha256,
-          }, null, 2) + '\n');
+          };
+          fs.writeFileSync(releasePath, JSON.stringify(release, null, 2) + '\n');
+          const lockPath = 'agents/tasks/plugins/taskctl/package-lock.json';
+          const lock = JSON.parse(fs.readFileSync(lockPath, 'utf8'));
+          lock.version = '0.4.28';
+          lock.packages[''].version = '0.4.28';
+          fs.writeFileSync(lockPath, JSON.stringify(lock, null, 2) + '\n');
           NODE
-          printf 'TASK_PLUGIN_SHA256=%s\n' "$(sha256sum "$artifact" | awk '{print $1}')"
-      - name: Upload exact package candidate
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: task-plugin-0.4.28-candidate
-          path: |
-            .candidate/openclaw-plugin-taskctl-0.4.28.tgz
-            .candidate/package-lock.json
-            .candidate/predecessor.json
-          if-no-files-found: error
-          retention-days: 1
+          rm -f \
+            agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.27.tgz \
+            agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.27.sha256 \
+            agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.28.tgz.b64 \
+            NOOP \
+            .github/workflows/daily-review-fix-prep.yml
+          git diff --check
+      - name: Commit exact frozen release
+        shell: bash
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -A
+          git diff --cached --check
+          git commit -m "Finalize Daily Review plugin 0.4.28 release"
+          git push origin "HEAD:${HEAD_BRANCH}"
