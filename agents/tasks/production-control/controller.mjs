@@ -18,11 +18,10 @@ import {
   selectMergedMainPrNumber,
   validateControlComment,
   validateMergedMainPr,
+  validateOperationEvidence,
   validateOperationalBinding,
-  validateRolloutEvidence,
 } from './lib.mjs';
 
-// Exact merge provenance requires merge_commit_sha, which GitHub REST 2026-03-10 removed from PR responses.
 const API_VERSION = '2022-11-28';
 const here = path.dirname(fileURLToPath(import.meta.url));
 const home = process.env.OPC_HOME || os.homedir();
@@ -215,12 +214,10 @@ async function hasMergedMainPr(sha) {
   if (commit?.sha !== sha) throw new Error('GitHub commit provenance response does not match requested SHA');
   const merge = parseGitHubMergeCommit(commit);
   if (!merge) return false;
-
   const associated = await githubGet(`/repos/${repository}/commits/${sha}/pulls`);
   if (!Array.isArray(associated)) throw new Error('GitHub associated PR response did not return a list');
   const prNumber = selectMergedMainPrNumber(associated, sha, merge.headParentSha);
   if (!prNumber) return false;
-
   const pr = await githubGet(`/repos/${repository}/pulls/${prNumber}`);
   return validateMergedMainPr(pr, prNumber, sha, merge.headParentSha);
 }
@@ -236,11 +233,8 @@ async function changedFiles(base, head) {
 
 async function runDiagnostics(requestId, sha, expectedProductionBaselineSha = null) {
   let result;
-  try {
-    result = await diagnose({ expectedProductionBaselineSha });
-  } catch (error) {
-    result = { ok: false, error: 'diagnostic-failed', message: error.message, checks: {} };
-  }
+  try { result = await diagnose({ expectedProductionBaselineSha }); }
+  catch (error) { result = { ok: false, error: 'diagnostic-failed', message: error.message, checks: {} }; }
   return { ...result, checked_at: now(), sha, request_id: requestId };
 }
 
@@ -287,35 +281,11 @@ function unitIsActive(unit) {
   try {
     const value = execFileSync('systemctl', ['--user', 'is-active', unit], { encoding: 'utf8', timeout: 5000 }).trim();
     return value === 'active' || value === 'activating';
-  } catch {
-    return false;
-  }
+  } catch { return false; }
 }
 
 function resultPath(requestId) {
   return path.join(stateDir, 'executions', `request-${requestId}.json`);
-}
-
-export function verifyRolloutBackupArtifact(controllerStateDir, requestId, evidence) {
-  try {
-    if (!Number.isSafeInteger(requestId) || requestId < 1) return { ok: false, reason: 'invalid rollout request id' };
-    if (!evidence || typeof evidence !== 'object' || typeof evidence.backup_archive !== 'string' || !/^[0-9a-f]{64}$/u.test(evidence.backup_sha256 ?? '')) return { ok: false, reason: 'rollout backup evidence is incomplete' };
-    const expectedRoot = path.resolve(controllerStateDir, 'recovery', `request-${requestId}`);
-    const archive = path.resolve(evidence.backup_archive);
-    if (!archive.startsWith(`${expectedRoot}${path.sep}`)) return { ok: false, reason: 'rollout backup path escapes request recovery root' };
-    const rootReal = fs.realpathSync(expectedRoot);
-    const stat = fs.lstatSync(archive);
-    if (!stat.isFile() || stat.isSymbolicLink()) return { ok: false, reason: 'rollout backup artifact is not a regular file' };
-    if ((stat.mode & 0o077) !== 0) return { ok: false, reason: 'rollout backup artifact is not owner-only' };
-    if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) return { ok: false, reason: 'rollout backup artifact owner mismatch' };
-    const real = fs.realpathSync(archive);
-    if (!real.startsWith(`${rootReal}${path.sep}`)) return { ok: false, reason: 'rollout backup artifact resolves outside request recovery root' };
-    const digest = execFileSync('sha256sum', [real], { encoding: 'utf8', timeout: 120000 }).trim().split(/\s+/u)[0] ?? '';
-    if (digest !== evidence.backup_sha256) return { ok: false, reason: 'rollout backup artifact checksum mismatch' };
-    return { ok: true, reason: null };
-  } catch (error) {
-    return { ok: false, reason: `rollout backup artifact verification failed: ${error.message}` };
-  }
 }
 
 async function validateDeployTarget(state, sha) {
@@ -324,10 +294,8 @@ async function validateDeployTarget(state, sha) {
   if (sha !== mainSha) throw new Error('requested SHA is not current implementation main');
   if (!(await hasMergedMainPr(sha))) throw new Error('requested SHA is not associated with a merged implementation main pull request');
   if (!(await workflowSucceeded(REQUIRED_WORKFLOW, sha))) throw new Error('required Task Agent CI push run is not successful');
-
   const protectedChanges = (await changedFiles(state.protected_path_baseline_sha, sha)).filter(isProtectedDeploymentPath);
   if (protectedChanges.length) throw new Error(`target changes protected deployment-control paths: ${protectedChanges.join(', ')}`);
-
   if (state.mode === 'STAGED') {
     if (!state.last_diagnostic?.ok) throw new Error('staged deployment requires a successful private diagnostic first');
     if (!(await workflowSucceeded(controllerCiWorkflow, sha))) throw new Error('production-controller CI push run is not successful');
@@ -336,7 +304,6 @@ async function validateDeployTarget(state, sha) {
     if (unsafe.length) throw new Error(`staged validation is not guaranteed no-op; runtime-relevant changes exist: ${unsafe.join(', ')}`);
     return { validationOnly: true };
   }
-
   if (state.mode !== 'ACTIVE') throw new Error(`controller mode ${state.mode} does not permit deployment`);
   return { validationOnly: false };
 }
@@ -358,96 +325,65 @@ async function validateRolloutTarget(state, sha) {
   return { predecessorVersion, targetVersion };
 }
 
-async function startDeployment(state, requestId, sha, validationOnly, source = 'github') {
-  prepareSourceCheckout(sha);
-  const unit = `openclaw-task-deploy-${requestId}`;
-  state.requests[String(requestId)] = {
-    type: 'deploy',
+function startDetachedOperation(state, requestId, operation, source = 'github') {
+  const isRollout = operation.type === 'rollout-openclaw';
+  const checkoutDir = isRollout ? rolloutSourceDir : sourceDir;
+  prepareSourceCheckout(operation.sha, checkoutDir);
+  const unit = isRollout ? `openclaw-rollout-${requestId}` : `openclaw-task-deploy-${requestId}`;
+  const record = {
+    type: operation.type,
     source,
-    sha,
+    sha: operation.sha,
     state: 'STARTING',
-    validation_only: validationOnly,
     unit,
     accepted_at: now(),
   };
+  if (operation.validationOnly) record.validation_only = true;
+  if (isRollout) {
+    record.predecessor_openclaw_version = operation.predecessorVersion;
+    record.target_openclaw_version = operation.targetVersion;
+  }
+  state.requests[String(requestId)] = record;
   writeState(state);
+  const wrapper = isRollout ? rolloutWrapper : deployWrapper;
+  const timeout = isRollout ? '90min' : '45min';
+  const args = [
+    '--user', `--unit=${unit}`, '--collect', '--property=Type=exec',
+    `--property=TimeoutStartSec=${timeout}`, `--property=RuntimeMaxSec=${timeout}`,
+    wrapper, String(requestId), checkoutDir, stateDir,
+  ];
+  if (isRollout) args.push(operation.predecessorVersion);
   try {
-    execFileSync('systemd-run', [
-      '--user',
-      `--unit=${unit}`,
-      '--collect',
-      '--property=Type=exec',
-      '--property=TimeoutStartSec=45min',
-      '--property=RuntimeMaxSec=45min',
-      deployWrapper,
-      String(requestId),
-      sourceDir,
-      stateDir,
-    ], { stdio: 'ignore', timeout: 15000 });
-    state.requests[String(requestId)].state = 'IN_PROGRESS';
-    state.requests[String(requestId)].started_at = now();
-    writeState(state);
+    execFileSync('systemd-run', args, { stdio: 'ignore', timeout: 15000 });
+    record.state = 'IN_PROGRESS';
+    record.started_at = now();
   } catch {
-    const record = state.requests[String(requestId)];
     record.state = 'BLOCKED_PRE_MUTATION';
     record.completed_at = now();
     record.reason = 'failed-to-start-detached-unit';
     advanceWatermarkForRecord(state, requestId, record);
-    writeState(state);
   }
-}
-
-async function startRollout(state, requestId, sha, predecessorVersion, targetVersion) {
-  prepareSourceCheckout(sha, rolloutSourceDir);
-  const unit = `openclaw-rollout-${requestId}`;
-  state.requests[String(requestId)] = {
-    type: 'rollout-openclaw',
-    source: 'github',
-    sha,
-    state: 'STARTING',
-    predecessor_openclaw_version: predecessorVersion,
-    target_openclaw_version: targetVersion,
-    unit,
-    accepted_at: now(),
-  };
   writeState(state);
-  try {
-    execFileSync('systemd-run', [
-      '--user',
-      `--unit=${unit}`,
-      '--collect',
-      '--property=Type=exec',
-      '--property=TimeoutStartSec=90min',
-      '--property=RuntimeMaxSec=90min',
-      rolloutWrapper,
-      String(requestId),
-      rolloutSourceDir,
-      stateDir,
-      predecessorVersion,
-    ], { stdio: 'ignore', timeout: 15000 });
-    state.requests[String(requestId)].state = 'IN_PROGRESS';
-    state.requests[String(requestId)].started_at = now();
-    writeState(state);
-  } catch {
-    const record = state.requests[String(requestId)];
-    record.state = 'BLOCKED_PRE_MUTATION';
-    record.completed_at = now();
-    record.reason = 'failed-to-start-detached-rollout-unit';
-    advanceWatermarkForRecord(state, requestId, record);
-    writeState(state);
-  }
 }
 
-async function reconcileDeployment(state) {
-  const request = Object.entries(state.requests || {}).find(([, value]) => value.type === 'deploy' && (value.state === 'STARTING' || value.state === 'IN_PROGRESS'));
-  if (!request) return false;
-  const [key, record] = request;
+function activeOperation(state) {
+  const active = Object.entries(state.requests || {}).filter(([, value]) =>
+    ['deploy', 'rollout-openclaw'].includes(value?.type) && (value?.state === 'STARTING' || value?.state === 'IN_PROGRESS'));
+  if (active.length > 1) throw new Error('multiple active production operations found in controller state');
+  return active[0] ?? null;
+}
+
+async function reconcileOperation(state) {
+  const active = activeOperation(state);
+  if (!active) return false;
+  const [key, record] = active;
   const requestId = Number(key);
   const file = resultPath(requestId);
   if (!fs.existsSync(file)) {
     if (unitIsActive(record.unit)) return true;
     record.state = 'UNKNOWN';
     record.completed_at = now();
+    record.evidence_error = 'detached unit ended without durable result evidence';
     state.deployment_blocked = true;
     state.block_reason = `request ${requestId} outcome unknown`;
     advanceWatermarkForRecord(state, requestId, record);
@@ -456,116 +392,58 @@ async function reconcileDeployment(state) {
     return false;
   }
 
-  const evidence = JSON.parse(fs.readFileSync(file, 'utf8'));
-  let outcome = evidence.outcome || 'UNKNOWN';
-  let block = evidence.block_further_deployments === true;
-  const diagnosticBaseline = outcome === 'SUCCESS' ? record.sha : null;
-  const postDiagnostic = await runDiagnostics(requestId, record.sha, diagnosticBaseline);
+  let evidence = null;
+  try { evidence = JSON.parse(fs.readFileSync(file, 'utf8')); } catch {}
+  const terminal = validateOperationEvidence(record, evidence, requestId);
+  let outcome = terminal.outcome;
+  let block = terminal.block;
+  if (!terminal.ok) record.evidence_error = terminal.reason;
+  let postDiagnostic = null;
 
-  if (record.validation_only) {
-    const expectedNoop = outcome === 'SUCCESS' && evidence.deploy_stage === 'NOOP' && evidence.mutation_started === false;
-    if (!expectedNoop) {
-      outcome = 'UNEXPECTED_MUTATION';
-      block = true;
-    } else if (postDiagnostic.ok) {
-      state.mode = 'ACTIVE';
-      state.activated_at = now();
-      state.production_baseline_sha = record.sha;
-    }
-  } else if (outcome === 'SUCCESS') {
-    state.production_baseline_sha = record.sha;
-  }
-
-  record.state = outcome;
-  record.completed_at = now();
-  record.evidence = {
-    deploy_execution_id: evidence.deploy_execution_id ?? null,
-    deploy_stage: evidence.deploy_stage ?? null,
-    rollback_count: evidence.rollback_count ?? 0,
-    mutation_started: evidence.mutation_started === true,
-  };
-  state.last_diagnostic = postDiagnostic;
-  advanceWatermarkForRecord(state, requestId, record);
-  if (block || outcome === 'UNEXPECTED_MUTATION') {
-    state.deployment_blocked = true;
-    state.block_reason = `request ${requestId} ended ${outcome}`;
-  }
-  writeState(state);
-  return false;
-}
-
-async function reconcileRollout(state) {
-  const request = Object.entries(state.requests || {}).find(([, value]) => value.type === 'rollout-openclaw' && (value.state === 'STARTING' || value.state === 'IN_PROGRESS'));
-  if (!request) return false;
-  const [key, record] = request;
-  const requestId = Number(key);
-  const file = resultPath(requestId);
-  if (!fs.existsSync(file)) {
-    if (unitIsActive(record.unit)) return true;
-    record.state = 'UNKNOWN';
-    record.completed_at = now();
-    state.deployment_blocked = true;
-    state.block_reason = `rollout request ${requestId} outcome unknown`;
-    advanceWatermarkForRecord(state, requestId, record);
-    writeState(state);
-    return false;
-  }
-
-  let evidence;
-  try { evidence = JSON.parse(fs.readFileSync(file, 'utf8')); }
-  catch { evidence = null; }
-  const validatedEvidence = validateRolloutEvidence(record, evidence, requestId);
-  let outcome = validatedEvidence.outcome;
-  let block = validatedEvidence.block;
-  if (!validatedEvidence.ok) record.evidence_error = validatedEvidence.reason;
   if (outcome === 'SUCCESS') {
-    const backupVerification = verifyRolloutBackupArtifact(stateDir, requestId, evidence);
-    if (!backupVerification.ok) {
+    if (record.validation_only && evidence.mutation_started !== false) {
       outcome = 'UNKNOWN';
       block = true;
-      record.evidence_error = backupVerification.reason;
-    }
-  }
-  let postDiagnostic = null;
-  if (outcome === 'SUCCESS') {
-    try {
-      prepareSourceCheckout(record.sha, sourceDir);
-      postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
-      if (!postDiagnostic.ok) {
+      record.evidence_error = 'staged validation operation mutated production';
+    } else {
+      try {
+        prepareSourceCheckout(record.sha, sourceDir);
+        postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
+        if (!postDiagnostic.ok) {
+          outcome = 'BLOCKED_REQUIRES_JUDGMENT';
+          block = true;
+          record.evidence_error = 'post-operation target diagnostics failed';
+        } else {
+          state.production_baseline_sha = record.sha;
+          if (record.validation_only) {
+            state.mode = 'ACTIVE';
+            state.activated_at = now();
+          }
+        }
+      } catch (error) {
         outcome = 'BLOCKED_REQUIRES_JUDGMENT';
         block = true;
-      } else {
-        state.production_baseline_sha = record.sha;
+        record.reconciliation_error = error.message;
       }
-    } catch (error) {
-      outcome = 'BLOCKED_REQUIRES_JUDGMENT';
-      block = true;
-      record.reconciliation_error = error.message;
     }
+  } else {
+    postDiagnostic = await runDiagnostics(requestId, record.sha);
   }
 
   record.state = outcome;
   record.completed_at = now();
-  record.evidence = {
-    stage: evidence?.stage ?? null,
-    predecessor_openclaw_version: evidence?.predecessor_openclaw_version ?? null,
-    target_openclaw_version: evidence?.target_openclaw_version ?? null,
-    core_version: evidence?.core_version ?? null,
-    backup_created: evidence?.backup_created === true,
-    backup_archive: evidence?.backup_archive ?? null,
-    backup_sha256: evidence?.backup_sha256 ?? null,
-    mutation_started: evidence?.mutation_started === true,
-    gateway_ready: evidence?.gateway_ready === true,
-    codex_version: evidence?.codex_version ?? null,
-    task_deploy_result: evidence?.task_deploy_result ?? null,
-    task_deploy_stage: evidence?.task_deploy_stage ?? null,
-    task_mutation_started: evidence?.task_mutation_started === true,
-  };
+  record.evidence = evidence && typeof evidence === 'object' ? {
+    operation: evidence.operation ?? null,
+    source_revision: evidence.source_revision ?? null,
+    mutation_started: evidence.mutation_started === true,
+    outcome: evidence.outcome ?? null,
+    result_file: file,
+  } : { result_file: file };
   if (postDiagnostic) state.last_diagnostic = postDiagnostic;
   advanceWatermarkForRecord(state, requestId, record);
   if (block) {
     state.deployment_blocked = true;
-    state.block_reason = `rollout request ${requestId} ended ${outcome}`;
+    state.block_reason = `request ${requestId} ended ${outcome}`;
   }
   writeState(state);
   return false;
@@ -585,10 +463,9 @@ async function processDiagnostic(state, id) {
 
 async function poll() {
   const state = readState();
+  assertInstalledControllerRevision(state);
   const binding = currentBinding();
-  if (await reconcileRollout(state)) return;
-  if (await reconcileDeployment(state)) return;
-
+  if (await reconcileOperation(state)) return;
   const comments = await listControlComments();
   for (const comment of comments) {
     const id = Number(comment.id);
@@ -606,10 +483,9 @@ async function poll() {
     if (validated.command.type === 'rollout-openclaw') {
       try {
         const { predecessorVersion, targetVersion } = await validateRolloutTarget(state, validated.command.sha);
-        await startRollout(state, id, validated.command.sha, predecessorVersion, targetVersion);
+        startDetachedOperation(state, id, { type: 'rollout-openclaw', sha: validated.command.sha, predecessorVersion, targetVersion });
       } catch (error) {
-        const record = { type: 'rollout-openclaw', source: 'github', sha: validated.command.sha, state: 'BLOCKED_PRE_MUTATION', completed_at: now(), reason: error.message };
-        state.requests[String(id)] = record;
+        state.requests[String(id)] = { type: 'rollout-openclaw', source: 'github', sha: validated.command.sha, state: 'BLOCKED_PRE_MUTATION', completed_at: now(), reason: error.message };
         state.watermark = Math.max(state.watermark, id);
         writeState(state);
       }
@@ -617,17 +493,9 @@ async function poll() {
     }
     try {
       const { validationOnly } = await validateDeployTarget(state, validated.command.sha);
-      await startDeployment(state, id, validated.command.sha, validationOnly, 'github');
+      startDetachedOperation(state, id, { type: 'deploy', sha: validated.command.sha, validationOnly });
     } catch (error) {
-      const record = {
-        type: 'deploy',
-        source: 'github',
-        sha: validated.command.sha,
-        state: 'BLOCKED_PRE_MUTATION',
-        completed_at: now(),
-        reason: error.message,
-      };
-      state.requests[String(id)] = record;
+      state.requests[String(id)] = { type: 'deploy', source: 'github', sha: validated.command.sha, state: 'BLOCKED_PRE_MUTATION', completed_at: now(), reason: error.message };
       state.watermark = Math.max(state.watermark, id);
       writeState(state);
     }
@@ -644,9 +512,9 @@ function summarizeLastDiagnostic(value) {
   };
 }
 
-export function getSemanticStatus() {
+export function getLocalStatus() {
   const state = readState();
-  const active = Object.entries(state.requests || {}).find(([, value]) => value?.state === 'STARTING' || value?.state === 'IN_PROGRESS');
+  const active = activeOperation(state);
   return {
     ok: true,
     mode: state.mode,
@@ -656,20 +524,19 @@ export function getSemanticStatus() {
     protected_path_baseline_sha: state.protected_path_baseline_sha ?? null,
     production_baseline_sha: state.production_baseline_sha ?? null,
     active_request: active ? {
-      id: Number(active[0]),
-      type: active[1]?.type ?? null,
-      source: requestSource(active[1]),
-      sha: active[1]?.sha ?? null,
-      state: active[1]?.state ?? null,
+      id: Number(active[0]), type: active[1]?.type ?? null, source: requestSource(active[1]), sha: active[1]?.sha ?? null, state: active[1]?.state ?? null,
     } : null,
     last_diagnostic: summarizeLastDiagnostic(state.last_diagnostic),
   };
 }
 
-export async function runSemanticDiagnostics() {
+export async function runLocalDiagnostics() {
   const result = await diagnose();
   return { ...result, checked_at: now() };
 }
+
+export const getSemanticStatus = getLocalStatus;
+export const runSemanticDiagnostics = runLocalDiagnostics;
 
 export async function requestSemanticDeployment(sha) {
   if (!SHA_RE.test(sha ?? '')) throw new Error('semantic deploy requires an exact 40-character lowercase SHA');
@@ -677,35 +544,21 @@ export async function requestSemanticDeployment(sha) {
   try {
     const state = readState();
     assertInstalledControllerRevision(state);
-    if (await reconcileRollout(state)) throw new Error('an OpenClaw rollout is already in progress');
-    if (await reconcileDeployment(state)) throw new Error('another production operation is already in progress');
-
+    if (await reconcileOperation(state)) throw new Error('another production operation is already in progress');
     const { validationOnly } = await validateDeployTarget(state, sha);
     const requestId = allocateSemanticRequestId(state);
     try {
-      await startDeployment(state, requestId, sha, validationOnly, 'semantic');
+      startDetachedOperation(state, requestId, { type: 'deploy', sha, validationOnly }, 'semantic');
     } catch (error) {
-      const record = {
-        type: 'deploy',
-        source: 'semantic',
-        sha,
-        state: 'BLOCKED_PRE_MUTATION',
-        completed_at: now(),
-        reason: error.message,
-      };
+      const record = { type: 'deploy', source: 'semantic', sha, state: 'BLOCKED_PRE_MUTATION', completed_at: now(), reason: error.message };
       state.requests[String(requestId)] = record;
       writeState(state);
       return { ok: false, accepted: false, request_id: requestId, sha, state: record.state, reason: record.reason };
     }
     const record = state.requests[String(requestId)];
     return {
-      ok: record?.state === 'IN_PROGRESS',
-      accepted: record?.state === 'IN_PROGRESS',
-      request_id: requestId,
-      sha,
-      source: 'semantic',
-      state: record?.state ?? 'UNKNOWN',
-      validation_only: validationOnly,
+      ok: record?.state === 'IN_PROGRESS', accepted: record?.state === 'IN_PROGRESS', request_id: requestId, sha,
+      source: 'semantic', state: record?.state ?? 'UNKNOWN', validation_only: validationOnly,
     };
   } finally {
     release();
@@ -732,7 +585,6 @@ async function bootstrap(args) {
     owner_login: requiredArg(args, '--owner-login'),
     owner_id: Number(requiredArg(args, '--owner-id')),
   });
-
   await githubGet(`/repos/${binding.control_repository}`);
   await githubGet(`/repos/${binding.control_repository}/issues/${binding.control_issue}`);
   await githubGet(`/repos/${binding.implementation_repository}`);
@@ -764,14 +616,13 @@ async function bootstrap(args) {
 async function main() {
   const [command, ...args] = process.argv.slice(2);
   if (command === 'diagnose-local') {
-    process.stdout.write(`${JSON.stringify(await runSemanticDiagnostics())}\n`);
+    process.stdout.write(`${JSON.stringify(await runLocalDiagnostics())}\n`);
     return;
   }
   if (command === 'status-local') {
-    process.stdout.write(`${JSON.stringify(getSemanticStatus())}\n`);
+    process.stdout.write(`${JSON.stringify(getLocalStatus())}\n`);
     return;
   }
-
   const release = acquireLock();
   try {
     if (command === 'bootstrap') await bootstrap(args);
