@@ -68,6 +68,10 @@ bash agents/calendar/validate.sh
 
 The package CI validates runtime compatibility, source/config shape, taxonomy validation, review-window arithmetic, overlap de-duplication, target calculations, weekend exclusion, provider write bounds, fail-closed tool policy, and absence of obvious secret material.
 
+Before activating or changing a runtime-owned Calendar automation that uses `trigger.script`, validate that script against the exact qualified OpenClaw code-mode runtime rather than Node.js alone.
+
+Qualification must exercise representative fire and skip cases and fail closed when the script relies on globals unavailable in the qualified runtime. Source CI does not substitute for runtime trigger qualification.
+
 ## Production boundary
 
 Source preparation does not activate Calendar Agent.
