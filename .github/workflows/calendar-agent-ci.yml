@@ -5,11 +5,6 @@ on:
     branches: [main]
   pull_request:
     branches: [main]
-    paths:
-      - "runtime-contract.json"
-      - "shared/runtime-contract/**"
-      - "agents/calendar/**"
-      - ".github/workflows/calendar-agent-ci.yml"
     types: [opened, synchronize, reopened, ready_for_review]
   workflow_dispatch:
 
@@ -22,6 +17,7 @@ concurrency:
 
 jobs:
   validate:
+    name: Calendar Agent gate
     runs-on: ubuntu-latest
     timeout-minutes: 12
     env:
@@ -36,7 +32,26 @@ jobs:
           fetch-depth: 0
           persist-credentials: false
 
+      - name: Determine Calendar relevance
+        id: scope
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+          relevant=true
+          if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
+            relevant=false
+            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/calendar/|\.github/workflows/calendar-agent-ci\.yml$)'; then
+              relevant=true
+            fi
+          fi
+          printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
+          printf 'calendar_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
+
       - name: Read runtime contract
+        if: steps.scope.outputs.relevant == 'true'
         id: runtime
         shell: bash
         run: |
@@ -53,24 +68,29 @@ jobs:
           PY
 
       - name: Set up Node.js
+        if: steps.scope.outputs.relevant == 'true'
         uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
         with:
           node-version: ${{ steps.runtime.outputs.node_version }}
 
       - name: Validate repository runtime contract
+        if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           node shared/runtime-contract/runtime-contract.mjs repo-check .
           node --test shared/runtime-contract/runtime-contract.test.mjs
 
       - name: Validate Calendar source boundary
+        if: steps.scope.outputs.relevant == 'true'
         run: bash agents/calendar/validate.sh
 
       - name: Install Calendar plugin dependencies
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: agents/calendar/plugin
         run: npm ci
 
       - name: Test and build Calendar plugin
+        if: steps.scope.outputs.relevant == 'true'
         working-directory: agents/calendar/plugin
         run: |
           set -euo pipefail
@@ -79,6 +99,7 @@ jobs:
           npm run plugin:validate
 
       - name: Verify generated Calendar metadata is frozen
+        if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
           git diff --exit-code -- \
