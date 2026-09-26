@@ -10,17 +10,17 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.27",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.27.tgz",
-    "sha256": "5e921e93da453b5ba74d56449b523f4e4ef61ef9033283e5ed24d5b82403f0f5"
+    "version": "0.4.28",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.28.tgz",
+    "sha256": "1eebbc6ec88b6d7fb03c6f6190dc72e99fe1349d85b34f45f85e8044f449c15b"
   },
   "from": {
-    "source_revision": "3259f95bb4df2ac9a2e78cc94a7fc69fe3bbc58d",
+    "source_revision": "d2001c60f884770053ed821614e7d9f5e7c12da5",
     "sqlite_schemas": [
       9
     ],
     "taskctl_versions": [
-      "0.4.15"
+      "0.4.16"
     ],
     "plugin_versions": [
       "0.4.27"
@@ -45,7 +45,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "d213fa842424811e139cf89894d31a1db8913196ae617c047e84c9a43fe60a08",
+    "release_sha256": "5a0b0c44e42c729333e291d5ccd9100a803508803698c6d048c3c0cd1d5380f8",
     "implementation_version": "0.1.5",
     "sqlite_schema": 3,
     "predecessor_mode": "exact"

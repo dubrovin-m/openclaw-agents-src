@@ -1,4 +1,4 @@
-# Taskctl plugin 0.4.27
+# Taskctl plugin 0.4.28
 
 Typed tool plugin for the fixed local Task Agent executable and bounded Task Agent production-control interface. The exact qualified OpenClaw host version is owned by the repository `runtime-contract.json` and mirrored in package/release metadata.
 

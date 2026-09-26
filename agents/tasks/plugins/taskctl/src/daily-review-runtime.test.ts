@@ -7,6 +7,7 @@ import {
 import {
   dailyReviewRuntimeInternals,
   prepareDailyReviewRuntimeProjection,
+  registerDailyReviewSchedulerAccess,
 } from "./daily-review-runtime.js";
 
 const BOOTSTRAP = "2026-09-05T06:00:00.000Z";
@@ -120,6 +121,45 @@ function projectionDeps(service: ReturnType<typeof scheduler>["service"], abortS
     abortSignal: abortSignal ?? new AbortController().signal,
   };
 }
+
+describe("Daily Review scheduler lifecycle", () => {
+  it("uses service-bound scheduler access without cron_reconciled replay and refreshes after replacement", () => {
+    dailyReviewRuntimeInternals.resetState();
+    const first = scheduler(pair()).service;
+    const second = scheduler(pair()).service;
+    let current = first;
+    let runtimeService: {
+      start: (context: unknown) => unknown;
+      stop: () => unknown;
+    } | undefined;
+
+    const api = {
+      registerService: vi.fn((service) => {
+        runtimeService = service as typeof runtimeService;
+      }),
+      on: vi.fn(),
+    };
+
+    registerDailyReviewSchedulerAccess(api as never);
+    expect(runtimeService).toBeDefined();
+    runtimeService!.start({ getCron: () => current });
+
+    const firstGeneration = dailyReviewRuntimeInternals.requireSchedulerGeneration();
+    expect(firstGeneration.service).toBe(first);
+    expect(firstGeneration.isCurrent?.()).toBe(true);
+
+    current = second;
+    expect(firstGeneration.isCurrent?.()).toBe(false);
+
+    const secondGeneration = dailyReviewRuntimeInternals.requireSchedulerGeneration();
+    expect(secondGeneration.service).toBe(second);
+    expect(secondGeneration.isCurrent?.()).toBe(true);
+
+    runtimeService!.stop();
+    expect(() => dailyReviewRuntimeInternals.requireSchedulerGeneration()).toThrow(/unavailable or stale/);
+    dailyReviewRuntimeInternals.resetState();
+  });
+});
 
 describe("Daily Review native Automation receipt", () => {
   it("round-trips one exact receipt while preserving operator description", () => {

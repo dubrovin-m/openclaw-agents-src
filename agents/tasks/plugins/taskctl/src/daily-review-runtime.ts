@@ -57,11 +57,15 @@ type SchedulerService = {
 
 type SchedulerGeneration = {
   service: SchedulerService;
-  abortSignal: AbortSignal;
+  abortSignal?: AbortSignal;
 };
 
 type ProjectionDeps = SchedulerGeneration & {
   isCurrent?: () => boolean;
+};
+
+type SchedulerServiceBinding = {
+  getService: () => SchedulerService | undefined;
 };
 
 type Receipt = {
@@ -70,6 +74,7 @@ type Receipt = {
 };
 
 let schedulerGeneration: SchedulerGeneration | undefined;
+let schedulerServiceBinding: SchedulerServiceBinding | undefined;
 
 function parseInstant(value: string, label: string): { iso: string; ms: number } {
   const date = new Date(value);
@@ -80,7 +85,7 @@ function parseInstant(value: string, label: string): { iso: string; ms: number }
 }
 
 function assertProjectionActive(deps: ProjectionDeps): void {
-  deps.abortSignal.throwIfAborted();
+  deps.abortSignal?.throwIfAborted();
   if (deps.isCurrent && !deps.isCurrent()) {
     throw new Error("Daily Review scheduler projection is stale");
   }
@@ -319,15 +324,53 @@ export async function prepareDailyReviewRuntimeProjection(
   };
 }
 
-function requireSchedulerGeneration(): SchedulerGeneration {
-  const generation = schedulerGeneration;
-  if (!generation || generation.abortSignal.aborted) {
+function requireSchedulerGeneration(): ProjectionDeps {
+  const serviceBinding = schedulerServiceBinding;
+  if (serviceBinding) {
+    try {
+      const service = serviceBinding.getService();
+      if (service) {
+        return {
+          service,
+          isCurrent: () => {
+            try {
+              return schedulerServiceBinding === serviceBinding && serviceBinding.getService() === service;
+            } catch {
+              return false;
+            }
+          },
+        };
+      }
+    } catch {
+      // A revoked service-bound scheduler must fail closed rather than fall back
+      // to a potentially stale cron_reconciled snapshot.
+    }
     throw new Error("Daily Review scheduler projection is unavailable or stale");
   }
-  return generation;
+  const generation = schedulerGeneration;
+  if (!generation || generation.abortSignal?.aborted) {
+    throw new Error("Daily Review scheduler projection is unavailable or stale");
+  }
+  return {
+    ...generation,
+    isCurrent: () => schedulerGeneration === generation,
+  };
 }
 
 export function registerDailyReviewSchedulerAccess(api: OpenClawPluginApi): void {
+  api.registerService({
+    id: "taskctl-daily-review-scheduler-access",
+    start: (context) => {
+      const serviceContext = context as typeof context & {
+        getCron?: () => SchedulerService | undefined;
+      };
+      const getService = serviceContext.getCron;
+      schedulerServiceBinding = getService ? { getService } : undefined;
+    },
+    stop: () => {
+      schedulerServiceBinding = undefined;
+    },
+  });
   api.on("cron_reconciled", (event, context) => {
     if (!event.enabled) {
       schedulerGeneration = undefined;
@@ -362,10 +405,7 @@ export function createDailyReviewTool(
     execute: async (_toolCallId, rawParams, signal) => {
       const params = rawParams as DailyReviewParams;
       const generation = requireSchedulerGeneration();
-      const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, {
-        ...generation,
-        isCurrent: () => schedulerGeneration === generation,
-      });
+      const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, generation);
       const result = await executeDailyReview(params, {
         api,
         toolContext,
@@ -388,4 +428,9 @@ export const dailyReviewRuntimeInternals = {
   validatePair,
   promoteReceipt,
   historyEntries,
+  requireSchedulerGeneration,
+  resetState: () => {
+    schedulerGeneration = undefined;
+    schedulerServiceBinding = undefined;
+  },
 };
