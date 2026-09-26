@@ -27,7 +27,6 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const home = process.env.OPC_HOME || os.homedir();
 const stateDir = process.env.OPC_STATE_DIR || path.join(home, '.local', 'state', 'openclaw-production-control');
 const stateFile = path.join(stateDir, 'state.json');
-const lockFile = path.join(stateDir, 'controller.lock');
 const installedRevisionFile = process.env.OPC_INSTALLED_REVISION_FILE || path.join(here, 'installed-revision');
 const tokenFile = process.env.OPC_GITHUB_TOKEN_FILE || path.join(home, '.config', 'openclaw-production-control', 'github-token');
 const sourceDir = process.env.OPC_SOURCE_DIR || path.join(home, '.local', 'share', 'openclaw-production-control', 'openclaw-agents');
@@ -53,26 +52,6 @@ function currentBinding() {
 function ensureStateDir() {
   fs.mkdirSync(stateDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(stateDir, 0o700);
-}
-
-function acquireLock() {
-  ensureStateDir();
-  let fd;
-  try {
-    fd = fs.openSync(lockFile, 'wx', 0o600);
-    fs.writeFileSync(fd, `${process.pid} ${now()}\n`);
-  } catch {
-    throw new Error(`controller lock already exists: ${lockFile}`);
-  }
-  let released = false;
-  const release = () => {
-    if (released) return;
-    released = true;
-    try { fs.closeSync(fd); } catch {}
-    try { fs.unlinkSync(lockFile); } catch {}
-  };
-  process.once('exit', release);
-  return release;
 }
 
 function readToken() {
@@ -127,20 +106,6 @@ function requestSource(record) {
 
 function advanceWatermarkForRecord(state, requestId, record) {
   if (requestSource(record) === 'github') state.watermark = Math.max(state.watermark, requestId);
-}
-
-export function allocateSemanticRequestId(state, clock = Date.now) {
-  let id = Number(clock());
-  if (!Number.isSafeInteger(id) || id < 1) throw new Error('semantic request clock did not produce a positive safe integer');
-  while (Object.hasOwn(state.requests || {}, String(id))) {
-    id += 1;
-    if (!Number.isSafeInteger(id)) throw new Error('semantic request id space exhausted');
-  }
-  return id;
-}
-
-export function recordAdvancesGitHubWatermark(record) {
-  return requestSource(record) === 'github';
 }
 
 async function githubGet(endpoint) {
@@ -325,14 +290,14 @@ async function validateRolloutTarget(state, sha) {
   return { predecessorVersion, targetVersion };
 }
 
-function startDetachedOperation(state, requestId, operation, source = 'github') {
+function startDetachedOperation(state, requestId, operation) {
   const isRollout = operation.type === 'rollout-openclaw';
   const checkoutDir = isRollout ? rolloutSourceDir : sourceDir;
   prepareSourceCheckout(operation.sha, checkoutDir);
   const unit = isRollout ? `openclaw-rollout-${requestId}` : `openclaw-task-deploy-${requestId}`;
   const record = {
     type: operation.type,
-    source,
+    source: 'github',
     sha: operation.sha,
     state: 'STARTING',
     unit,
@@ -535,34 +500,13 @@ export async function runLocalDiagnostics() {
   return { ...result, checked_at: now() };
 }
 
+// Compatibility exports for the already released Task plugin. They are read-only;
+// semantic production mutation is deliberately disabled and cannot authorize work.
 export const getSemanticStatus = getLocalStatus;
 export const runSemanticDiagnostics = runLocalDiagnostics;
-
 export async function requestSemanticDeployment(sha) {
   if (!SHA_RE.test(sha ?? '')) throw new Error('semantic deploy requires an exact 40-character lowercase SHA');
-  const release = acquireLock();
-  try {
-    const state = readState();
-    assertInstalledControllerRevision(state);
-    if (await reconcileOperation(state)) throw new Error('another production operation is already in progress');
-    const { validationOnly } = await validateDeployTarget(state, sha);
-    const requestId = allocateSemanticRequestId(state);
-    try {
-      startDetachedOperation(state, requestId, { type: 'deploy', sha, validationOnly }, 'semantic');
-    } catch (error) {
-      const record = { type: 'deploy', source: 'semantic', sha, state: 'BLOCKED_PRE_MUTATION', completed_at: now(), reason: error.message };
-      state.requests[String(requestId)] = record;
-      writeState(state);
-      return { ok: false, accepted: false, request_id: requestId, sha, state: record.state, reason: record.reason };
-    }
-    const record = state.requests[String(requestId)];
-    return {
-      ok: record?.state === 'IN_PROGRESS', accepted: record?.state === 'IN_PROGRESS', request_id: requestId, sha,
-      source: 'semantic', state: record?.state ?? 'UNKNOWN', validation_only: validationOnly,
-    };
-  } finally {
-    release();
-  }
+  throw new Error('semantic production deployment is disabled; use the owner-authorized private control request');
 }
 
 function requiredArg(args, name) {
@@ -623,14 +567,9 @@ async function main() {
     process.stdout.write(`${JSON.stringify(getLocalStatus())}\n`);
     return;
   }
-  const release = acquireLock();
-  try {
-    if (command === 'bootstrap') await bootstrap(args);
-    else if (command === 'poll') await poll();
-    else throw new Error('Usage: controller.mjs <bootstrap --production-sha SHA --controller-sha SHA --control-repository OWNER/REPO --implementation-repository OWNER/REPO --control-issue N --owner-login LOGIN --owner-id ID|poll|diagnose-local|status-local>');
-  } finally {
-    release();
-  }
+  if (command === 'bootstrap') await bootstrap(args);
+  else if (command === 'poll') await poll();
+  else throw new Error('Usage: controller.mjs <bootstrap --production-sha SHA --controller-sha SHA --control-repository OWNER/REPO --implementation-repository OWNER/REPO --control-issue N --owner-login LOGIN --owner-id ID|poll|diagnose-local|status-local>');
 }
 
 const invokedPath = process.argv[1] ? pathToFileURL(path.resolve(process.argv[1])).href : null;
