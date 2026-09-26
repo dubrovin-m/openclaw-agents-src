@@ -10,7 +10,7 @@ on:
       - ".github/workflows/wave3-taskctl-artifact-bootstrap.yml"
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
   generate:
@@ -35,10 +35,17 @@ jobs:
       - name: Generate exact Task CLI
         run: node agents/tasks/build-taskctl.mjs
 
-      - name: Upload generated Task CLI
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: wave3-taskctl
-          path: agents/tasks/taskctl
-          if-no-files-found: error
-          retention-days: 1
+      - name: Materialize exact unattached Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EXPECTED_BLOB_SHA: 976ec932dbed5e68d254c40033289b12b16eef02
+        run: |
+          set -euo pipefail
+          node - <<'NODE' > "$RUNNER_TEMP/taskctl-blob.json"
+          const fs = require('node:fs');
+          const content = fs.readFileSync('agents/tasks/taskctl').toString('base64');
+          process.stdout.write(JSON.stringify({ content, encoding: 'base64' }));
+          NODE
+          blob_sha="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input "$RUNNER_TEMP/taskctl-blob.json" --jq .sha)"
+          test "$blob_sha" = "$EXPECTED_BLOB_SHA"
+          printf 'TASKCTL_GIT_BLOB_SHA=%s\n' "$blob_sha"
