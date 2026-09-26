@@ -120,18 +120,12 @@ jobs:
         working-directory: agents/tasks/plugins/taskctl
         run: timeout 300s npm ci
 
-      - name: Generate modular Task CLI candidate
+      - name: Verify modular Task CLI generated artifact
         if: steps.scope.outputs.relevant == 'true'
         shell: bash
         run: |
           set -euo pipefail
-          cp agents/tasks/taskctl "$RUNNER_TEMP/taskctl.baseline"
-          node agents/tasks/build-taskctl.mjs
-          echo 'TASKCTL_GENERATED_GZIP_BASE64_BEGIN'
-          gzip -9c agents/tasks/taskctl | base64 -w0 | fold -w 4000
-          echo 'TASKCTL_GENERATED_GZIP_BASE64_END'
-          cp "$RUNNER_TEMP/taskctl.baseline" agents/tasks/taskctl
-          chmod +x agents/tasks/taskctl
+          node agents/tasks/build-taskctl.mjs --check
 
       - name: Test and validate plugin
         if: steps.scope.outputs.relevant == 'true'
