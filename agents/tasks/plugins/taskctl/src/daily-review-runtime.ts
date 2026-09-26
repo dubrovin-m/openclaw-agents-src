@@ -1,37 +1,30 @@
-import type {
-  AnyAgentTool,
-  OpenClawPluginApi,
-  OpenClawPluginToolContext,
-} from "openclaw/plugin-sdk/plugin-entry";
+import { execFile } from "node:child_process";
+import type { OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import {
   DAILY_REVIEW_DECLARATIONS,
   DAILY_REVIEW_GROUP_ID,
   TASK_DAILY_REVIEW_TOOL,
   buildDailyReviewScript,
-  dailyReviewInternals,
-  dailyReviewParameters,
   executeDailyReview,
 } from "./daily-review.js";
 
+export const DAILY_REVIEW_CLI_COMMAND = "taskctl-runtime";
 const DAILY_REVIEW_AGENT_ID = "tasks";
 const DAILY_REVIEW_TIMEZONE = "Europe/Moscow";
-const RECEIPT_TOKEN = "[taskctl.daily-review.receipt.v1";
-const RECEIPT_RE = /(?:\n\n)?\[taskctl\.daily-review\.receipt\.v1 last_delivered_run_at=([^\]\s]+)\]$/;
-const SYNTHETIC_ACTIVATION_VALIDATED_ROUTE = "task-daily-review-activation-validated-route";
+const COMMAND_TIMEOUT_SECONDS = 300;
+const CLI_READ_TIMEOUT_MS = 12_000;
+const CLI_MAX_BUFFER_BYTES = 4 * 1024 * 1024;
 
-type DailyReviewParams = {
-  group_id: typeof DAILY_REVIEW_GROUP_ID;
-  bootstrap_checkpoint: string;
-  peer_job_id: string;
-};
+type DailyReviewDeclaration = (typeof DAILY_REVIEW_DECLARATIONS)[keyof typeof DAILY_REVIEW_DECLARATIONS];
 
-type SchedulerJob = {
+type NativeJob = {
   id: string;
   declarationKey?: string;
-  agentId?: string;
   name?: string;
   description?: string;
   enabled?: boolean;
+  agentId?: string;
+  createdAtMs?: number;
   schedule?: {
     kind?: string;
     expr?: string;
@@ -39,114 +32,117 @@ type SchedulerJob = {
     staggerMs?: number;
   };
   sessionTarget?: string;
-  wakeMode?: string;
-  payload?: { kind?: string; text?: string };
+  payload?: {
+    kind?: string;
+    argv?: string[];
+    timeoutSeconds?: number;
+    toolsAllow?: string[];
+  };
+  delivery?: {
+    mode?: string;
+    channel?: string;
+    to?: string;
+    accountId?: string;
+    threadId?: string | number;
+    bestEffort?: boolean;
+  };
   state?: {
     runningAtMs?: number;
-    lastRunAtMs?: number;
-    lastRunStatus?: "ok" | "error" | "skipped";
-    lastDelivered?: boolean;
-    lastDeliveryStatus?: "not-requested" | "delivered" | "not-delivered" | "unknown";
   };
 };
 
-type SchedulerService = {
-  list: (opts?: { includeDisabled?: boolean }) => Promise<SchedulerJob[]>;
-  update: (id: string, patch: { description?: string }) => Promise<unknown>;
+type NativeRunPage = {
+  entries?: unknown[];
+  total?: number;
+  offset?: number;
+  limit?: number;
+  hasMore?: boolean;
+  nextOffset?: number | null;
 };
 
-type SchedulerGeneration = {
-  service: SchedulerService;
-  abortSignal?: AbortSignal;
+type SchedulerReader = (args: string[]) => Promise<unknown>;
+
+type DailyReviewCommandDeps = {
+  readScheduler?: SchedulerReader;
+  loadSnapshot?: (boundaryIso: string) => unknown | Promise<unknown>;
+  runSemanticModel?: (prompt: string, jobId: string) => Promise<string>;
 };
 
-type ProjectionDeps = SchedulerGeneration & {
-  isCurrent?: () => boolean;
+type DailyReviewCommandOptions = {
+  declarationKey: string;
+  openclawBin: string;
 };
 
-type SchedulerServiceBinding = {
-  getService: () => SchedulerService | undefined;
-};
-
-type Receipt = {
-  baseDescription: string;
-  lastDeliveredRunAtMs: number | null;
-};
-
-let schedulerGeneration: SchedulerGeneration | undefined;
-let schedulerServiceBinding: SchedulerServiceBinding | undefined;
-
-function parseInstant(value: string, label: string): { iso: string; ms: number } {
-  const date = new Date(value);
-  if (!value.trim() || Number.isNaN(date.getTime())) {
-    throw new Error(`${label} must be a valid ISO timestamp`);
-  }
-  return { iso: date.toISOString(), ms: date.getTime() };
-}
-
-function assertProjectionActive(deps: ProjectionDeps): void {
-  deps.abortSignal?.throwIfAborted();
-  if (deps.isCurrent && !deps.isCurrent()) {
-    throw new Error("Daily Review scheduler projection is stale");
-  }
-}
-
-function parseReceipt(description: string | undefined): Receipt {
-  const value = description ?? "";
-  const markerIndex = value.indexOf(RECEIPT_TOKEN);
-  if (markerIndex < 0) {
-    return { baseDescription: value, lastDeliveredRunAtMs: null };
-  }
-  const match = RECEIPT_RE.exec(value);
-  if (!match || value.indexOf(RECEIPT_TOKEN, markerIndex + RECEIPT_TOKEN.length) >= 0) {
-    throw new Error("Daily Review Automation description contains malformed receipt metadata");
-  }
-  const parsed = parseInstant(match[1] ?? "", "Daily Review receipt timestamp");
-  return {
-    baseDescription: value.slice(0, match.index),
-    lastDeliveredRunAtMs: parsed.ms,
-  };
-}
-
-function withReceipt(baseDescription: string, runAtMs: number): string {
-  if (!Number.isFinite(runAtMs)) {
-    throw new Error("Daily Review receipt timestamp must be finite");
-  }
-  const marker = `${RECEIPT_TOKEN} last_delivered_run_at=${new Date(runAtMs).toISOString()}]`;
-  return baseDescription ? `${baseDescription}\n\n${marker}` : marker;
-}
-
-function visibleSuccessfulDelivery(job: SchedulerJob, boundaryMs: number, bootstrapMs: number): number | null {
-  const runAtMs = job.state?.lastRunAtMs;
-  if (runAtMs === undefined) return null;
-  if (!Number.isFinite(runAtMs) || runAtMs >= boundaryMs) {
-    throw new Error(`Daily Review scheduler state for ${job.id} has invalid lastRunAtMs`);
-  }
-  if (
-    job.state?.lastRunStatus !== "ok" ||
-    job.state.lastDelivered !== true ||
-    job.state.lastDeliveryStatus !== "delivered"
-  ) {
-    return null;
-  }
-  if (runAtMs < bootstrapMs) return null;
-  return runAtMs;
-}
-
-function expectedSchedule(declarationKey: string | undefined) {
+function expectedDeclaration(declarationKey: string | undefined) {
   if (declarationKey === DAILY_REVIEW_DECLARATIONS.morning) {
-    return { declaration: DAILY_REVIEW_DECLARATIONS.morning, peer: DAILY_REVIEW_DECLARATIONS.evening, expr: "30 9 * * *" };
+    return {
+      declaration: DAILY_REVIEW_DECLARATIONS.morning,
+      peer: DAILY_REVIEW_DECLARATIONS.evening,
+      name: "tasks-daily-review-morning",
+      description: "Task Agent Scheduled Daily Review — 09:30 Europe/Moscow",
+      expr: "30 9 * * *",
+    } as const;
   }
   if (declarationKey === DAILY_REVIEW_DECLARATIONS.evening) {
-    return { declaration: DAILY_REVIEW_DECLARATIONS.evening, peer: DAILY_REVIEW_DECLARATIONS.morning, expr: "0 17 * * *" };
+    return {
+      declaration: DAILY_REVIEW_DECLARATIONS.evening,
+      peer: DAILY_REVIEW_DECLARATIONS.morning,
+      name: "tasks-daily-review-evening",
+      description: "Task Agent Scheduled Daily Review — 17:00 Europe/Moscow",
+      expr: "0 17 * * *",
+    } as const;
   }
   throw new Error(`Unexpected Daily Review declarationKey: ${String(declarationKey)}`);
 }
 
-function validatePublicJob(job: SchedulerJob, label: string) {
-  const expected = expectedSchedule(job.declarationKey);
-  if (job.enabled !== true) {
-    throw new Error(`${label} Daily Review job must be enabled`);
+function assertRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!value || Array.isArray(value) || typeof value !== "object") {
+    throw new Error(`${label} must be an object`);
+  }
+  return value as Record<string, unknown>;
+}
+
+function normalizeJobs(value: unknown): NativeJob[] {
+  if (Array.isArray(value)) return value as NativeJob[];
+  const record = assertRecord(value, "Automation list result");
+  if (!Array.isArray(record.jobs)) {
+    throw new Error("Automation list result has no jobs array");
+  }
+  return record.jobs as NativeJob[];
+}
+
+function expectedCommandArgv(openclawBin: string, declarationKey: DailyReviewDeclaration): string[] {
+  return [
+    openclawBin,
+    DAILY_REVIEW_CLI_COMMAND,
+    "daily-review",
+    "--declaration-key",
+    declarationKey,
+    "--openclaw-bin",
+    openclawBin,
+  ];
+}
+
+function sameRoute(left: NativeJob["delivery"], right: NativeJob["delivery"]): boolean {
+  return Boolean(
+    left &&
+      right &&
+      left.mode === right.mode &&
+      left.channel === right.channel &&
+      left.to === right.to &&
+      left.accountId === right.accountId &&
+      left.threadId === right.threadId &&
+      left.bestEffort === right.bestEffort,
+  );
+}
+
+function validateNativeJob(job: NativeJob, openclawBin: string, label: string) {
+  const expected = expectedDeclaration(job.declarationKey);
+  if (!job.id || job.enabled !== true) {
+    throw new Error(`${label} Daily Review job must be enabled with a stable id`);
+  }
+  if (job.name !== expected.name || job.description !== expected.description) {
+    throw new Error(`${label} Daily Review job metadata drift detected`);
   }
   if (job.agentId !== DAILY_REVIEW_AGENT_ID || job.sessionTarget !== "isolated") {
     throw new Error(`${label} Daily Review job must run as isolated tasks agent`);
@@ -155,17 +151,34 @@ function validatePublicJob(job: SchedulerJob, label: string) {
     job.schedule?.kind !== "cron" ||
     job.schedule.expr !== expected.expr ||
     job.schedule.tz !== DAILY_REVIEW_TIMEZONE ||
-    (job.schedule.staggerMs !== undefined && job.schedule.staggerMs !== 0)
+    (job.schedule.staggerMs ?? 0) !== 0
   ) {
     throw new Error(`${label} Daily Review schedule drift detected`);
   }
-  if (job.payload?.kind !== "script") {
-    throw new Error(`${label} Daily Review job must use a script payload`);
+  if (
+    job.payload?.kind !== "command" ||
+    JSON.stringify(job.payload.argv) !== JSON.stringify(expectedCommandArgv(openclawBin, expected.declaration)) ||
+    job.payload.timeoutSeconds !== COMMAND_TIMEOUT_SECONDS ||
+    (job.payload.toolsAllow !== undefined && job.payload.toolsAllow.length !== 0)
+  ) {
+    throw new Error(`${label} Daily Review command payload drift detected`);
+  }
+  if (
+    job.delivery?.mode !== "announce" ||
+    job.delivery.channel !== "telegram" ||
+    job.delivery.accountId !== DAILY_REVIEW_AGENT_ID ||
+    !job.delivery.to ||
+    job.delivery.bestEffort !== false
+  ) {
+    throw new Error(`${label} Daily Review delivery must be required Telegram announce delivery`);
+  }
+  if (typeof job.createdAtMs !== "number" || !Number.isFinite(job.createdAtMs) || job.createdAtMs <= 0) {
+    throw new Error(`${label} Daily Review job has invalid createdAtMs`);
   }
   return expected;
 }
 
-function validatePair(jobs: SchedulerJob[], currentJobId: string, peerJobId: string) {
+function validatePair(jobs: NativeJob[], currentDeclaration: DailyReviewDeclaration, openclawBin: string) {
   const declared = jobs.filter(
     (job) =>
       job.declarationKey === DAILY_REVIEW_DECLARATIONS.morning ||
@@ -174,263 +187,207 @@ function validatePair(jobs: SchedulerJob[], currentJobId: string, peerJobId: str
   if (declared.length !== 2) {
     throw new Error(`Daily Review requires exactly two declared schedule entries; found ${declared.length}`);
   }
-  const currentMatches = declared.filter((job) => job.id === currentJobId);
-  const peerMatches = declared.filter((job) => job.id === peerJobId);
-  if (currentMatches.length !== 1 || peerMatches.length !== 1) {
+  const current = declared.find((job) => job.declarationKey === currentDeclaration);
+  const currentExpected = expectedDeclaration(currentDeclaration);
+  const peer = declared.find((job) => job.declarationKey === currentExpected.peer);
+  if (!current || !peer) {
     throw new Error("Daily Review current/peer schedule identity mismatch");
   }
-  const current = currentMatches[0]!;
-  const peer = peerMatches[0]!;
-  const currentExpected = validatePublicJob(current, "current");
-  const peerExpected = validatePublicJob(peer, "peer");
-  if (currentExpected.peer !== peerExpected.declaration) {
-    throw new Error("Daily Review jobs do not form the expected morning/evening pair");
+  const validatedCurrent = validateNativeJob(current, openclawBin, "current");
+  const validatedPeer = validateNativeJob(peer, openclawBin, "peer");
+  if (validatedCurrent.peer !== validatedPeer.declaration || !sameRoute(current.delivery, peer.delivery)) {
+    throw new Error("Daily Review jobs do not form the expected schedule/delivery pair");
   }
   return { current, peer };
 }
 
-async function promoteReceipt(params: {
-  job: SchedulerJob;
-  boundaryMs: number;
-  bootstrapMs: number;
-  deps: ProjectionDeps;
-}): Promise<number | null> {
-  assertProjectionActive(params.deps);
-  const parsed = parseReceipt(params.job.description);
-  if (
-    parsed.lastDeliveredRunAtMs !== null &&
-    (parsed.lastDeliveredRunAtMs < params.bootstrapMs || parsed.lastDeliveredRunAtMs >= params.boundaryMs)
-  ) {
-    throw new Error(`Daily Review receipt for ${params.job.id} is outside the active review window`);
-  }
-  const visible = visibleSuccessfulDelivery(params.job, params.boundaryMs, params.bootstrapMs);
-  const next = Math.max(
-    parsed.lastDeliveredRunAtMs ?? Number.NEGATIVE_INFINITY,
-    visible ?? Number.NEGATIVE_INFINITY,
-  );
-  if (!Number.isFinite(next)) return null;
-  if (parsed.lastDeliveredRunAtMs === null || next > parsed.lastDeliveredRunAtMs) {
-    await params.deps.service.update(params.job.id, {
-      description: withReceipt(parsed.baseDescription, next),
+function nativeJobFromGet(value: unknown): NativeJob {
+  return assertRecord(value, "Automation get result") as NativeJob;
+}
+
+function createSchedulerReader(openclawBin: string): SchedulerReader {
+  return (args) =>
+    new Promise((resolve, reject) => {
+      execFile(
+        openclawBin,
+        args,
+        {
+          encoding: "utf8",
+          timeout: CLI_READ_TIMEOUT_MS,
+          maxBuffer: CLI_MAX_BUFFER_BYTES,
+        },
+        (error, stdout, stderr) => {
+          if (error) {
+            reject(
+              new Error(
+                `Daily Review scheduler read failed (${args.join(" ")}): ${stderr.trim() || error.message}`,
+              ),
+            );
+            return;
+          }
+          try {
+            resolve(JSON.parse(stdout));
+          } catch (parseError) {
+            reject(
+              new Error(
+                `Daily Review scheduler read returned invalid JSON: ${parseError instanceof Error ? parseError.message : String(parseError)}`,
+              ),
+            );
+          }
+        },
+      );
     });
-    assertProjectionActive(params.deps);
-  }
-  return next;
 }
 
-function successfulEntry(runAtMs: number) {
-  return {
-    status: "ok",
-    completionStatus: "succeeded",
-    delivered: true,
-    deliveryStatus: "delivered",
-    runAtMs,
-  };
-}
-
-function historyEntries(receiptMs: number | null, visibleMs: number | null) {
-  const values = [receiptMs, visibleMs]
-    .filter((value): value is number => value !== null)
-    .sort((left, right) => right - left);
-  return [...new Set(values)].map(successfulEntry);
-}
-
-function engineJob(job: SchedulerJob, params: DailyReviewParams, peerJobId: string) {
+function projectForDailyReview(job: NativeJob, bootstrapIso: string, peerJobId: string) {
   return {
     ...job,
     payload: {
       kind: "script",
-      script: buildDailyReviewScript({ ...params, peer_job_id: peerJobId }),
+      script: buildDailyReviewScript({
+        group_id: DAILY_REVIEW_GROUP_ID,
+        bootstrap_checkpoint: bootstrapIso,
+        peer_job_id: peerJobId,
+      }),
       toolsAllow: [TASK_DAILY_REVIEW_TOOL],
-    },
-    delivery: {
-      mode: "announce",
-      channel: "telegram",
-      to: SYNTHETIC_ACTIVATION_VALIDATED_ROUTE,
-      accountId: DAILY_REVIEW_AGENT_ID,
-      bestEffort: false,
     },
   };
 }
 
-export async function prepareDailyReviewRuntimeProjection(
-  params: DailyReviewParams,
-  toolContext: OpenClawPluginToolContext,
-  deps: ProjectionDeps,
+async function buildRuntimeProjection(
+  declarationKey: DailyReviewDeclaration,
+  openclawBin: string,
+  readScheduler: SchedulerReader,
 ) {
-  assertProjectionActive(deps);
-  const currentJobId = dailyReviewInternals.parseCurrentCronJobId(toolContext);
-  if (!currentJobId) {
-    throw new Error(`${TASK_DAILY_REVIEW_TOOL} is available only to the tasks cron script runtime`);
-  }
-  if (params.peer_job_id === currentJobId) {
-    throw new Error("Daily Review peer_job_id must identify the sibling schedule entry");
-  }
-  const bootstrap = parseInstant(params.bootstrap_checkpoint, "bootstrap_checkpoint");
-  const jobs = await deps.service.list({ includeDisabled: true });
-  assertProjectionActive(deps);
-  const { current, peer } = validatePair(jobs, currentJobId, params.peer_job_id);
-  const boundaryMs = current.state?.runningAtMs;
+  const listed = normalizeJobs(await readScheduler(["automations", "list", "--all", "--json"]));
+  const listedPair = validatePair(listed, declarationKey, openclawBin);
+  const [current, peer] = await Promise.all([
+    readScheduler(["automations", "get", listedPair.current.id, "--json"]).then(nativeJobFromGet),
+    readScheduler(["automations", "get", listedPair.peer.id, "--json"]).then(nativeJobFromGet),
+  ]);
+  const { current: validatedCurrent, peer: validatedPeer } = validatePair(
+    [current, peer],
+    declarationKey,
+    openclawBin,
+  );
+  const boundaryMs = validatedCurrent.state?.runningAtMs;
   if (typeof boundaryMs !== "number" || !Number.isFinite(boundaryMs)) {
     throw new Error("Daily Review current native run has no runningAtMs snapshot boundary");
   }
-  if (boundaryMs < bootstrap.ms) {
-    throw new Error("Daily Review current run predates its activation checkpoint");
+  const bootstrapMs = Math.min(validatedCurrent.createdAtMs!, validatedPeer.createdAtMs!);
+  if (!Number.isFinite(bootstrapMs) || bootstrapMs >= boundaryMs) {
+    throw new Error("Daily Review native activation boundary is invalid for the current run");
   }
-  const currentVisible = visibleSuccessfulDelivery(current, boundaryMs, bootstrap.ms);
-  const peerVisible = visibleSuccessfulDelivery(peer, boundaryMs, bootstrap.ms);
-  const currentReceipt = await promoteReceipt({
-    job: current,
-    boundaryMs,
-    bootstrapMs: bootstrap.ms,
-    deps,
-  });
-  const peerReceipt = await promoteReceipt({
-    job: peer,
-    boundaryMs,
-    bootstrapMs: bootstrap.ms,
-    deps,
-  });
-  const currentHistory = historyEntries(currentReceipt, currentVisible);
-  const peerHistory = historyEntries(peerReceipt, peerVisible);
+  const bootstrapIso = new Date(bootstrapMs).toISOString();
   const projected = new Map([
-    [current.id, engineJob(current, params, peer.id)],
-    [peer.id, engineJob(peer, params, current.id)],
+    [validatedCurrent.id, projectForDailyReview(validatedCurrent, bootstrapIso, validatedPeer.id)],
+    [validatedPeer.id, projectForDailyReview(validatedPeer, bootstrapIso, validatedCurrent.id)],
   ]);
-  const histories = new Map([
-    [current.id, currentHistory],
-    [peer.id, peerHistory],
-  ]);
-  return async (method: "cron.get" | "cron.runs", request: Record<string, unknown>) => {
-    assertProjectionActive(deps);
-    const id = typeof request.id === "string" ? request.id : "";
-    if (!projected.has(id)) {
-      throw new Error(`Daily Review requested scheduler data outside the validated pair: ${id}`);
-    }
-    if (method === "cron.get") return projected.get(id);
-    const entries = histories.get(id) ?? [];
-    const offset = Number.isSafeInteger(request.offset) && Number(request.offset) >= 0 ? Number(request.offset) : 0;
-    const limit = Number.isSafeInteger(request.limit) && Number(request.limit) > 0 ? Math.min(Number(request.limit), 200) : 200;
-    const page = entries.slice(offset, offset + limit);
-    const nextOffset = offset + page.length;
-    return {
-      entries: page,
-      total: entries.length,
-      offset,
-      limit,
-      hasMore: nextOffset < entries.length,
-      nextOffset: nextOffset < entries.length ? nextOffset : null,
-    };
-  };
-}
-
-function requireSchedulerGeneration(): ProjectionDeps {
-  const serviceBinding = schedulerServiceBinding;
-  if (serviceBinding) {
-    try {
-      const service = serviceBinding.getService();
-      if (service) {
-        return {
-          service,
-          isCurrent: () => {
-            try {
-              return schedulerServiceBinding === serviceBinding && serviceBinding.getService() === service;
-            } catch {
-              return false;
-            }
-          },
-        };
+  const params = {
+    group_id: DAILY_REVIEW_GROUP_ID,
+    bootstrap_checkpoint: bootstrapIso,
+    peer_job_id: validatedPeer.id,
+  } as const;
+  return {
+    current: validatedCurrent,
+    peer: validatedPeer,
+    params,
+    readGateway: async (method: "cron.get" | "cron.runs", request: Record<string, unknown>) => {
+      const id = typeof request.id === "string" ? request.id : "";
+      if (!projected.has(id)) {
+        throw new Error(`Daily Review requested scheduler data outside the validated pair: ${id}`);
       }
-    } catch {
-      // A revoked service-bound scheduler must fail closed rather than fall back
-      // to a potentially stale cron_reconciled snapshot.
-    }
-    throw new Error("Daily Review scheduler projection is unavailable or stale");
-  }
-  const generation = schedulerGeneration;
-  if (!generation || generation.abortSignal?.aborted) {
-    throw new Error("Daily Review scheduler projection is unavailable or stale");
-  }
-  return {
-    ...generation,
-    isCurrent: () => schedulerGeneration === generation,
+      if (method === "cron.get") return projected.get(id);
+      const limit = Number.isSafeInteger(request.limit) && Number(request.limit) > 0 ? Number(request.limit) : 200;
+      const offset = Number.isSafeInteger(request.offset) && Number(request.offset) >= 0 ? Number(request.offset) : 0;
+      const sort = request.sortDir === "asc" ? "asc" : "desc";
+      const raw = (await readScheduler([
+        "automations",
+        "runs",
+        id,
+        "--json",
+        "--limit",
+        String(limit),
+        "--offset",
+        String(offset),
+        "--sort",
+        sort,
+      ])) as NativeRunPage;
+      if (!raw || !Array.isArray(raw.entries)) {
+        throw new Error(`Daily Review native history for ${id} has no entries array`);
+      }
+      return raw;
+    },
   };
 }
 
-export function registerDailyReviewSchedulerAccess(api: OpenClawPluginApi): void {
-  api.registerService({
-    id: "taskctl-daily-review-scheduler-access",
-    start: (context) => {
-      const serviceContext = context as typeof context & {
-        getCron?: () => SchedulerService | undefined;
-      };
-      const getService = serviceContext.getCron;
-      schedulerServiceBinding = getService ? { getService } : undefined;
-    },
-    stop: () => {
-      schedulerServiceBinding = undefined;
-    },
-  });
-  api.on("cron_reconciled", (event, context) => {
-    if (!event.enabled) {
-      schedulerGeneration = undefined;
-      return;
-    }
-    const service = context.getCron?.();
-    if (!service) {
-      schedulerGeneration = undefined;
-      return;
-    }
-    schedulerGeneration = {
-      service: service as SchedulerService,
-      abortSignal: context.abortSignal,
-    };
-  });
-  api.on("gateway_stop", () => {
-    schedulerGeneration = undefined;
-  });
+function parseDeclarationKey(value: string): DailyReviewDeclaration {
+  if (value === DAILY_REVIEW_DECLARATIONS.morning || value === DAILY_REVIEW_DECLARATIONS.evening) {
+    return value;
+  }
+  throw new Error(`Unsupported Daily Review declaration: ${value}`);
 }
 
-export function createDailyReviewTool(
+export async function executeDailyReviewCommand(
   api: OpenClawPluginApi,
-  toolContext: OpenClawPluginToolContext,
-): AnyAgentTool | null {
-  if (!dailyReviewInternals.parseCurrentCronJobId(toolContext)) return null;
-  return {
-    name: TASK_DAILY_REVIEW_TOOL,
-    label: "Task Daily Review",
-    description:
-      "Build one fail-closed scheduler-only Daily Review snapshot and semantic duplicate warning set without Task mutations.",
-    parameters: dailyReviewParameters,
-    execute: async (_toolCallId, rawParams, signal) => {
-      const params = rawParams as DailyReviewParams;
-      const generation = requireSchedulerGeneration();
-      const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, generation);
-      const result = await executeDailyReview(params, {
-        api,
-        toolContext,
-        signal,
-        readGateway,
-      });
-      return {
-        content: [{ type: "text", text: JSON.stringify(result) }],
-        details: result,
-      };
+  options: DailyReviewCommandOptions,
+  deps: DailyReviewCommandDeps = {},
+) {
+  const declarationKey = parseDeclarationKey(options.declarationKey);
+  if (!options.openclawBin.startsWith("/") || options.openclawBin.includes("\u0000")) {
+    throw new Error("Daily Review openclaw binary must be an absolute path");
+  }
+  const readScheduler = deps.readScheduler ?? createSchedulerReader(options.openclawBin);
+  const runtime = await buildRuntimeProjection(declarationKey, options.openclawBin, readScheduler);
+  const toolContext = {
+    agentId: DAILY_REVIEW_AGENT_ID,
+    sessionKey: `agent:tasks:cron:${runtime.current.id}:trigger`,
+    config: api.config,
+  } as unknown as OpenClawPluginToolContext;
+  return executeDailyReview(runtime.params, {
+    api,
+    toolContext,
+    readGateway: runtime.readGateway,
+    ...(deps.loadSnapshot ? { loadSnapshot: deps.loadSnapshot as never } : {}),
+    ...(deps.runSemanticModel ? { runSemanticModel: deps.runSemanticModel } : {}),
+  });
+}
+
+export function registerDailyReviewCli(api: OpenClawPluginApi): void {
+  api.registerCli(
+    ({ program }) => {
+      const root = program
+        .command(DAILY_REVIEW_CLI_COMMAND)
+        .description("Internal Task Agent runtime commands");
+      root
+        .command("daily-review")
+        .description("Run one scheduler-owned Task Daily Review")
+        .requiredOption("--declaration-key <key>")
+        .requiredOption("--openclaw-bin <path>")
+        .action(async (options: DailyReviewCommandOptions) => {
+          const result = await executeDailyReviewCommand(api, options);
+          if (!result.suppress && result.message) {
+            process.stdout.write(`${result.message}\n`);
+          }
+        });
     },
-  };
+    {
+      descriptors: [
+        {
+          name: DAILY_REVIEW_CLI_COMMAND,
+          description: "Internal Task Agent runtime commands",
+          hasSubcommands: true,
+        },
+      ],
+    },
+  );
 }
 
 export const dailyReviewRuntimeInternals = {
-  parseReceipt,
-  withReceipt,
-  visibleSuccessfulDelivery,
-  validatePublicJob,
+  expectedDeclaration,
+  expectedCommandArgv,
+  validateNativeJob,
   validatePair,
-  promoteReceipt,
-  historyEntries,
-  requireSchedulerGeneration,
-  resetState: () => {
-    schedulerGeneration = undefined;
-    schedulerServiceBinding = undefined;
-  },
+  buildRuntimeProjection,
+  parseDeclarationKey,
 };
