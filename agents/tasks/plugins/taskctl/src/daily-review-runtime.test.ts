@@ -1,333 +1,253 @@
 import { describe, expect, it, vi } from "vitest";
+import { DAILY_REVIEW_DECLARATIONS } from "./daily-review.js";
 import {
-  DAILY_REVIEW_DECLARATIONS,
-  DAILY_REVIEW_GROUP_ID,
-  executeDailyReview,
-} from "./daily-review.js";
-import {
+  DAILY_REVIEW_CLI_COMMAND,
   dailyReviewRuntimeInternals,
-  prepareDailyReviewRuntimeProjection,
-  registerDailyReviewSchedulerAccess,
+  executeDailyReviewCommand,
+  registerDailyReviewCli,
 } from "./daily-review-runtime.js";
 
-const BOOTSTRAP = "2026-09-05T06:00:00.000Z";
-const BOUNDARY_MS = Date.parse("2026-09-07T06:30:00.000Z");
-const PREVIOUS_MORNING_MS = Date.parse("2026-09-06T06:30:00.000Z");
-const PREVIOUS_EVENING_MS = Date.parse("2026-09-06T14:00:00.000Z");
+const OPENCLAW_BIN = "/opt/openclaw/bin/openclaw";
+const CREATED_MORNING = Date.parse("2026-09-07T17:40:06.320Z");
+const CREATED_EVENING = Date.parse("2026-09-07T17:40:16.801Z");
+const BOUNDARY_MS = Date.parse("2026-09-26T06:30:00.050Z");
+const PREVIOUS_MORNING_MS = Date.parse("2026-09-25T06:30:00.030Z");
+const PREVIOUS_EVENING_MS = Date.parse("2026-09-25T14:00:00.040Z");
 
-const params = {
-  group_id: DAILY_REVIEW_GROUP_ID,
-  bootstrap_checkpoint: BOOTSTRAP,
-  peer_job_id: "evening-job",
-} as const;
+type Run = {
+  runAtMs: number;
+  status: string;
+  completionStatus: string;
+  delivered: boolean;
+  deliveryStatus: string;
+};
 
-const toolContext = {
-  agentId: "tasks",
-  sessionKey: "agent:tasks:cron:morning-job:trigger",
-} as never;
+function delivered(runAtMs: number): Run {
+  return {
+    runAtMs,
+    status: "ok",
+    completionStatus: "succeeded",
+    delivered: true,
+    deliveryStatus: "delivered",
+  };
+}
 
 function job(options: {
   id: string;
   declarationKey: string;
+  name: string;
+  description: string;
   expr: string;
-  description?: string;
+  createdAtMs: number;
   runningAtMs?: number;
-  lastRunAtMs?: number;
-  lastRunStatus?: "ok" | "error" | "skipped";
-  lastDelivered?: boolean;
-  lastDeliveryStatus?: "not-requested" | "delivered" | "not-delivered" | "unknown";
 }) {
   return {
     id: options.id,
     declarationKey: options.declarationKey,
-    agentId: "tasks",
-    name: `Daily Review ${options.id}`,
+    name: options.name,
     description: options.description,
     enabled: true,
-    schedule: {
-      kind: "cron",
-      expr: options.expr,
-      tz: "Europe/Moscow",
-      staggerMs: 0,
-    },
+    agentId: "tasks",
+    createdAtMs: options.createdAtMs,
+    schedule: { kind: "cron", expr: options.expr, tz: "Europe/Moscow", staggerMs: 0 },
     sessionTarget: "isolated",
-    wakeMode: "now",
-    payload: { kind: "script" },
-    state: {
-      runningAtMs: options.runningAtMs,
-      lastRunAtMs: options.lastRunAtMs,
-      lastRunStatus: options.lastRunStatus,
-      lastDelivered: options.lastDelivered,
-      lastDeliveryStatus: options.lastDeliveryStatus,
+    payload: {
+      kind: "command",
+      argv: dailyReviewRuntimeInternals.expectedCommandArgv(
+        OPENCLAW_BIN,
+        options.declarationKey as never,
+      ),
+      timeoutSeconds: 300,
     },
+    delivery: {
+      mode: "announce",
+      channel: "telegram",
+      to: "owner",
+      accountId: "tasks",
+      bestEffort: false,
+    },
+    state: { runningAtMs: options.runningAtMs },
   };
 }
 
-function pair(options?: {
-  currentDescription?: string;
-  currentLastRunAtMs?: number;
-  currentLastRunStatus?: "ok" | "error" | "skipped";
-  currentLastDelivered?: boolean;
-  currentLastDeliveryStatus?: "not-requested" | "delivered" | "not-delivered" | "unknown";
-  peerDescription?: string;
-  peerLastRunAtMs?: number;
-  peerLastRunStatus?: "ok" | "error" | "skipped";
-  peerLastDelivered?: boolean;
-  peerLastDeliveryStatus?: "not-requested" | "delivered" | "not-delivered" | "unknown";
-}) {
+function pair() {
   return [
     job({
       id: "morning-job",
       declarationKey: DAILY_REVIEW_DECLARATIONS.morning,
+      name: "tasks-daily-review-morning",
+      description: "Task Agent Scheduled Daily Review — 09:30 Europe/Moscow",
       expr: "30 9 * * *",
-      description: options?.currentDescription,
+      createdAtMs: CREATED_MORNING,
       runningAtMs: BOUNDARY_MS,
-      lastRunAtMs: options?.currentLastRunAtMs,
-      lastRunStatus: options?.currentLastRunStatus,
-      lastDelivered: options?.currentLastDelivered,
-      lastDeliveryStatus: options?.currentLastDeliveryStatus,
     }),
     job({
       id: "evening-job",
       declarationKey: DAILY_REVIEW_DECLARATIONS.evening,
+      name: "tasks-daily-review-evening",
+      description: "Task Agent Scheduled Daily Review — 17:00 Europe/Moscow",
       expr: "0 17 * * *",
-      description: options?.peerDescription,
-      lastRunAtMs: options?.peerLastRunAtMs,
-      lastRunStatus: options?.peerLastRunStatus,
-      lastDelivered: options?.peerLastDelivered,
-      lastDeliveryStatus: options?.peerLastDeliveryStatus,
+      createdAtMs: CREATED_EVENING,
     }),
   ];
 }
 
-function scheduler(jobs: ReturnType<typeof pair>, onUpdate?: () => void) {
-  const updates: Array<{ id: string; description?: string }> = [];
-  const service = {
-    list: vi.fn(async () => jobs),
-    update: vi.fn(async (id: string, patch: { description?: string }) => {
-      updates.push({ id, ...patch });
-      const target = jobs.find((entry) => entry.id === id);
-      if (target && patch.description !== undefined) target.description = patch.description;
-      onUpdate?.();
-      return target;
-    }),
-  };
-  return { service, updates };
+function scheduler(
+  jobs = pair(),
+  runs: Record<string, Run[]> = {
+    "morning-job": [delivered(PREVIOUS_MORNING_MS)],
+    "evening-job": [delivered(PREVIOUS_EVENING_MS)],
+  },
+) {
+  const calls: string[][] = [];
+  const readScheduler = vi.fn(async (args: string[]) => {
+    calls.push(args);
+    if (args[0] !== "automations") throw new Error("unexpected root command");
+    if (args[1] === "list") return { jobs };
+    if (args[1] === "get") {
+      const found = jobs.find((entry) => entry.id === args[2]);
+      if (!found) throw new Error("unknown job");
+      return structuredClone(found);
+    }
+    if (args[1] === "runs") {
+      const id = args[2]!;
+      const limit = Number(args[args.indexOf("--limit") + 1]);
+      const offset = Number(args[args.indexOf("--offset") + 1]);
+      const entries = (runs[id] ?? []).slice(offset, offset + limit);
+      const nextOffset = offset + entries.length;
+      return {
+        entries,
+        total: (runs[id] ?? []).length,
+        offset,
+        limit,
+        hasMore: nextOffset < (runs[id] ?? []).length,
+        nextOffset: nextOffset < (runs[id] ?? []).length ? nextOffset : null,
+      };
+    }
+    throw new Error(`unexpected scheduler command: ${args.join(" ")}`);
+  });
+  return { readScheduler, calls, jobs, runs };
 }
 
-function projectionDeps(service: ReturnType<typeof scheduler>["service"], abortSignal?: AbortSignal) {
-  return {
-    service: service as never,
-    abortSignal: abortSignal ?? new AbortController().signal,
-  };
+async function runWith(
+  state: ReturnType<typeof scheduler>,
+  loadSnapshot = vi.fn(async () => ({ inboxCount: 0, tasks: [] })),
+) {
+  return executeDailyReviewCommand(
+    { config: {} } as never,
+    {
+      declarationKey: DAILY_REVIEW_DECLARATIONS.morning,
+      openclawBin: OPENCLAW_BIN,
+    },
+    {
+      readScheduler: state.readScheduler,
+      loadSnapshot,
+      runSemanticModel: vi.fn(async () => '{"pairs":[]}'),
+    },
+  );
 }
 
-describe("Daily Review scheduler lifecycle", () => {
-  it("uses service-bound scheduler access without cron_reconciled replay and refreshes after replacement", () => {
-    dailyReviewRuntimeInternals.resetState();
-    const first = scheduler(pair()).service;
-    const second = scheduler(pair()).service;
-    let current = first;
-    let runtimeService: {
-      start: (context: unknown) => unknown;
-      stop: () => unknown;
-    } | undefined;
+describe("Daily Review native command runtime", () => {
+  it("runs without any Gateway-side module-global scheduler binding and derives checkpoint from native delivered history", async () => {
+    const state = scheduler();
+    const result = await runWith(state);
+    expect(result.suppress).toBe(false);
+    expect(result.previous_successful_checkpoint).toBe(new Date(PREVIOUS_EVENING_MS).toISOString());
+    expect(result.snapshot_boundary).toBe(new Date(BOUNDARY_MS).toISOString());
+    expect(state.calls.some((args) => args[1] === "runs" && args[2] === "morning-job")).toBe(true);
+    expect(state.calls.some((args) => args[1] === "runs" && args[2] === "evening-job")).toBe(true);
+  });
 
+  it("does not advance checkpoint for execution success when required delivery failed", async () => {
+    const state = scheduler(pair(), {
+      "morning-job": [delivered(PREVIOUS_MORNING_MS)],
+      "evening-job": [
+        {
+          runAtMs: PREVIOUS_EVENING_MS,
+          status: "ok",
+          completionStatus: "succeeded",
+          delivered: false,
+          deliveryStatus: "not-delivered",
+        },
+      ],
+    });
+    const result = await runWith(state);
+    expect(result.previous_successful_checkpoint).toBe(new Date(PREVIOUS_MORNING_MS).toISOString());
+  });
+
+  it("suppresses a duplicate retry for the same schedule slot and Moscow date", async () => {
+    const sameOccurrence = BOUNDARY_MS - 60_000;
+    const state = scheduler(pair(), {
+      "morning-job": [delivered(sameOccurrence), delivered(PREVIOUS_MORNING_MS)],
+      "evening-job": [delivered(PREVIOUS_EVENING_MS)],
+    });
+    const snapshot = vi.fn(async () => ({ inboxCount: 0, tasks: [] }));
+    const result = await runWith(state, snapshot);
+    expect(result.suppress).toBe(true);
+    expect(snapshot).not.toHaveBeenCalled();
+  });
+
+  it("establishes runningAtMs as snapshot boundary before Task retrieval", async () => {
+    const state = scheduler();
+    const snapshot = vi.fn(async (boundaryIso: string) => {
+      expect(boundaryIso).toBe(new Date(BOUNDARY_MS).toISOString());
+      expect(state.calls.some((args) => args[1] === "get" && args[2] === "morning-job")).toBe(true);
+      expect(state.calls.some((args) => args[1] === "runs")).toBe(true);
+      return { inboxCount: 0, tasks: [] };
+    });
+    await runWith(state, snapshot);
+    expect(snapshot).toHaveBeenCalledTimes(1);
+  });
+
+  it("fails closed on invalid boundary and target command drift", async () => {
+    const missingBoundary = pair();
+    missingBoundary[0]!.state.runningAtMs = undefined;
+    await expect(runWith(scheduler(missingBoundary))).rejects.toThrow(/runningAtMs snapshot boundary/);
+
+    const drifted = pair();
+    drifted[1]!.payload.argv = [OPENCLAW_BIN, "unexpected"];
+    await expect(runWith(scheduler(drifted))).rejects.toThrow(/command payload drift/);
+  });
+
+  it("cannot be regressed by an older terminal run because checkpoint is selected from immutable history", async () => {
+    const older = delivered(PREVIOUS_MORNING_MS - 86_400_000);
+    const newer = delivered(PREVIOUS_EVENING_MS);
+    const state = scheduler(pair(), {
+      "morning-job": [older],
+      "evening-job": [newer],
+    });
+    const first = await runWith(state);
+    state.runs["morning-job"] = [older, delivered(PREVIOUS_MORNING_MS - 1)];
+    const second = await runWith(state);
+    expect(first.previous_successful_checkpoint).toBe(new Date(PREVIOUS_EVENING_MS).toISOString());
+    expect(second.previous_successful_checkpoint).toBe(new Date(PREVIOUS_EVENING_MS).toISOString());
+  });
+
+  it("uses scheduler-owned createdAtMs as first-run activation checkpoint", async () => {
+    const state = scheduler(pair(), { "morning-job": [], "evening-job": [] });
+    const result = await runWith(state);
+    expect(result.previous_successful_checkpoint).toBe(new Date(CREATED_MORNING).toISOString());
+  });
+
+  it("survives independent CLI process generations because all checkpoint inputs are native scheduler data", async () => {
+    const firstState = scheduler();
+    const secondState = scheduler(structuredClone(firstState.jobs), structuredClone(firstState.runs));
+    const first = await runWith(firstState);
+    const second = await runWith(secondState);
+    expect(second.previous_successful_checkpoint).toBe(first.previous_successful_checkpoint);
+    expect(second.snapshot_boundary).toBe(first.snapshot_boundary);
+  });
+
+  it("registers only a CLI runtime seam rather than a Gateway service bridge", () => {
+    const descriptors: unknown[] = [];
     const api = {
-      registerService: vi.fn((service) => {
-        runtimeService = service as typeof runtimeService;
-      }),
+      registerCli: vi.fn((_registrar, options) => descriptors.push(options)),
+      registerService: vi.fn(),
       on: vi.fn(),
     };
-
-    registerDailyReviewSchedulerAccess(api as never);
-    expect(runtimeService).toBeDefined();
-    runtimeService!.start({ getCron: () => current });
-
-    const firstGeneration = dailyReviewRuntimeInternals.requireSchedulerGeneration();
-    expect(firstGeneration.service).toBe(first);
-    expect(firstGeneration.isCurrent?.()).toBe(true);
-
-    current = second;
-    expect(firstGeneration.isCurrent?.()).toBe(false);
-
-    const secondGeneration = dailyReviewRuntimeInternals.requireSchedulerGeneration();
-    expect(secondGeneration.service).toBe(second);
-    expect(secondGeneration.isCurrent?.()).toBe(true);
-
-    runtimeService!.stop();
-    expect(() => dailyReviewRuntimeInternals.requireSchedulerGeneration()).toThrow(/unavailable or stale/);
-    dailyReviewRuntimeInternals.resetState();
-  });
-});
-
-describe("Daily Review native Automation receipt", () => {
-  it("round-trips one exact receipt while preserving operator description", () => {
-    const description = dailyReviewRuntimeInternals.withReceipt("Daily review", PREVIOUS_EVENING_MS);
-    expect(description).toContain("Daily review\n\n[taskctl.daily-review.receipt.v1");
-    expect(dailyReviewRuntimeInternals.parseReceipt(description)).toEqual({
-      baseDescription: "Daily review",
-      lastDeliveredRunAtMs: PREVIOUS_EVENING_MS,
-    });
-  });
-
-  it("rejects malformed or duplicated receipt metadata fail-closed", () => {
-    expect(() =>
-      dailyReviewRuntimeInternals.parseReceipt(
-        "Daily review\n\n[taskctl.daily-review.receipt.v1 last_delivered_run_at=not-a-date]",
-      ),
-    ).toThrow(/valid ISO timestamp/);
-    expect(() =>
-      dailyReviewRuntimeInternals.parseReceipt(
-        "[taskctl.daily-review.receipt.v1 last_delivered_run_at=2026-09-06T06:30:00.000Z]\n" +
-          "[taskctl.daily-review.receipt.v1 last_delivered_run_at=2026-09-06T14:00:00.000Z]",
-      ),
-    ).toThrow(/malformed receipt/);
-  });
-
-  it("promotes only a confirmed native delivered success and does so monotonically", async () => {
-    const jobs = pair({
-      currentDescription: dailyReviewRuntimeInternals.withReceipt("Morning", PREVIOUS_MORNING_MS),
-      currentLastRunAtMs: PREVIOUS_EVENING_MS,
-      currentLastRunStatus: "ok",
-      currentLastDelivered: true,
-      currentLastDeliveryStatus: "delivered",
-    });
-    const { service, updates } = scheduler(jobs);
-    const promoted = await dailyReviewRuntimeInternals.promoteReceipt({
-      job: jobs[0],
-      boundaryMs: BOUNDARY_MS,
-      bootstrapMs: Date.parse(BOOTSTRAP),
-      deps: projectionDeps(service),
-    });
-    expect(promoted).toBe(PREVIOUS_EVENING_MS);
-    expect(updates).toHaveLength(1);
-    expect(dailyReviewRuntimeInternals.parseReceipt(updates[0]!.description)).toMatchObject({
-      lastDeliveredRunAtMs: PREVIOUS_EVENING_MS,
-    });
-  });
-
-  it("does not promote payload success when required delivery was not confirmed", async () => {
-    const jobs = pair({
-      currentLastRunAtMs: PREVIOUS_MORNING_MS,
-      currentLastRunStatus: "ok",
-      currentLastDelivered: false,
-      currentLastDeliveryStatus: "not-delivered",
-    });
-    const { service, updates } = scheduler(jobs);
-    const promoted = await dailyReviewRuntimeInternals.promoteReceipt({
-      job: jobs[0],
-      boundaryMs: BOUNDARY_MS,
-      bootstrapMs: Date.parse(BOOTSTRAP),
-      deps: projectionDeps(service),
-    });
-    expect(promoted).toBeNull();
-    expect(updates).toHaveLength(0);
-  });
-
-  it("keeps the durable receipt when a later failed run overwrote public last-run state", async () => {
-    const jobs = pair({
-      currentDescription: dailyReviewRuntimeInternals.withReceipt("Morning", PREVIOUS_MORNING_MS),
-      currentLastRunAtMs: PREVIOUS_EVENING_MS,
-      currentLastRunStatus: "error",
-      currentLastDelivered: false,
-      currentLastDeliveryStatus: "not-delivered",
-    });
-    const { service, updates } = scheduler(jobs);
-    const reader = await prepareDailyReviewRuntimeProjection(
-      params,
-      toolContext,
-      projectionDeps(service),
-    );
-    const history = (await reader("cron.runs", {
-      id: "morning-job",
-      offset: 0,
-      limit: 200,
-    })) as { entries: Array<{ runAtMs: number }> };
-    expect(history.entries.map((entry) => entry.runAtMs)).toEqual([PREVIOUS_MORNING_MS]);
-    expect(updates).toHaveLength(0);
-  });
-
-  it("preserves the latest group checkpoint across the morning/evening pair", async () => {
-    const jobs = pair({
-      currentLastRunAtMs: PREVIOUS_MORNING_MS,
-      currentLastRunStatus: "ok",
-      currentLastDelivered: true,
-      currentLastDeliveryStatus: "delivered",
-      peerLastRunAtMs: PREVIOUS_EVENING_MS,
-      peerLastRunStatus: "ok",
-      peerLastDelivered: true,
-      peerLastDeliveryStatus: "delivered",
-    });
-    const { service } = scheduler(jobs);
-    const readGateway = await prepareDailyReviewRuntimeProjection(
-      params,
-      toolContext,
-      projectionDeps(service),
-    );
-    const result = await executeDailyReview(params, {
-      api: {} as never,
-      toolContext,
-      readGateway: readGateway as never,
-      loadSnapshot: () => ({ inboxCount: 0, tasks: [] }),
-      runSemanticModel: vi.fn(async () => '{"pairs":[]}'),
-    });
-    expect(result.previous_successful_checkpoint).toBe(
-      new Date(PREVIOUS_EVENING_MS).toISOString(),
-    );
-  });
-
-  it("suppresses a retry when this occurrence already has a promoted successful delivery", async () => {
-    const sameOccurrenceMs = BOUNDARY_MS - 60_000;
-    const jobs = pair({
-      currentDescription: dailyReviewRuntimeInternals.withReceipt("Morning", sameOccurrenceMs),
-      currentLastRunAtMs: BOUNDARY_MS - 30_000,
-      currentLastRunStatus: "error",
-      currentLastDelivered: false,
-      currentLastDeliveryStatus: "not-delivered",
-    });
-    const { service } = scheduler(jobs);
-    const readGateway = await prepareDailyReviewRuntimeProjection(
-      params,
-      toolContext,
-      projectionDeps(service),
-    );
-    const model = vi.fn(async () => '{"pairs":[]}');
-    const result = await executeDailyReview(params, {
-      api: {} as never,
-      toolContext,
-      readGateway: readGateway as never,
-      loadSnapshot: () => ({ inboxCount: 0, tasks: [] }),
-      runSemanticModel: model,
-    });
-    expect(result.suppress).toBe(true);
-    expect(model).not.toHaveBeenCalled();
-  });
-
-  it("rejects stale scheduler generation after a receipt write", async () => {
-    const controller = new AbortController();
-    const jobs = pair({
-      currentLastRunAtMs: PREVIOUS_MORNING_MS,
-      currentLastRunStatus: "ok",
-      currentLastDelivered: true,
-      currentLastDeliveryStatus: "delivered",
-    });
-    const { service } = scheduler(jobs, () => controller.abort());
-    await expect(
-      prepareDailyReviewRuntimeProjection(
-        params,
-        toolContext,
-        projectionDeps(service, controller.signal),
-      ),
-    ).rejects.toThrow();
-  });
-
-  it("fails closed on exposed schedule drift instead of projecting synthetic success", async () => {
-    const jobs = pair();
-    jobs[1].schedule.expr = "5 17 * * *";
-    const { service } = scheduler(jobs);
-    await expect(
-      prepareDailyReviewRuntimeProjection(params, toolContext, projectionDeps(service)),
-    ).rejects.toThrow(/schedule drift/);
+    registerDailyReviewCli(api as never);
+    expect(api.registerCli).toHaveBeenCalledTimes(1);
+    expect(api.registerService).not.toHaveBeenCalled();
+    expect(JSON.stringify(descriptors)).toContain(DAILY_REVIEW_CLI_COMMAND);
   });
 });

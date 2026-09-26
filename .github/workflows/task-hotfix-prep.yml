@@ -1,0 +1,38 @@
+name: Task hotfix preparation
+
+on:
+  push:
+    branches:
+      - fix/daily-review-native-command
+
+permissions:
+  contents: read
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26.7.0
+          cache: npm
+          cache-dependency-path: agents/tasks/plugins/taskctl/package-lock.json
+      - name: Install plugin dependencies
+        working-directory: agents/tasks/plugins/taskctl
+        run: npm ci
+      - name: Refresh lockfile and generated plugin outputs
+        working-directory: agents/tasks/plugins/taskctl
+        run: |
+          npm install --package-lock-only --ignore-scripts
+          npm run plugin:build
+          mkdir -p "$RUNNER_TEMP/task-hotfix-prep"
+          npm pack --silent --pack-destination "$RUNNER_TEMP/task-hotfix-prep"
+          cp package-lock.json openclaw.plugin.json "$RUNNER_TEMP/task-hotfix-prep/"
+          cp -a dist "$RUNNER_TEMP/task-hotfix-prep/dist"
+      - name: Upload generated outputs
+        uses: actions/upload-artifact@v6
+        with:
+          name: task-hotfix-prep
+          path: ${{ runner.temp }}/task-hotfix-prep
+          if-no-files-found: error
