@@ -28,7 +28,7 @@ var require_runtime = __commonJS({
     var IMPLEMENTATION_VERSION = "0.4.16";
     var SCHEMA_VERSION = 9;
     var TZ = "Europe/Moscow";
-    var SELF_NAME2 = contacts.SELF_NAME;
+    var SELF_NAME = contacts.SELF_NAME;
     var PROD_DB = path.join(os.homedir(), ".openclaw", "data", "tasks", "tasks.sqlite3");
     var DB_PATH = process.env.TASKCTL_ALLOW_DB_OVERRIDE === "1" && process.env.TASKCTL_DB ? path.resolve(process.env.TASKCTL_DB) : PROD_DB;
     var PAYLOAD_LIMIT = 128 * 1024;
@@ -271,7 +271,7 @@ var require_runtime = __commonJS({
       IMPLEMENTATION_VERSION,
       SCHEMA_VERSION,
       TZ,
-      SELF_NAME: SELF_NAME2,
+      SELF_NAME,
       DB_PATH,
       PAYLOAD_LIMIT,
       AppError,
@@ -327,6 +327,7 @@ var require_database = __commonJS({
       IMPLEMENTATION_VERSION,
       SCHEMA_VERSION,
       TZ,
+      SELF_NAME,
       DB_PATH,
       AppError,
       ci,
@@ -482,7 +483,7 @@ var require_domain = __commonJS({
       IMPLEMENTATION_VERSION,
       SCHEMA_VERSION,
       TZ,
-      SELF_NAME: SELF_NAME2,
+      SELF_NAME,
       AppError,
       clock,
       now,
