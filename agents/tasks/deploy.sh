@@ -10,6 +10,7 @@ REPO_ROOT=$(git -C "$ROOT" rev-parse --show-toplevel 2>/dev/null || true)
 RELEASE_FILE="$ROOT/release.json"
 WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
+DEPLOY_SUPPORT_HELPER="$ROOT/deploy-support.cjs"
 TARGET_WORKSPACE_FILES=()
 
 TEST_ROOT=""
@@ -48,76 +49,8 @@ EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CO
 node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/null || fail_plain "Unsupported Node runtime"
 
 [ -f "$RELEASE_FILE" ] || fail_plain "Task Agent release metadata missing"
-RELEASE_ENV=$(EXPECTED_OPENCLAW_VERSION="$EXPECTED_OPENCLAW_VERSION" node - "$RELEASE_FILE" <<'NODE'
-const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const files=['AGENTS.md','SOUL.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
-const bad=()=>process.exit(2);
-if(r?.format!=='task-agent-release-v2')bad();
-const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.sqlite_schema;
-const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const exactHost=(v,range)=>tuple(v)!==null&&v===range;
-if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!exactHost(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
-if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
-if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
-const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||sc.predecessor_mode!=='exact'))bad();
-const mat=r?.calendar_materializer??null;
-if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
-const rem=r?.reminder_dispatcher??null;
-if(rem!==null&&(rem?.kind!=='openclaw-command-automation-v1'||typeof rem?.declaration_key!=='string'||!rem.declaration_key.trim()||typeof rem?.name!=='string'||!rem.name.trim()||typeof rem?.cron!=='string'||!rem.cron.trim()||rem?.timezone!=='Europe/Moscow'||rem?.exact!==true||JSON.stringify(rem?.command_argv_suffix)!==JSON.stringify(['reminder-internal','dispatch-send'])||!Number.isSafeInteger(rem?.timeout_seconds)||rem.timeout_seconds<1||rem?.delivery_channel!=='telegram'||rem?.delivery_account!=='tasks'||rem?.delivery_recipient_source!=='tasks-owner-allowFrom-singleton'||rem?.predecessor_mode!=='exact'))bad();
-const idr=r?.important_date_dispatcher??null;
-if(idr!==null&&(idr?.kind!=='openclaw-script-automation-v1'||typeof idr?.declaration_key!=='string'||!idr.declaration_key.trim()||typeof idr?.name!=='string'||!idr.name.trim()||typeof idr?.cron!=='string'||!idr.cron.trim()||idr?.timezone!=='Europe/Moscow'||idr?.exact!==true||typeof idr?.script!=='string'||!idr.script.trim()||idr?.tool!=='contact_date_reminder_dispatch'||!Number.isSafeInteger(idr?.timeout_seconds)||idr.timeout_seconds<1||!Number.isSafeInteger(idr?.tool_budget)||idr.tool_budget<1||idr?.delivery_channel!=='telegram'||idr?.delivery_account!=='default'||idr?.delivery_recipient_source!=='commands.ownerAllowFrom-singleton'||idr?.best_effort!==false||idr?.predecessor_mode!=='exact'))bad();
-if(!r?.from||!Array.isArray(r.from.plugin_versions)||r.from.plugin_versions.length!==1||!r.from.plugin_versions.every(v=>/^0\.4\.[0-9]+$/.test(v)))bad();
-const fromSchemas=r.from.sqlite_schemas;
-if(!Array.isArray(fromSchemas)||fromSchemas.length!==1||!fromSchemas.every(v=>Number.isSafeInteger(v)&&v>=1))bad();
-const fromTaskctl=r.from.taskctl_versions??[targetTaskctl];
-if(!Array.isArray(fromTaskctl)||fromTaskctl.length!==1||!fromTaskctl.every(v=>/^0\.4\.[0-9]+$/.test(v)))bad();
-if(!r.from.workspace_sha256||Object.keys(r.from.workspace_sha256).sort().join(',')!==files.slice().sort().join(','))bad();
-if(!files.every(f=>/^[0-9a-f]{64}$/.test(r.from.workspace_sha256[f]||'')))bad();
-if(!/^[0-9a-f]{64}$/.test(r.from.tools_sha256||''))bad();
-const q=s=>`'${String(s).replace(/'/g,"'\\''")}'`;
-console.log(`TARGET_TASKCTL_VERSION=${q(targetTaskctl)}`);
-console.log(`TARGET_SQLITE_SCHEMA=${q(targetSchema)}`);
-console.log(`FROM_SQLITE_SCHEMAS=${q(fromSchemas.join(' '))}`);
-console.log(`FROM_TASKCTL_VERSIONS=${q(fromTaskctl.join(' '))}`);
-console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);
-console.log(`CONTACTS_ENABLED=${q(sc?'1':'0')}`);
-console.log(`TARGET_CONTACTS_VERSION=${q(sc?.implementation_version||'')}`);
-console.log(`TARGET_CONTACTS_SCHEMA=${q(sc?.sqlite_schema||'')}`);
-console.log(`CONTACTS_RELEASE_REL=${q(sc?.release_path||'')}`);
-console.log(`EXPECTED_CONTACTS_RELEASE_SHA=${q(sc?.release_sha256||'')}`);
-console.log(`ARTIFACT_REL=${q(r.plugin.artifact)}`);
-console.log(`EXPECTED_ARTIFACT_SHA=${q(r.plugin.sha256)}`);
-console.log(`MATERIALIZER_ENABLED=${q(mat?'1':'0')}`);
-console.log(`MATERIALIZER_DECLARATION=${q(mat?.declaration_key||'')}`);
-console.log(`MATERIALIZER_NAME=${q(mat?.name||'')}`);
-console.log(`MATERIALIZER_CRON=${q(mat?.cron||'')}`);
-console.log(`MATERIALIZER_TIMEZONE=${q(mat?.timezone||'')}`);
-console.log(`MATERIALIZER_TIMEOUT=${q(mat?.timeout_seconds||'')}`);
-console.log(`REMINDER_ENABLED=${q(rem?'1':'0')}`);
-console.log(`REMINDER_DECLARATION=${q(rem?.declaration_key||'')}`);
-console.log(`REMINDER_NAME=${q(rem?.name||'')}`);
-console.log(`REMINDER_CRON=${q(rem?.cron||'')}`);
-console.log(`REMINDER_TIMEZONE=${q(rem?.timezone||'')}`);
-console.log(`REMINDER_COMMAND_SUFFIX_JSON=${q(JSON.stringify(rem?.command_argv_suffix??[]))}`);
-console.log(`REMINDER_TIMEOUT=${q(rem?.timeout_seconds||'')}`);
-console.log(`REMINDER_CHANNEL=${q(rem?.delivery_channel||'')}`);
-console.log(`REMINDER_ACCOUNT=${q(rem?.delivery_account||'')}`);
-console.log(`IMPORTANT_DATE_ENABLED=${q(idr?'1':'0')}`);
-console.log(`IMPORTANT_DATE_DECLARATION=${q(idr?.declaration_key||'')}`);
-console.log(`IMPORTANT_DATE_NAME=${q(idr?.name||'')}`);
-console.log(`IMPORTANT_DATE_CRON=${q(idr?.cron||'')}`);
-console.log(`IMPORTANT_DATE_TIMEZONE=${q(idr?.timezone||'')}`);
-console.log(`IMPORTANT_DATE_SCRIPT=${q(idr?.script||'')}`);
-console.log(`IMPORTANT_DATE_TOOL=${q(idr?.tool||'')}`);
-console.log(`IMPORTANT_DATE_TIMEOUT=${q(idr?.timeout_seconds||'')}`);
-console.log(`IMPORTANT_DATE_TOOL_BUDGET=${q(idr?.tool_budget||'')}`);
-console.log(`IMPORTANT_DATE_CHANNEL=${q(idr?.delivery_channel||'')}`);
-console.log(`IMPORTANT_DATE_ACCOUNT=${q(idr?.delivery_account||'')}`);
-console.log(`FROM_PLUGIN_VERSIONS=${q(r.from.plugin_versions.join(' '))}`);
-console.log(`FROM_TOOLS_SHA=${q(r.from.tools_sha256||'')}`);
-for(const f of files)console.log(`FROM_WS_${f.replace(/\./g,'_')}=${q(r.from.workspace_sha256?.[f]||'')}`);
-NODE
-) || fail_plain "Invalid Task Agent release metadata"
+[ -f "$DEPLOY_SUPPORT_HELPER" ] || fail_plain "Task Agent deploy support helper missing"
+RELEASE_ENV=$(node "$DEPLOY_SUPPORT_HELPER" release-env "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION") || fail_plain "Invalid Task Agent release metadata"
 eval "$RELEASE_ENV"
 TARGET_WORKSPACE_LAYOUT=$(node "$WORKSPACE_LAYOUT_HELPER" layout "$RELEASE_FILE") || fail_plain "Invalid Task Agent workspace layout"
 read -r -a TARGET_WORKSPACE_FILES <<<"$(node "$WORKSPACE_LAYOUT_HELPER" target-files "$RELEASE_FILE")" || fail_plain "Invalid Task Agent workspace layout"
@@ -475,6 +408,7 @@ validate_source(){
   node "$RUNTIME_HELPER" repo-check "$RUNTIME_CONTRACT_ROOT" >/dev/null || abort_deploy "SOURCE" "repository runtime contract mismatch"
   node --check "$WORKSPACE_LAYOUT_HELPER" >/dev/null || abort_deploy "SOURCE" "workspace layout helper syntax invalid"
   node --check "$PLUGIN_REGISTRY_HELPER" >/dev/null || abort_deploy "SOURCE" "plugin registry state helper syntax invalid"
+  node --check "$DEPLOY_SUPPORT_HELPER" >/dev/null || abort_deploy "SOURCE" "deploy support helper syntax invalid"
   source_taskctl_identity_exact || abort_deploy "SOURCE" "taskctl source identity does not match release generation"
   contacts_source_exact || abort_deploy "SOURCE" "Shared Contacts source identity does not match release generation"
   [ -f "$ARTIFACT" ] && [ -f "$ARTIFACT_SHA_FILE" ] || abort_deploy "SOURCE" "release artifact or SHA file missing"

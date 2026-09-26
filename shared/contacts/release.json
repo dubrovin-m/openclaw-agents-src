@@ -3,11 +3,11 @@
   "implementation_version": "0.1.5",
   "sqlite_schema": 3,
   "from": {
-    "source_revision": "5f12be8d5c72531e29fec9ede357656a41189083",
+    "source_revision": "3259f95bb4df2ac9a2e78cc94a7fc69fe3bbc58d",
     "implementation_version": "0.1.5",
     "sqlite_schema": 3,
     "plugin_version": "0.1.5",
-    "release_sha256": "6082f0dbce60d444263ebc78410e2521e1e9076b4bb04f39764dca2f7c6b0dc6"
+    "release_sha256": "29fe7da1390c940b339ab3168204242883f6d228880224e1ee598948e7a8c35a"
   },
   "runtime_files": {
     "core.cjs": "3805c01bd25dac8fb1c178a29a4def5563968ba2dd62d0439465ee2cc406e172",

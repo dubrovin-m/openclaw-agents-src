@@ -129,12 +129,15 @@ test('protects controller, runtime contract, and deployment harness paths', () =
     'shared/runtime-contract/runtime-contract.mjs',
     'agents/tasks/production-control/controller.mjs',
     'agents/tasks/deploy.sh',
+    'agents/tasks/deploy-support.cjs',
     'agents/tasks/recover.sh',
     'agents/tasks/install.sh',
     'agents/tasks/workspace-layout.mjs',
     '.github/workflows/task-agent-ci.yml',
   ]) assert.equal(isProtectedDeploymentPath(p), true, p);
   assert.equal(isProtectedDeploymentPath('agents/tasks/taskctl'), false);
+  assert.equal(isProtectedDeploymentPath('agents/tasks/taskctl-src/domain.cjs'), false);
+  assert.equal(isProtectedDeploymentPath('agents/tasks/arbitrary-helper.cjs'), false);
   assert.equal(isProtectedDeploymentPath('agents/tasks/workspace/AGENTS.md'), false);
 });
 
@@ -143,6 +146,7 @@ test('rollout protects controller and execution semantics but permits the frozen
     'shared/runtime-contract/runtime-contract.mjs',
     'agents/tasks/production-control/controller.mjs',
     'agents/tasks/deploy.sh',
+    'agents/tasks/deploy-support.cjs',
     'agents/tasks/recover.sh',
     'agents/tasks/plugins/taskctl/src/production-control.ts',
     '.github/workflows/task-production-control-ci.yml',
@@ -156,6 +160,7 @@ test('staged controller activation admits only bounded validation-only source pa
   for (const p of [
     'agents/tasks/README.md',
     'agents/tasks/deploy.sh',
+    'agents/tasks/deploy-support.cjs',
     'agents/tasks/tests/deploy.sh',
     'agents/tasks/production-control/controller.mjs',
     '.github/workflows/task-production-control-ci.yml',
