@@ -2,7 +2,7 @@
   "id": "taskctl",
   "name": "Taskctl",
   "description": "Typed Task Agent data access plus bounded Task production-control operations.",
-  "version": "0.4.28",
+  "version": "0.4.29",
   "configSchema": {
     "type": "object",
     "properties": {},
