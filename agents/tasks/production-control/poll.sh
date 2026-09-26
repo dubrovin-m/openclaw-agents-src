@@ -11,21 +11,11 @@ STATE_FILE="$STATE_DIR/state.json"
 mkdir -p "$STATE_DIR"
 chmod 700 "$STATE_DIR"
 
-# Kernel advisory lock prevents concurrent poller wrappers. The controller.lock
-# is the cross-ingress mutation lock shared with semantic operations. Never remove
-# a lock owned by a live process; only recover a stale lock after its owner exited.
+# Kernel advisory lock is the sole routine concurrency guard for the pull-only
+# production controller. The registered systemd service always enters here.
 exec 9>"$STATE_DIR/poll.lock"
 if ! flock -n 9; then
   exit 0
-fi
-CONTROLLER_LOCK="$STATE_DIR/controller.lock"
-if [ -e "$CONTROLLER_LOCK" ]; then
-  read -r LOCK_PID _ < "$CONTROLLER_LOCK" || { echo "Controller lock evidence unreadable" >&2; exit 2; }
-  [[ "$LOCK_PID" =~ ^[1-9][0-9]*$ ]] || { echo "Controller lock evidence invalid" >&2; exit 2; }
-  if kill -0 "$LOCK_PID" 2>/dev/null; then
-    exit 0
-  fi
-  rm -f "$CONTROLLER_LOCK"
 fi
 
 # The runtime must never process requests under a controller revision different
