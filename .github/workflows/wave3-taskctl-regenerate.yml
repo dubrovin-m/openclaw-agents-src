@@ -1,0 +1,49 @@
+name: Wave 3 taskctl regenerate
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "agents/tasks/taskctl-src/**"
+      - "agents/tasks/build-taskctl.mjs"
+      - ".github/workflows/wave3-taskctl-regenerate.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.7.0
+
+      - name: Install locked Task build dependencies
+        working-directory: agents/tasks/plugins/taskctl
+        run: npm ci --ignore-scripts=false
+
+      - name: Generate exact Task CLI
+        run: node agents/tasks/build-taskctl.mjs
+
+      - name: Materialize exact unattached Git blob
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node - <<'NODE' > "$RUNNER_TEMP/taskctl-blob.json"
+          const fs = require('node:fs');
+          const content = fs.readFileSync('agents/tasks/taskctl').toString('base64');
+          process.stdout.write(JSON.stringify({ content, encoding: 'base64' }));
+          NODE
+          blob_sha="$(gh api --method POST "repos/$GITHUB_REPOSITORY/git/blobs" --input "$RUNNER_TEMP/taskctl-blob.json" --jq .sha)"
+          sha256="$(sha256sum agents/tasks/taskctl | awk '{print $1}')"
+          printf 'TASKCTL_GIT_BLOB_SHA=%s\nTASKCTL_SHA256=%s\n' "$blob_sha" "$sha256"
