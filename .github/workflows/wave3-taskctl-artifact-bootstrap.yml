@@ -1,0 +1,44 @@
+name: Wave 3 taskctl artifact bootstrap
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "agents/tasks/taskctl-src/**"
+      - "agents/tasks/build-taskctl.mjs"
+      - "agents/tasks/release.json"
+      - ".github/workflows/wave3-taskctl-artifact-bootstrap.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  generate:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          persist-credentials: false
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: 26.7.0
+
+      - name: Install locked Task build dependencies
+        working-directory: agents/tasks/plugins/taskctl
+        run: npm ci --ignore-scripts=false
+
+      - name: Generate exact Task CLI
+        run: node agents/tasks/build-taskctl.mjs
+
+      - name: Upload generated Task CLI
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: wave3-taskctl
+          path: agents/tasks/taskctl
+          if-no-files-found: error
+          retention-days: 1
