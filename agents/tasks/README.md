@@ -9,7 +9,9 @@ Canonical purpose, behavior, authority, lifecycle, and expected production state
 | Source | Owns |
 | --- | --- |
 | Nexus | Task Agent purpose, behavior, authority, lifecycle, and expected runtime relationships |
-| `taskctl` | Deterministic Task backend and SQLite behavior |
+| `taskctl-src/` | Authoritative modular source for deterministic Task backend, SQLite, review, and CLI behavior |
+| `build-taskctl.mjs` | Deterministic generation and byte-for-byte verification of the deployed Task CLI artifact |
+| `taskctl` | Generated single-file runtime artifact deployed and recovered by the existing Task runtime path; do not edit by hand |
 | `plugins/taskctl/` | OpenClaw tool plugin source, build metadata, dependencies, and generated plugin outputs |
 | `workspace/` | Runtime instructions for the Task Agent |
 | `config/` | Non-secret Task Agent configuration fragments and tool policy |
@@ -22,7 +24,10 @@ Do not duplicate volatile runtime or release versions in this README. Read the o
 
 ## Package layout
 
-- `taskctl` — deterministic JSON CLI used by the Task Agent tools.
+- `taskctl-src/` — cohesive CommonJS source modules for runtime primitives, current schema/database access, domain behavior, review services, and CLI routing.
+- `build-taskctl.mjs` — deterministic generator for the single deployed `taskctl` executable; `--check` fails when the committed artifact is stale.
+- `taskctl` — generated single-file JSON CLI used by the Task Agent tools. The deployed runtime remains one executable.
+- `deploy-support.cjs` — pure release-metadata validation/helper logic used by `deploy.sh`; mutation and rollback orchestration remain in `deploy.sh`.
 - `plugins/taskctl/` — action-specific typed OpenClaw plugin. The generic dispatcher is not model-visible.
 - `workspace/` — agent instructions.
 - `config/` — non-secret agent and tool-policy fragments.
@@ -44,6 +49,8 @@ TASK_AGENT_ALLOW_LOCAL_QUALIFICATION=1 ./validate.sh
 ```
 
 Tests use disposable state and must not access or mutate production Task data. Production deployment uses the registered deployment/control path and frozen artifacts; it must not depend on repository `npm ci` or local build output.
+
+Task CLI changes are made in `taskctl-src/`, then reproduced into `taskctl` through `build-taskctl.mjs`. CI runs the generator in `--check` mode and rejects any source/artifact mismatch before exercising the committed generated executable. Do not hand-edit `taskctl`.
 
 Plugin development lives under `plugins/taskctl/`. Build and package commands are defined by that package rather than repeated here. Generated outputs committed as part of the current release must reproduce cleanly under CI.
 
