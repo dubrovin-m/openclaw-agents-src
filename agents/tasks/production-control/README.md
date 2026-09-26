@@ -2,7 +2,7 @@
 
 Deterministic production-control implementation for the Task Agent.
 
-This directory owns reusable controller mechanics only. It does not own or publish a live production authorization endpoint, owner identity, private control repository, control issue number, production baseline, credentials, or execution evidence.
+This directory owns reusable authorization, provenance, bounded dispatch, fail-closed reconciliation, and private-evidence mechanics. It does not own or publish a live production authorization endpoint, owner identity, private control repository, control issue number, production baseline, credentials, or execution evidence.
 
 ## Authority split
 
@@ -18,11 +18,22 @@ The control and implementation repositories must be distinct. Their concrete ide
 
 The deterministic parser accepts only the bounded operations implemented in `lib.mjs`. It never interprets free-form shell commands. Authorization additionally requires the exact configured owner identity, an unedited post-bootstrap request, and the private control source recorded in controller state.
 
+The private pull-only control request is the only production-mutation ingress. The previously released Task plugin semantic contract is retained only as a read-only compatibility surface for status/diagnostics; semantic deployment is fail-closed and cannot authorize or start production mutation.
+
 ## Implementation provenance
 
 A deployment or rollout target must be an exact current `main` revision in the configured implementation repository, have the required merged-Pull-Request provenance, and have the required successful CI evidence. Protected controller/deployment paths remain fail-closed and require a separately prepared controller or break-glass change.
 
 The implementation checkout used for execution is prepared from that implementation repository only. The private control repository is not implementation authority.
+
+## Lifecycle ownership
+
+The controller validates and dispatches an exact authorized operation, then accepts only a bounded terminal evidence envelope tied to the request, operation, and implementation revision. It does not duplicate operation-internal lifecycle proof.
+
+- Task deployment and rollback mechanics belong to the frozen Task deployment/recovery entrypoints.
+- OpenClaw package/update, backup, plugin, config, Gateway, and Doctor mechanics belong to supported OpenClaw lifecycle commands as invoked by the frozen rollout runner.
+- The rollout runner owns coherent operation-level orchestration across OpenClaw update and the exact Task generation.
+- The controller independently runs post-operation diagnostics before accepting a successful target and advancing the production baseline.
 
 ## Provenance dimensions
 
@@ -34,11 +45,17 @@ Controller state keeps three independent revision identities:
 
 Routine deployment and OpenClaw rollout may advance only `production_baseline_sha`. Protected-path eligibility is compared from `protected_path_baseline_sha`. Bootstrap and separately approved break-glass/controller-repair reconciliation may advance protected-path acceptance. Legacy state created before this field existed is interpreted as `protected_path_baseline_sha=controller_revision` until the next governed reconciliation persists the field explicitly.
 
+Protected paths are explicit executable or authority-sensitive files, not the entire production-control directory. Documentation and tests do not become production authority merely by living next to the controller. Break-glass scripts remain separately approved execution paths rather than routine controller inputs.
+
+## Concurrency and detached execution
+
+The registered polling entrypoint owns the single routine kernel `flock` concurrency guard. There is no second semantic-ingress lock. Accepted deployments and rollouts still execute in detached bounded systemd units so interactive disconnect cannot interrupt the operation.
+
 ## Private evidence boundary
 
 Production diagnostics, request outcomes, recovery evidence, baselines, and detailed execution state remain in owner-private runtime state. The controller does not publish production commit statuses or other runtime evidence to the implementation repository.
 
-Semantic status output is intentionally bounded and does not expose the private control binding, raw request payloads, detailed diagnostics, or credentials.
+Compatibility status output is intentionally bounded and does not expose the private control binding, raw request payloads, detailed diagnostics, or credentials.
 
 ## GitHub credential boundary
 
