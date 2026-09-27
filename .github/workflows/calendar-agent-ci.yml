@@ -43,7 +43,8 @@ jobs:
           relevant=true
           if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
-            if git diff --name-only "$BASE_SHA" "$HEAD_SHA" | grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/calendar/|\.github/workflows/calendar-agent-ci\.yml$)'; then
+            changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
+            if grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/calendar/|\.github/workflows/calendar-agent-ci\.yml$)' <<<"$changed_files"; then
               relevant=true
             fi
           fi
