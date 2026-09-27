@@ -2,6 +2,7 @@ name: Task production control CI
 
 on:
   push:
+    branches: [main]
     paths:
       - 'runtime-contract.json'
       - 'shared/runtime-contract/**'
@@ -21,6 +22,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
 
 env:
   npm_config_audit: false
