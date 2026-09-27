@@ -2,6 +2,7 @@ name: Voice Transcription CI
 
 on:
   push:
+    branches: [main]
     paths:
       - "shared/voice-transcription/**"
       - ".github/workflows/voice-transcription-ci.yml"
