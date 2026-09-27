@@ -10,12 +10,12 @@
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.28",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.28.tgz",
-    "sha256": "1eebbc6ec88b6d7fb03c6f6190dc72e99fe1349d85b34f45f85e8044f449c15b"
+    "version": "0.4.29",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.29.tgz",
+    "sha256": "ac2bd8ab249e11c73339c48be9dda85aa6b15570029b2e4d311096336363225e"
   },
   "from": {
-    "source_revision": "d2001c60f884770053ed821614e7d9f5e7c12da5",
+    "source_revision": "ee51a490f3db9a64cb644f8935a49f99ba662f13",
     "sqlite_schemas": [
       9
     ],
@@ -23,7 +23,7 @@
       "0.4.16"
     ],
     "plugin_versions": [
-      "0.4.27"
+      "0.4.28"
     ],
     "workspace_sha256": {
       "AGENTS.md": "cb0331cd8f2ce1f90e48a5c6ba7aea08372c9149722d16bebbdbbb8b9b5d3a3f",

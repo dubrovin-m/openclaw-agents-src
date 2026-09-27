@@ -1,212 +1,111 @@
 import { DAILY_REVIEW_DECLARATIONS, TASK_DAILY_REVIEW_TOOL, buildDailyReviewScript, dailyReviewInternals, dailyReviewParameters, executeDailyReview, } from "./daily-review.js";
+import { advanceCheckpoint, checkpointPath, initializeCheckpoint, readCheckpoint, } from "./daily-review-checkpoint.js";
 const DAILY_REVIEW_AGENT_ID = "tasks";
 const DAILY_REVIEW_TIMEZONE = "Europe/Moscow";
 const RECEIPT_TOKEN = "[taskctl.daily-review.receipt.v1";
 const RECEIPT_RE = /(?:\n\n)?\[taskctl\.daily-review\.receipt\.v1 last_delivered_run_at=([^\]\s]+)\]$/;
 const SYNTHETIC_ACTIVATION_VALIDATED_ROUTE = "task-daily-review-activation-validated-route";
-let schedulerGeneration;
-let schedulerServiceBinding;
 function parseInstant(value, label) {
     const date = new Date(value);
-    if (!value.trim() || Number.isNaN(date.getTime())) {
+    if (!value.trim() || Number.isNaN(date.getTime()))
         throw new Error(`${label} must be a valid ISO timestamp`);
-    }
     return { iso: date.toISOString(), ms: date.getTime() };
-}
-function assertProjectionActive(deps) {
-    deps.abortSignal?.throwIfAborted();
-    if (deps.isCurrent && !deps.isCurrent()) {
-        throw new Error("Daily Review scheduler projection is stale");
-    }
 }
 function parseReceipt(description) {
     const value = description ?? "";
     const markerIndex = value.indexOf(RECEIPT_TOKEN);
-    if (markerIndex < 0) {
+    if (markerIndex < 0)
         return { baseDescription: value, lastDeliveredRunAtMs: null };
-    }
     const match = RECEIPT_RE.exec(value);
-    if (!match || value.indexOf(RECEIPT_TOKEN, markerIndex + RECEIPT_TOKEN.length) >= 0) {
+    if (!match || value.indexOf(RECEIPT_TOKEN, markerIndex + RECEIPT_TOKEN.length) >= 0)
         throw new Error("Daily Review Automation description contains malformed receipt metadata");
-    }
-    const parsed = parseInstant(match[1] ?? "", "Daily Review receipt timestamp");
-    return {
-        baseDescription: value.slice(0, match.index),
-        lastDeliveredRunAtMs: parsed.ms,
-    };
-}
-function withReceipt(baseDescription, runAtMs) {
-    if (!Number.isFinite(runAtMs)) {
-        throw new Error("Daily Review receipt timestamp must be finite");
-    }
-    const marker = `${RECEIPT_TOKEN} last_delivered_run_at=${new Date(runAtMs).toISOString()}]`;
-    return baseDescription ? `${baseDescription}\n\n${marker}` : marker;
-}
-function visibleSuccessfulDelivery(job, boundaryMs, bootstrapMs) {
-    const runAtMs = job.state?.lastRunAtMs;
-    if (runAtMs === undefined)
-        return null;
-    if (!Number.isFinite(runAtMs) || runAtMs >= boundaryMs) {
-        throw new Error(`Daily Review scheduler state for ${job.id} has invalid lastRunAtMs`);
-    }
-    if (job.state?.lastRunStatus !== "ok" ||
-        job.state.lastDelivered !== true ||
-        job.state.lastDeliveryStatus !== "delivered") {
-        return null;
-    }
-    if (runAtMs < bootstrapMs)
-        return null;
-    return runAtMs;
+    return { baseDescription: value.slice(0, match.index), lastDeliveredRunAtMs: parseInstant(match[1] ?? "", "Daily Review receipt timestamp").ms };
 }
 function expectedSchedule(declarationKey) {
-    if (declarationKey === DAILY_REVIEW_DECLARATIONS.morning) {
+    if (declarationKey === DAILY_REVIEW_DECLARATIONS.morning)
         return { declaration: DAILY_REVIEW_DECLARATIONS.morning, peer: DAILY_REVIEW_DECLARATIONS.evening, expr: "30 9 * * *" };
-    }
-    if (declarationKey === DAILY_REVIEW_DECLARATIONS.evening) {
+    if (declarationKey === DAILY_REVIEW_DECLARATIONS.evening)
         return { declaration: DAILY_REVIEW_DECLARATIONS.evening, peer: DAILY_REVIEW_DECLARATIONS.morning, expr: "0 17 * * *" };
-    }
     throw new Error(`Unexpected Daily Review declarationKey: ${String(declarationKey)}`);
 }
 function validatePublicJob(job, label) {
     const expected = expectedSchedule(job.declarationKey);
-    if (job.enabled !== true) {
+    if (job.enabled !== true)
         throw new Error(`${label} Daily Review job must be enabled`);
-    }
-    if (job.agentId !== DAILY_REVIEW_AGENT_ID || job.sessionTarget !== "isolated") {
+    if (job.agentId !== DAILY_REVIEW_AGENT_ID || job.sessionTarget !== "isolated")
         throw new Error(`${label} Daily Review job must run as isolated tasks agent`);
-    }
-    if (job.schedule?.kind !== "cron" ||
-        job.schedule.expr !== expected.expr ||
-        job.schedule.tz !== DAILY_REVIEW_TIMEZONE ||
-        (job.schedule.staggerMs !== undefined && job.schedule.staggerMs !== 0)) {
+    if (job.schedule?.kind !== "cron" || job.schedule.expr !== expected.expr || job.schedule.tz !== DAILY_REVIEW_TIMEZONE || (job.schedule.staggerMs !== undefined && job.schedule.staggerMs !== 0))
         throw new Error(`${label} Daily Review schedule drift detected`);
-    }
-    if (job.payload?.kind !== "script") {
+    if (job.payload?.kind !== "script")
         throw new Error(`${label} Daily Review job must use a script payload`);
-    }
     return expected;
 }
-function validatePair(jobs, currentJobId, peerJobId) {
-    const declared = jobs.filter((job) => job.declarationKey === DAILY_REVIEW_DECLARATIONS.morning ||
-        job.declarationKey === DAILY_REVIEW_DECLARATIONS.evening);
-    if (declared.length !== 2) {
+function validatePair(jobs) {
+    const declared = jobs.filter((job) => job.declarationKey === DAILY_REVIEW_DECLARATIONS.morning || job.declarationKey === DAILY_REVIEW_DECLARATIONS.evening);
+    if (declared.length !== 2)
         throw new Error(`Daily Review requires exactly two declared schedule entries; found ${declared.length}`);
-    }
-    const currentMatches = declared.filter((job) => job.id === currentJobId);
-    const peerMatches = declared.filter((job) => job.id === peerJobId);
-    if (currentMatches.length !== 1 || peerMatches.length !== 1) {
-        throw new Error("Daily Review current/peer schedule identity mismatch");
-    }
-    const current = currentMatches[0];
-    const peer = peerMatches[0];
-    const currentExpected = validatePublicJob(current, "current");
-    const peerExpected = validatePublicJob(peer, "peer");
-    if (currentExpected.peer !== peerExpected.declaration) {
-        throw new Error("Daily Review jobs do not form the expected morning/evening pair");
-    }
-    return { current, peer };
+    const morning = declared.find((job) => job.declarationKey === DAILY_REVIEW_DECLARATIONS.morning);
+    const evening = declared.find((job) => job.declarationKey === DAILY_REVIEW_DECLARATIONS.evening);
+    validatePublicJob(morning, "morning");
+    validatePublicJob(evening, "evening");
+    return { morning, evening };
 }
-async function promoteReceipt(params) {
-    assertProjectionActive(params.deps);
-    const parsed = parseReceipt(params.job.description);
-    if (parsed.lastDeliveredRunAtMs !== null &&
-        (parsed.lastDeliveredRunAtMs < params.bootstrapMs || parsed.lastDeliveredRunAtMs >= params.boundaryMs)) {
-        throw new Error(`Daily Review receipt for ${params.job.id} is outside the active review window`);
-    }
-    const visible = visibleSuccessfulDelivery(params.job, params.boundaryMs, params.bootstrapMs);
-    const next = Math.max(parsed.lastDeliveredRunAtMs ?? Number.NEGATIVE_INFINITY, visible ?? Number.NEGATIVE_INFINITY);
-    if (!Number.isFinite(next))
+function visibleSuccessfulDelivery(job) {
+    const runAtMs = job.state?.lastRunAtMs;
+    if (runAtMs === undefined)
         return null;
-    if (parsed.lastDeliveredRunAtMs === null || next > parsed.lastDeliveredRunAtMs) {
-        await params.deps.service.update(params.job.id, {
-            description: withReceipt(parsed.baseDescription, next),
-        });
-        assertProjectionActive(params.deps);
-    }
-    return next;
+    if (!Number.isFinite(runAtMs))
+        throw new Error(`Daily Review scheduler state for ${job.id} has invalid lastRunAtMs`);
+    return job.state?.lastRunStatus === "ok" && job.state.lastDelivered === true && job.state.lastDeliveryStatus === "delivered" ? runAtMs : null;
 }
-function successfulEntry(runAtMs) {
+function migrationEntry(job) {
+    const expected = expectedSchedule(job.declarationKey);
+    const receipt = parseReceipt(job.description).lastDeliveredRunAtMs;
+    const visible = visibleSuccessfulDelivery(job);
+    const latest = Math.max(receipt ?? Number.NEGATIVE_INFINITY, visible ?? Number.NEGATIVE_INFINITY);
+    return { jobId: job.id, declarationKey: expected.declaration, lastDeliveredRunAtMs: Number.isFinite(latest) ? latest : null };
+}
+function successfulEntry(runAtMs) { return { status: "ok", completionStatus: "succeeded", delivered: true, deliveryStatus: "delivered", runAtMs }; }
+function projectedJob(entry, params, peerJobId, runningAtMs) {
+    const expected = expectedSchedule(entry.declarationKey);
     return {
-        status: "ok",
-        completionStatus: "succeeded",
-        delivered: true,
-        deliveryStatus: "delivered",
-        runAtMs,
+        id: entry.jobId, declarationKey: entry.declarationKey, agentId: DAILY_REVIEW_AGENT_ID, enabled: true,
+        schedule: { kind: "cron", expr: expected.expr, tz: DAILY_REVIEW_TIMEZONE, staggerMs: 0 },
+        sessionTarget: "isolated", wakeMode: "now",
+        payload: { kind: "script", script: buildDailyReviewScript({ ...params, peer_job_id: peerJobId }), toolsAllow: [TASK_DAILY_REVIEW_TOOL] },
+        delivery: { mode: "announce", channel: "telegram", to: SYNTHETIC_ACTIVATION_VALIDATED_ROUTE, accountId: DAILY_REVIEW_AGENT_ID, bestEffort: false },
+        state: runningAtMs === undefined ? {} : { runningAtMs },
     };
 }
-function historyEntries(receiptMs, visibleMs) {
-    const values = [receiptMs, visibleMs]
-        .filter((value) => value !== null)
-        .sort((left, right) => right - left);
-    return [...new Set(values)].map(successfulEntry);
-}
-function engineJob(job, params, peerJobId) {
-    return {
-        ...job,
-        payload: {
-            kind: "script",
-            script: buildDailyReviewScript({ ...params, peer_job_id: peerJobId }),
-            toolsAllow: [TASK_DAILY_REVIEW_TOOL],
-        },
-        delivery: {
-            mode: "announce",
-            channel: "telegram",
-            to: SYNTHETIC_ACTIVATION_VALIDATED_ROUTE,
-            accountId: DAILY_REVIEW_AGENT_ID,
-            bestEffort: false,
-        },
-    };
-}
-export async function prepareDailyReviewRuntimeProjection(params, toolContext, deps) {
-    assertProjectionActive(deps);
+export async function prepareDailyReviewRuntimeProjection(params, toolContext, options) {
     const currentJobId = dailyReviewInternals.parseCurrentCronJobId(toolContext);
-    if (!currentJobId) {
+    if (!currentJobId)
         throw new Error(`${TASK_DAILY_REVIEW_TOOL} is available only to the tasks cron script runtime`);
-    }
-    if (params.peer_job_id === currentJobId) {
+    if (params.peer_job_id === currentJobId)
         throw new Error("Daily Review peer_job_id must identify the sibling schedule entry");
-    }
     const bootstrap = parseInstant(params.bootstrap_checkpoint, "bootstrap_checkpoint");
-    const jobs = await deps.service.list({ includeDisabled: true });
-    assertProjectionActive(deps);
-    const { current, peer } = validatePair(jobs, currentJobId, params.peer_job_id);
-    const boundaryMs = current.state?.runningAtMs;
-    if (typeof boundaryMs !== "number" || !Number.isFinite(boundaryMs)) {
-        throw new Error("Daily Review current native run has no runningAtMs snapshot boundary");
+    const boundaryMs = options?.boundaryMs ?? Date.now();
+    if (!Number.isFinite(boundaryMs) || boundaryMs < bootstrap.ms)
+        throw new Error("Daily Review current run has invalid snapshot boundary");
+    const checkpoint = await readCheckpoint(options?.path ?? checkpointPath());
+    const entries = Object.values(checkpoint.jobs);
+    const current = entries.find((entry) => entry.jobId === currentJobId);
+    const peer = entries.find((entry) => entry.jobId === params.peer_job_id);
+    if (!current || !peer || current.declarationKey === peer.declarationKey)
+        throw new Error("Daily Review checkpoint does not match the configured job pair");
+    for (const entry of entries) {
+        if (entry.lastDeliveredRunAtMs !== null && (entry.lastDeliveredRunAtMs < bootstrap.ms || entry.lastDeliveredRunAtMs >= boundaryMs))
+            throw new Error(`Daily Review checkpoint for ${entry.jobId} is outside the active review window`);
     }
-    if (boundaryMs < bootstrap.ms) {
-        throw new Error("Daily Review current run predates its activation checkpoint");
-    }
-    const currentVisible = visibleSuccessfulDelivery(current, boundaryMs, bootstrap.ms);
-    const peerVisible = visibleSuccessfulDelivery(peer, boundaryMs, bootstrap.ms);
-    const currentReceipt = await promoteReceipt({
-        job: current,
-        boundaryMs,
-        bootstrapMs: bootstrap.ms,
-        deps,
-    });
-    const peerReceipt = await promoteReceipt({
-        job: peer,
-        boundaryMs,
-        bootstrapMs: bootstrap.ms,
-        deps,
-    });
-    const currentHistory = historyEntries(currentReceipt, currentVisible);
-    const peerHistory = historyEntries(peerReceipt, peerVisible);
     const projected = new Map([
-        [current.id, engineJob(current, params, peer.id)],
-        [peer.id, engineJob(peer, params, current.id)],
+        [current.jobId, projectedJob(current, params, peer.jobId, boundaryMs)],
+        [peer.jobId, projectedJob(peer, params, current.jobId)],
     ]);
-    const histories = new Map([
-        [current.id, currentHistory],
-        [peer.id, peerHistory],
-    ]);
+    const histories = new Map(entries.map((entry) => [entry.jobId, entry.lastDeliveredRunAtMs === null ? [] : [successfulEntry(entry.lastDeliveredRunAtMs)]]));
     return async (method, request) => {
-        assertProjectionActive(deps);
         const id = typeof request.id === "string" ? request.id : "";
-        if (!projected.has(id)) {
+        if (!projected.has(id))
             throw new Error(`Daily Review requested scheduler data outside the validated pair: ${id}`);
-        }
         if (method === "cron.get")
             return projected.get(id);
         const entries = histories.get(id) ?? [];
@@ -214,117 +113,51 @@ export async function prepareDailyReviewRuntimeProjection(params, toolContext, d
         const limit = Number.isSafeInteger(request.limit) && Number(request.limit) > 0 ? Math.min(Number(request.limit), 200) : 200;
         const page = entries.slice(offset, offset + limit);
         const nextOffset = offset + page.length;
-        return {
-            entries: page,
-            total: entries.length,
-            offset,
-            limit,
-            hasMore: nextOffset < entries.length,
-            nextOffset: nextOffset < entries.length ? nextOffset : null,
-        };
-    };
-}
-function requireSchedulerGeneration() {
-    const serviceBinding = schedulerServiceBinding;
-    if (serviceBinding) {
-        try {
-            const service = serviceBinding.getService();
-            if (service) {
-                return {
-                    service,
-                    isCurrent: () => {
-                        try {
-                            return schedulerServiceBinding === serviceBinding && serviceBinding.getService() === service;
-                        }
-                        catch {
-                            return false;
-                        }
-                    },
-                };
-            }
-        }
-        catch {
-            // A revoked service-bound scheduler must fail closed rather than fall back
-            // to a potentially stale cron_reconciled snapshot.
-        }
-        throw new Error("Daily Review scheduler projection is unavailable or stale");
-    }
-    const generation = schedulerGeneration;
-    if (!generation || generation.abortSignal?.aborted) {
-        throw new Error("Daily Review scheduler projection is unavailable or stale");
-    }
-    return {
-        ...generation,
-        isCurrent: () => schedulerGeneration === generation,
+        return { entries: page, total: entries.length, offset, limit, hasMore: nextOffset < entries.length, nextOffset: nextOffset < entries.length ? nextOffset : null };
     };
 }
 export function registerDailyReviewSchedulerAccess(api) {
+    let statePath;
     api.registerService({
-        id: "taskctl-daily-review-scheduler-access",
-        start: (context) => {
-            const serviceContext = context;
-            const getService = serviceContext.getCron;
-            schedulerServiceBinding = getService ? { getService } : undefined;
+        id: "taskctl-daily-review-checkpoint",
+        start: async (context) => {
+            statePath = checkpointPath(context.stateDir);
+            const service = context.getCron?.();
+            if (!service)
+                throw new Error("Daily Review checkpoint initialization requires native Automation access");
+            const { morning, evening } = validatePair(await service.list({ includeDisabled: true }));
+            await initializeCheckpoint({ path: statePath, entries: [migrationEntry(morning), migrationEntry(evening)] });
         },
-        stop: () => {
-            schedulerServiceBinding = undefined;
-        },
+        stop: () => { statePath = undefined; },
     });
-    api.on("cron_reconciled", (event, context) => {
-        if (!event.enabled) {
-            schedulerGeneration = undefined;
+    api.on("cron_changed", async (event) => {
+        if (event.action !== "finished" || event.status !== "ok" || event.completionStatus !== "succeeded" || event.delivered !== true || event.deliveryStatus !== "delivered" || typeof event.runAtMs !== "number")
             return;
+        if (!statePath)
+            throw new Error("Daily Review checkpoint service is unavailable");
+        try {
+            await advanceCheckpoint({ path: statePath, jobId: event.jobId, runAtMs: event.runAtMs });
         }
-        const service = context.getCron?.();
-        if (!service) {
-            schedulerGeneration = undefined;
-            return;
+        catch (error) {
+            if (String(error.message).includes("unknown job"))
+                return;
+            throw error;
         }
-        schedulerGeneration = {
-            service: service,
-            abortSignal: context.abortSignal,
-        };
-    });
-    api.on("gateway_stop", () => {
-        schedulerGeneration = undefined;
     });
 }
 export function createDailyReviewTool(api, toolContext) {
     if (!dailyReviewInternals.parseCurrentCronJobId(toolContext))
         return null;
     return {
-        name: TASK_DAILY_REVIEW_TOOL,
-        label: "Task Daily Review",
+        name: TASK_DAILY_REVIEW_TOOL, label: "Task Daily Review",
         description: "Build one fail-closed scheduler-only Daily Review snapshot and semantic duplicate warning set without Task mutations.",
         parameters: dailyReviewParameters,
         execute: async (_toolCallId, rawParams, signal) => {
             const params = rawParams;
-            const generation = requireSchedulerGeneration();
-            const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext, generation);
-            const result = await executeDailyReview(params, {
-                api,
-                toolContext,
-                signal,
-                readGateway,
-            });
-            return {
-                content: [{ type: "text", text: JSON.stringify(result) }],
-                details: result,
-            };
+            const readGateway = await prepareDailyReviewRuntimeProjection(params, toolContext);
+            const result = await executeDailyReview(params, { api, toolContext, signal, readGateway });
+            return { content: [{ type: "text", text: JSON.stringify(result) }], details: result };
         },
     };
 }
-export const dailyReviewRuntimeInternals = {
-    parseReceipt,
-    withReceipt,
-    visibleSuccessfulDelivery,
-    validatePublicJob,
-    validatePair,
-    promoteReceipt,
-    historyEntries,
-    requireSchedulerGeneration,
-    resetState: () => {
-        schedulerGeneration = undefined;
-        schedulerServiceBinding = undefined;
-    },
-};
+export const dailyReviewRuntimeInternals = { parseReceipt, visibleSuccessfulDelivery, validatePublicJob, validatePair, migrationEntry };
