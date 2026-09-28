@@ -3,7 +3,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
-import { ACTION_REGISTRY, TASKCTL_ACTIONS } from "./contract.js";
+import { Value } from "typebox/value";
+import { ACTION_REGISTRY, TASKCTL_ACTIONS, actionToolParameters } from "./contract.js";
 import { TASKCTL_EXECUTABLE, buildInvocation, executeTaskctl, validateAndSanitizePayload } from "./index.js";
 
 const CANDIDATE_TASKCTL = join(process.cwd(), "..", "..", "taskctl");
@@ -38,6 +39,32 @@ describe("taskctl deterministic action registry",()=>{
     expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",text:"Позвонить",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:true});
     expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",task_id:"T-1",text:"bad",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:false});
     expect(validateAndSanitizePayload("reminder_create",{operation_key:"rem",trigger_date:"2026-09-17",trigger_time:"18:00"})).toMatchObject({ok:false});
+  });
+  it("uses the generated TypeBox action schema as the only structural payload gate",()=>{
+    const structuralInvalid:[string,Record<string,unknown>][]=[
+      ["inbox_add",{operation_key:"x",capture_key:"c",content:7}],
+      ["task_get",{id:"I-1"}],
+      ["task_create",{operation_key:"x",title:"x",assignee:"A",unexpected:true}],
+      ["project_get",{id:1}],
+      ["reminder_cancel",{operation_key:"x",id:"R-1"}],
+      ["recurrence_create",{operation_key:"x",mode:"CALENDAR",rule:{kind:"DAYS",interval:0,start_date:"2026-09-08"},title:"x",assignee_id:"P-1"}],
+    ];
+    for(const [action,payload] of structuralInvalid){
+      expect(Value.Check(actionToolParameters(action as keyof typeof ACTION_REGISTRY),payload),action).toBe(false);
+      expect(validateAndSanitizePayload(action,payload),action).toMatchObject({ok:false});
+    }
+
+    const semanticInvalid:[string,Record<string,unknown>][]=[
+      ["task_create",{operation_key:"x",title:"x",assignee:"A",due_date:"2026-02-30"}],
+      ["task_create",{operation_key:"x",title:"x",assignee:"A",due_time:"10:00"}],
+      ["task_create",{operation_key:"x",title:" ",assignee:"A"}],
+      ["task_create",{operation_key:"x",title:"x",assignee:"A",labels:[{id:"L-1",name:"Board"}]}],
+      ["reminder_create",{operation_key:"x",task_id:"T-1",text:"both",trigger_date:"2026-09-17",trigger_time:"12:00"}],
+    ];
+    for(const [action,payload] of semanticInvalid){
+      expect(Value.Check(actionToolParameters(action as keyof typeof ACTION_REGISTRY),payload),action).toBe(true);
+      expect(validateAndSanitizePayload(action,payload),action).toMatchObject({ok:false});
+    }
   });
   it("keeps Operational Project contracts action-specific and fail-closed",()=>{
     expect(ACTION_REGISTRY.task_project_set.required).toEqual(["operation_key","task_id","project_id"]);
