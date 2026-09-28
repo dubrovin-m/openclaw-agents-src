@@ -1,193 +1,141 @@
 import { spawn } from "node:child_process";
-import { ACTION_REGISTRY, getActionDefinition } from "./contract.js";
+import { Value } from "typebox/value";
+import { ACTION_REGISTRY, actionToolParameters, getActionDefinition } from "./contract.js";
 export { ACTION_REGISTRY, TASKCTL_ACTIONS } from "./contract.js";
 export const TASKCTL_EXECUTABLE = "/home/dubrovin/.local/bin/taskctl";
 export const TASKCTL_TIMEOUT_MS = 10_000;
 export const TASKCTL_OUTPUT_LIMIT_BYTES = 256 * 1024;
 function validationError(message, details = {}) { return { ok: false, error: { code: "TASKCTL_VALIDATION_ERROR", message, ...details } }; }
 const has = (o, k) => Object.hasOwn(o, k);
-const validString = (v, max, nullable = false) => v === null ? nullable : typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
-const validId = (v, prefix) => Number.isSafeInteger(v) && Number(v) > 0 || typeof v === "string" && new RegExp("^(?:" + prefix + "-)?[1-9]\\d*$", "i").test(v.trim());
-const validProjectId = (v) => typeof v === "string" && /^PRJ-[1-9]\d*$/i.test(v.trim());
-const validCanonicalId = (v, prefix) => typeof v === "string" && new RegExp("^" + prefix + "-[1-9]\\d*$", "i").test(v.trim());
-const validRecurrenceRule = (v) => { if (!v || Array.isArray(v) || typeof v !== "object")
-    return false; const x = v; if (x.kind === "DAYS")
-    return Object.keys(x).every(k => ["kind", "interval", "start_date"].includes(k)) && Number.isSafeInteger(x.interval) && Number(x.interval) > 0 && validDate(x.start_date, false); if (x.kind === "WEEKS")
-    return Object.keys(x).every(k => ["kind", "interval", "weekdays", "start_date"].includes(k)) && Number.isSafeInteger(x.interval) && Number(x.interval) > 0 && Array.isArray(x.weekdays) && x.weekdays.length > 0 && x.weekdays.length <= 7 && x.weekdays.every(d => Number.isSafeInteger(d) && Number(d) >= 1 && Number(d) <= 7) && validDate(x.start_date, false); if (x.kind === "MONTHS")
-    return Object.keys(x).every(k => ["kind", "interval", "day", "start_date"].includes(k)) && Number.isSafeInteger(x.interval) && Number(x.interval) > 0 && Number.isSafeInteger(x.day) && Number(x.day) >= 1 && Number(x.day) <= 28 && validDate(x.start_date, false); if (x.kind === "YEARLY")
-    return Object.keys(x).every(k => ["kind", "month", "day", "start_date"].includes(k)) && Number.isSafeInteger(x.month) && Number(x.month) >= 1 && Number(x.month) <= 12 && Number.isSafeInteger(x.day) && Number(x.day) >= 1 && Number(x.day) <= 31 && validDate(x.start_date, false); return Object.keys(x).every(k => ["interval", "unit"].includes(k)) && Number.isSafeInteger(x.interval) && Number(x.interval) > 0 && ["DAYS", "WEEKS", "MONTHS"].includes(String(x.unit)); };
-const validDate = (v, nullable = true) => { if (v === null)
-    return nullable; if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v))
+const validInternalString = (v, max) => typeof v === "string" && v.trim().length > 0 && v.trim().length <= max;
+const isObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);
+const isRealDate = (v) => { if (typeof v !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(v))
     return false; const d = new Date(v + "T00:00:00Z"); return !Number.isNaN(d.getTime()) && d.toISOString().slice(0, 10) === v; };
-const validTime = (v) => v === null || typeof v === "string" && /^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v);
-const validEmoji = (v) => v === null || typeof v === "string" && v.trim().length > 0 && v.trim().length <= 32 && !/[\r\n]/.test(v);
-const validLabelSpec = (v) => { if (validString(v, 500))
-    return true; if (v === null || typeof v !== "object" || Array.isArray(v))
-    return false; const x = v, keys = Object.keys(x); if (keys.some(k => !["id", "name", "create"].includes(k)))
-    return false; const refs = ["id", "name"].filter(k => has(x, k)); if (refs.length !== 1)
-    return false; if (has(x, "id") && !validId(x.id, "L"))
-    return false; if (has(x, "name") && !validString(x.name, 500))
-    return false; if (has(x, "create") && (typeof x.create !== "boolean" || !has(x, "name")))
-    return false; return true; };
-const validNewTask = (v) => { if (v === null || typeof v !== "object" || Array.isArray(v))
-    return false; const x = v, allowed = ["title", "assignee", "create_assignee", "status", "due_date", "due_time", "labels", "project_id"]; if (Object.keys(x).some(k => !allowed.includes(k)) || !validString(x.title, 2000) || !validString(x.assignee, 500))
-    return false; if (has(x, "create_assignee") && typeof x.create_assignee !== "boolean")
-    return false; if (has(x, "status") && !["OPEN", "DONE"].includes(String(x.status)))
-    return false; if (has(x, "due_date") && !validDate(x.due_date) || has(x, "due_time") && !validTime(x.due_time))
-    return false; if (x.due_time !== undefined && x.due_time !== null && (!has(x, "due_date") || x.due_date === null))
-    return false; if (has(x, "labels") && (!Array.isArray(x.labels) || x.labels.length > 20 || !x.labels.every(validLabelSpec)))
-    return false; if (has(x, "project_id") && !validProjectId(x.project_id))
-    return false; return true; };
-function valueError(action, key, value) {
-    const stringLimits = { operation_key: 500, capture_key: 500, content: 20000, title: 2000, text: 2000, assignee: 500, search: 1000, display_name: 500, reference: 500, alias: 500, expansion: 2000, label: 500 };
-    if (Object.hasOwn(stringLimits, key) && !validString(value, stringLimits[key]))
-        return key + " must be a non-empty bounded string";
-    if (key === "reason" && !validString(value, 2000, true))
-        return "reason must be a non-empty string or null";
-    if (key === "emoji" && !validEmoji(value))
-        return "emoji must be a non-empty presentation string up to 32 characters or null";
-    if (["create_assignee", "create_label"].includes(key) && typeof value !== "boolean")
-        return key + " must be boolean";
-    if (key === "id") {
-        if (action.startsWith("reminder_")) {
-            if (!validCanonicalId(value, "REM"))
-                return "id must be a canonical REM-* identifier";
+const REAL_DATE_FIELDS = new Set(["due_date", "due_on", "due_until", "first_due_date", "cycle_anchor_date", "trigger_date", "start_date"]);
+function semanticTreeError(value, path = "payload") {
+    if (typeof value === "string")
+        return value.trim().length === 0 ? `${path} must not be blank` : null;
+    if (Array.isArray(value)) {
+        for (let i = 0; i < value.length; i += 1) {
+            const error = semanticTreeError(value[i], `${path}[${i}]`);
+            if (error)
+                return error;
         }
-        else if (action.startsWith("recurrence_")) {
-            if (!validCanonicalId(value, "R"))
-                return "id must be a canonical R-* identifier";
-        }
-        else if (action.startsWith("project_")) {
-            if (!validProjectId(value))
-                return "id must be a canonical PRJ-* identifier";
-        }
-        else {
-            const prefix = action.startsWith("inbox_") ? "I" : action.startsWith("task_") ? "T" : action.startsWith("person_") ? "P" : action.startsWith("label_") ? "L" : "";
-            if (!prefix || !validId(value, prefix))
-                return "id has the wrong entity type";
+        return null;
+    }
+    if (!isObject(value))
+        return null;
+    for (const [key, child] of Object.entries(value)) {
+        const childPath = `${path}.${key}`;
+        if (REAL_DATE_FIELDS.has(key) && child !== null && !isRealDate(child))
+            return `${key} must be a real YYYY-MM-DD date`;
+        const error = semanticTreeError(child, childPath);
+        if (error)
+            return error;
+    }
+    return null;
+}
+function labelSpecSemanticError(value) {
+    if (typeof value === "string")
+        return null;
+    if (!isObject(value))
+        return null;
+    const refs = ["id", "name"].filter(key => has(value, key));
+    if (refs.length !== 1)
+        return "label specification must contain exactly one of id or name";
+    if (has(value, "create") && !has(value, "name"))
+        return "label create requires a label name";
+    return null;
+}
+function labelsSemanticError(value) {
+    if (!Array.isArray(value))
+        return null;
+    for (const label of value) {
+        const error = labelSpecSemanticError(label);
+        if (error)
+            return error;
+    }
+    return null;
+}
+function semanticRefinementError(action, obj) {
+    const treeError = semanticTreeError(obj);
+    if (treeError)
+        return treeError;
+    if (typeof obj.emoji === "string" && /[\r\n]/.test(obj.emoji))
+        return "emoji must not contain line breaks";
+    const rule = getActionDefinition(action);
+    for (const group of rule.exactlyOneOf ?? []) {
+        const present = group.filter(key => has(obj, key));
+        if (present.length !== 1)
+            return "payload must include exactly one of " + group.join(", ") + " for " + action;
+    }
+    for (const group of [["assignee", "assignee_id"], ["label", "label_id"]])
+        if (group.every(key => has(obj, key)))
+            return "payload contains mutually exclusive fields for " + action;
+    if (action === "task_update" && Object.keys(obj).every(key => ["operation_key", "id", "reason"].includes(key)))
+        return "task_update requires at least one mutable task field";
+    if (action === "task_update" && has(obj, "reason") && !has(obj, "due_date") && !has(obj, "due_time"))
+        return "reason is allowed only with a deadline change";
+    if (action === "deadline_request_create" && !has(obj, "due_date") && !has(obj, "due_time"))
+        return "deadline_request_create requires due_date and/or due_time";
+    if (action === "task_create" && obj.due_time !== undefined && obj.due_time !== null && (!has(obj, "due_date") || obj.due_date === null))
+        return "due_time requires due_date";
+    if (has(obj, "labels")) {
+        const error = labelsSemanticError(obj.labels);
+        if (error)
+            return error;
+    }
+    if (action === "inbox_commit" && Array.isArray(obj.tasks)) {
+        for (const task of obj.tasks) {
+            if (!isObject(task))
+                continue;
+            if (task.due_time !== undefined && task.due_time !== null && (!has(task, "due_date") || task.due_date === null))
+                return "due_time requires due_date in committed task";
+            if (has(task, "labels")) {
+                const error = labelsSemanticError(task.labels);
+                if (error)
+                    return error;
+            }
         }
     }
-    if (key === "task_id" && action === "reminder_create" && !validCanonicalId(value, "T"))
-        return "task_id must be a canonical T-* identifier";
-    if (key === "task_id" && action !== "reminder_create" && !validId(value, "T"))
-        return "task_id must be a T-* id or positive integer";
-    if (key === "assignee_id" && action.startsWith("recurrence_") && !validCanonicalId(value, "P"))
-        return "assignee_id must be a canonical P-* id";
-    if (key === "assignee_id" && !action.startsWith("recurrence_") && !validId(value, "P"))
-        return "assignee_id must be a P-* id or positive integer";
-    if (key === "label_id" && !validId(value, "L"))
-        return "label_id must be an L-* id or positive integer";
-    if (key === "project_id") {
-        if (action === "task_project_set") {
-            if (value !== null && !validProjectId(value))
-                return "project_id must be a canonical PRJ-* identifier or null";
-        }
-        else if (!validProjectId(value))
-            return "project_id must be a canonical PRJ-* identifier";
+    if (action === "recurrence_create") {
+        const seeded = has(obj, "seed_task_id");
+        if (seeded && ["title", "assignee_id", "label_ids", "target_project_id", "due_time", "first_due_date"].some(key => has(obj, key)))
+            return "seed Recurrence derives its template from the existing Task";
+        if (!seeded && (!has(obj, "title") || !has(obj, "assignee_id")))
+            return "non-seed Recurrence requires title and assignee_id";
+        const recurrenceRuleObject = obj.rule;
+        const calendarShaped = typeof recurrenceRuleObject?.kind === "string";
+        if (obj.mode === "CALENDAR" && !calendarShaped)
+            return "CALENDAR Recurrence requires a CALENDAR rule";
+        if (obj.mode === "AFTER_COMPLETION" && calendarShaped)
+            return "AFTER_COMPLETION Recurrence requires an interval/unit rule";
+        if (obj.mode === "CALENDAR" && has(obj, "first_due_date"))
+            return "CALENDAR Recurrence does not accept first_due_date";
+        if (obj.mode === "AFTER_COMPLETION" && !seeded && !has(obj, "first_due_date"))
+            return "AFTER_COMPLETION Recurrence requires first_due_date without a seed";
     }
-    if (["from_id", "into_id"].includes(key)) {
-        const prefix = action.startsWith("person_") ? "P" : "L";
-        if (!validId(value, prefix))
-            return key + " has the wrong entity type";
-    }
-    if (key === "due_date" && !validDate(value) || ["due_on", "due_until"].includes(key) && !validDate(value, false))
-        return key + " must be a real YYYY-MM-DD date";
-    if (key === "due_time" && !validTime(value))
-        return "due_time must be HH:MM or null";
-    if (key === "status") {
-        const allowed = action === "task_create" ? ["OPEN", "DONE"] : action === "project_list" ? ["ACTIVE", "DONE", "CANCELLED", "*"] : action === "recurrence_list" ? ["ACTIVE", "PAUSED", "CANCELLED", "*"] : ["OPEN", "DONE", "CANCELLED", "*"];
-        if (!allowed.includes(String(value)))
-            return "status is invalid for " + action;
-    }
-    if (key === "view" && !["today", "overdue", "no_due"].includes(String(value)))
-        return "view is invalid";
-    if (key === "context" && !["task", "inbox", "auto"].includes(String(value)))
-        return "context is invalid";
-    if (key === "limit" && (!Number.isSafeInteger(value) || Number(value) < 1 || Number(value) > 200))
-        return "limit must be an integer from 1 to 200";
-    if (key === "number" && (!Number.isSafeInteger(value) || Number(value) < 1))
-        return "number must be a positive integer";
-    if (key === "mode" && !['CALENDAR', 'AFTER_COMPLETION'].includes(String(value)))
-        return "mode must be CALENDAR or AFTER_COMPLETION";
-    if (key === "rule" && !validRecurrenceRule(value))
-        return "rule is invalid";
-    if (key === "seed_task_id" && !validCanonicalId(value, "T"))
-        return "seed_task_id must be a canonical T-* id";
-    if (key === "label_ids" && (!Array.isArray(value) || value.length > 20 || !value.every(v => validCanonicalId(v, "L"))))
-        return "label_ids must contain canonical L-* ids";
-    if (key === "target_project_id" && value !== null && !validProjectId(value))
-        return "target_project_id must be a canonical PRJ-* id or null";
-    if (["first_due_date", "cycle_anchor_date", "trigger_date"].includes(key) && !validDate(value, false))
-        return key + " must be a real YYYY-MM-DD date";
-    if (key === "trigger_time" && (typeof value !== "string" || !/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(value)))
-        return "trigger_time must be HH:MM";
-    if (key === "tasks" && (!Array.isArray(value) || value.length < 1 || value.length > 20 || !value.every(validNewTask)))
-        return "tasks contains an invalid task specification";
-    if (key === "labels" && (!Array.isArray(value) || value.length > 20 || !value.every(validLabelSpec)))
-        return "labels contains an invalid label specification";
+    if (action === "recurrence_update" && Object.keys(obj).every(key => ["operation_key", "id"].includes(key)))
+        return "recurrence_update requires at least one mutable field";
+    if (action === "recurrence_update" && has(obj, "cycle_anchor_date") && Object.keys(obj).some(key => !["operation_key", "id", "cycle_anchor_date"].includes(key)))
+        return "cycle_anchor_date must be a standalone recurrence update";
+    if (has(obj, "create_assignee") && !has(obj, "assignee"))
+        return "create_assignee requires assignee";
+    if (has(obj, "create_label") && !has(obj, "label"))
+        return "create_label requires label";
     return null;
 }
 export function validateAndSanitizePayload(action, payload) {
     if (typeof action !== "string" || !Object.hasOwn(ACTION_REGISTRY, action))
         return { ok: false, error: validationError("Unknown taskctl action") };
-    if (payload === null || typeof payload !== "object" || Array.isArray(payload))
-        return { ok: false, error: validationError("payload must be an object") };
-    const a = action, rule = getActionDefinition(a), obj = payload, keys = Object.keys(obj);
-    const extra = keys.filter(k => !rule.allowed.includes(k));
-    if (extra.length)
-        return { ok: false, error: validationError("payload contains fields not allowed for " + a, { fields: extra }) };
-    const missing = (rule.required ?? []).filter(k => !has(obj, k));
-    if (missing.length)
-        return { ok: false, error: validationError("payload is missing required fields for " + a, { fields: missing }) };
-    for (const group of rule.exactlyOneOf ?? []) {
-        const present = group.filter(k => has(obj, k));
-        if (present.length !== 1)
-            return { ok: false, error: validationError("payload must include exactly one of " + group.join(", ") + " for " + a) };
-    }
-    for (const group of [["assignee", "assignee_id"], ["label", "label_id"]])
-        if (group.every(k => has(obj, k)))
-            return { ok: false, error: validationError("payload contains mutually exclusive fields for " + a, { fields: group }) };
-    for (const key of keys) {
-        const message = valueError(a, key, obj[key]);
-        if (message)
-            return { ok: false, error: validationError(message, { field: key }) };
-    }
-    if (a === "task_update" && keys.every(k => ["operation_key", "id", "reason"].includes(k)))
-        return { ok: false, error: validationError("task_update requires at least one mutable task field") };
-    if (a === "task_update" && has(obj, "reason") && !has(obj, "due_date") && !has(obj, "due_time"))
-        return { ok: false, error: validationError("reason is allowed only with a deadline change") };
-    if (a === "deadline_request_create" && !has(obj, "due_date") && !has(obj, "due_time"))
-        return { ok: false, error: validationError("deadline_request_create requires due_date and/or due_time") };
-    if (a === "deadline_request_create" && !validString(obj.reason, 2000))
-        return { ok: false, error: validationError("deadline_request_create requires a non-empty reason") };
-    if (a === "task_create" && obj.due_time !== undefined && obj.due_time !== null && (!has(obj, "due_date") || obj.due_date === null))
-        return { ok: false, error: validationError("due_time requires due_date") };
-    if (a === "recurrence_create") {
-        const seeded = has(obj, "seed_task_id");
-        if (seeded && ["title", "assignee_id", "label_ids", "target_project_id", "due_time", "first_due_date"].some(k => has(obj, k)))
-            return { ok: false, error: validationError("seed Recurrence derives its template from the existing Task") };
-        if (!seeded && (!has(obj, "title") || !has(obj, "assignee_id")))
-            return { ok: false, error: validationError("non-seed Recurrence requires title and assignee_id") };
-        const recurrenceRuleObject = obj.rule;
-        const calendarShaped = typeof recurrenceRuleObject?.kind === "string";
-        if (obj.mode === "CALENDAR" && !calendarShaped)
-            return { ok: false, error: validationError("CALENDAR Recurrence requires a CALENDAR rule") };
-        if (obj.mode === "AFTER_COMPLETION" && calendarShaped)
-            return { ok: false, error: validationError("AFTER_COMPLETION Recurrence requires an interval/unit rule") };
-        if (obj.mode === "CALENDAR" && has(obj, "first_due_date"))
-            return { ok: false, error: validationError("CALENDAR Recurrence does not accept first_due_date") };
-        if (obj.mode === "AFTER_COMPLETION" && !seeded && !has(obj, "first_due_date"))
-            return { ok: false, error: validationError("AFTER_COMPLETION Recurrence requires first_due_date without a seed") };
-    }
-    if (a === "recurrence_update" && keys.every(k => ["operation_key", "id"].includes(k)))
-        return { ok: false, error: validationError("recurrence_update requires at least one mutable field") };
-    if (a === "recurrence_update" && has(obj, "cycle_anchor_date") && keys.some(k => !["operation_key", "id", "cycle_anchor_date"].includes(k)))
-        return { ok: false, error: validationError("cycle_anchor_date must be a standalone recurrence update") };
-    if (has(obj, "create_assignee") && !has(obj, "assignee"))
-        return { ok: false, error: validationError("create_assignee requires assignee") };
-    if (has(obj, "create_label") && !has(obj, "label"))
-        return { ok: false, error: validationError("create_label requires label") };
-    return { ok: true, action: a, payload: Object.fromEntries(keys.map(k => [k, obj[k]])) };
+    const a = action;
+    if (!Value.Check(actionToolParameters(a), payload))
+        return { ok: false, error: validationError("payload does not match structural contract for " + a) };
+    const obj = payload;
+    const semanticError = semanticRefinementError(a, obj);
+    if (semanticError)
+        return { ok: false, error: validationError(semanticError) };
+    return { ok: true, action: a, payload: Object.fromEntries(Object.keys(obj).map(key => [key, obj[key]])) };
 }
 export function buildInvocation(action, payload) { return { executable: TASKCTL_EXECUTABLE, argv: getActionDefinition(action).argv, options: { shell: false, env: { HOME: "/home/dubrovin", PATH: "/usr/bin:/bin", LANG: "C.UTF-8", TZ: "Europe/Moscow", TASKCTL_PAYLOAD: JSON.stringify(payload) }, stdio: ["ignore", "pipe", "pipe"] } }; }
 function structuredError(code, message, details = {}) { return { ok: false, error: { code, message, ...details } }; }
@@ -262,7 +210,7 @@ export function buildReminderInternalInvocation(action, payload) {
     const keys = Object.keys(payload);
     if (keys.some(key => !allowed.includes(key)))
         throw new Error(`Reminder internal ${action} payload contains unsupported fields`);
-    if (!validString(payload.claim_token, 500))
+    if (!validInternalString(payload.claim_token, 500))
         throw new Error("Reminder internal claim_token is required");
     if (action === "dispatch") {
         const boundary = payload.boundary;

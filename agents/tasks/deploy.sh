@@ -58,14 +58,19 @@ RECOVERY_FORMAT=$(node "$WORKSPACE_LAYOUT_HELPER" recovery-format "$RELEASE_FILE
 [ "${#TARGET_WORKSPACE_FILES[@]}" -gt 0 ] || fail_plain "Target workspace file set is empty"
 
 ARTIFACT="$ROOT/$ARTIFACT_REL"
-CONTACTS_RELEASE=""; CONTACTS_PLUGIN_ARTIFACT=""; CONTACTS_FROM_SOURCE=""; CONTACTS_FROM_VERSION=""; CONTACTS_FROM_SCHEMA=""; CONTACTS_FROM_PLUGIN=""; CONTACTS_FROM_RELEASE_SHA=""
+CONTACTS_RELEASE=""; CONTACTS_PLUGIN_ARTIFACT=""; CONTACTS_FROM_SOURCE="${FROM_SOURCE_REVISION:-}"; CONTACTS_FROM_VERSION=""; CONTACTS_FROM_SCHEMA=""; CONTACTS_FROM_PLUGIN=""; CONTACTS_FROM_RELEASE_SHA=""
 if [ "$CONTACTS_ENABLED" = "1" ]; then
   CONTACTS_RELEASE="$ROOT/$CONTACTS_RELEASE_REL"
   CONTACTS_PLUGIN_ARTIFACT="$CONTACTS_ROOT/$(node -e 'const r=require(process.argv[1]);const a=r?.plugin?.artifact;if(typeof a!=="string")process.exit(2);process.stdout.write(a)' "$CONTACTS_RELEASE")" || fail_plain "Invalid Shared Contacts plugin artifact"
-  read -r CONTACTS_FROM_SOURCE CONTACTS_FROM_VERSION CONTACTS_FROM_SCHEMA CONTACTS_FROM_PLUGIN CONTACTS_FROM_RELEASE_SHA < <(node - "$CONTACTS_RELEASE" <<'NODE'
-const r=require(process.argv[2]),f=r?.from;if(!f||!/^[0-9a-f]{40}$/.test(f.source_revision||'')||!/^0[.]1[.][0-9]+$/.test(f.implementation_version||'')||!Number.isSafeInteger(f.sqlite_schema)||f.sqlite_schema<1||!/^0[.]1[.][0-9]+$/.test(f.plugin_version||'')||!/^[0-9a-f]{64}$/.test(f.release_sha256||''))process.exit(2);process.stdout.write([f.source_revision,f.implementation_version,f.sqlite_schema,f.plugin_version,f.release_sha256].join(' ')+String.fromCharCode(10));
+  read -r CONTACTS_FROM_VERSION CONTACTS_FROM_SCHEMA CONTACTS_FROM_PLUGIN CONTACTS_FROM_RELEASE_SHA < <(node - "$REPO_ROOT" "$CONTACTS_FROM_SOURCE" <<'NODE'
+const {execFileSync}=require('child_process'),crypto=require('crypto'),repo=process.argv[2],source=process.argv[3];
+if(!/^[0-9a-f]{40}$/.test(source||''))process.exit(2);
+let raw;try{raw=execFileSync('git',['-C',repo,'show',source+':shared/contacts/release.json']);}catch{process.exit(2);}
+const r=JSON.parse(raw),sha=crypto.createHash('sha256').update(raw).digest('hex');
+if(r?.format!=='shared-contacts-release-v1'||!/^0[.]1[.][0-9]+$/.test(r.implementation_version||'')||!Number.isSafeInteger(r.sqlite_schema)||r.sqlite_schema<1||!/^0[.]1[.][0-9]+$/.test(r.plugin?.version||''))process.exit(2);
+process.stdout.write([r.implementation_version,r.sqlite_schema,r.plugin.version,sha].join(' ')+String.fromCharCode(10));
 NODE
-  ) || fail_plain "Invalid Shared Contacts predecessor metadata"
+  ) || fail_plain "Invalid exact Task predecessor Shared Contacts identity"
 fi
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
 TARGET_TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json" 2>/dev/null || true)

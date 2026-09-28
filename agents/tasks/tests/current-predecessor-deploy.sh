@@ -11,8 +11,8 @@ fail(){ echo "$*" >&2; exit 2; }
 
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
-if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact'||!c?.from)process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,PRED_CONTACTS:c.from.implementation_version,PRED_CONTACTS_SCHEMA:c.from.sqlite_schema,PRED_CONTACTS_PLUGIN:c.from.plugin_version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
+if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact')process.exit(2);
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
@@ -28,6 +28,13 @@ export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
 PRED_SRC="$TMP/predecessor-source"
 git clone -q --shared --no-checkout "$REPO_ROOT" "$PRED_SRC"
 git -C "$PRED_SRC" checkout -q --detach "$PRED"
+read -r PRED_CONTACTS PRED_CONTACTS_SCHEMA PRED_CONTACTS_PLUGIN < <(node - "$PRED_SRC/shared/contacts/release.json" <<'NODE'
+const c=require(process.argv[2]);
+const version=/^0[.]1[.][0-9]+$/;
+if(!version.test(c?.implementation_version||'')||!Number.isSafeInteger(c?.sqlite_schema)||c.sqlite_schema<1||!version.test(c?.plugin?.version||''))process.exit(2);
+process.stdout.write([c.implementation_version,c.sqlite_schema,c.plugin.version].join(' ')+String.fromCharCode(10));
+NODE
+) || fail "invalid predecessor Shared Contacts release identity"
 export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$PRED_SRC"
 BASE="$TMP/predecessor"
 PATH="$(dirname "$OPENCLAW_BIN"):$PATH" TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$PRED_SRC/agents/tasks/install.sh" --test-root "$BASE" >/dev/null
