@@ -227,7 +227,7 @@ export function registerImportantDateRuntime(api:OpenClawPluginApi):void {
       return null;
     }
   };
-  api.registerService({
+  if(typeof api.registerService==="function")api.registerService({
     id:"contacts-important-date-projection",
     start:async(context)=>{
       statePath=importantDateProjectionPath(context.stateDir);
