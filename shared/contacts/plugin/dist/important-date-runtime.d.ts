@@ -41,6 +41,14 @@ type SchedulerService = {
     }) => Promise<SchedulerJob[]>;
 };
 type JsonRecord = Record<string, unknown>;
+type CronChangedEvent = {
+    action: string;
+    jobId: string;
+    runAtMs?: number;
+    completionStatus?: string;
+    delivered?: boolean;
+    deliveryStatus?: string;
+};
 declare function parseCurrentJobId(sessionKey: string | undefined, agentId?: string): string | null;
 declare function claimToken(jobId: string, runAtMs: number): string;
 declare function resolveExpectedRecipient(config: unknown): string;
@@ -48,11 +56,20 @@ declare function validateJob(job: SchedulerJob, expectedRecipient: string): Sche
 declare function findRegisteredJob(service: SchedulerService, expectedRecipient: string): Promise<SchedulerJob>;
 declare function projectJob(job: SchedulerJob): ImportantDateProjectedJob;
 declare function validateActiveProjection(projection: ImportantDateProjection, jobId: string, nowMs: number): ImportantDateProjection;
+declare function waitForActiveProjection(jobId: string, options?: {
+    path?: string;
+    nowMs?: number;
+    signal?: AbortSignal;
+    waitMs?: number;
+    pollMs?: number;
+}): Promise<ImportantDateProjection>;
 export declare function buildImportantDateDispatchScript(): string;
 export declare function executeImportantDateDispatch(toolContext: OpenClawPluginToolContext, deps?: {
     signal?: AbortSignal;
     path?: string;
     nowMs?: number;
+    waitMs?: number;
+    pollMs?: number;
 }): Promise<JsonRecord>;
 export declare function createImportantDateDispatchTool(toolContext: OpenClawPluginToolContext): AnyAgentTool | null;
 declare function handleReplyPayloadSending(event: {
@@ -76,17 +93,7 @@ declare function handleReplyPayloadSending(event: {
     cancel?: undefined;
     reason?: undefined;
 } | undefined>;
-declare function handleCronChanged(event: {
-    action: string;
-    jobId: string;
-    runAtMs?: number;
-    completionStatus?: string;
-    delivered?: boolean;
-    deliveryStatus?: string;
-}, options?: {
-    path?: string;
-    recordedAtMs?: number;
-}): Promise<void>;
+declare function settleFinishedRun(event: CronChangedEvent, path: string): Promise<void>;
 export declare function registerImportantDateRuntime(api: OpenClawPluginApi): void;
 export declare const importantDateRuntimeInternals: {
     parseCurrentJobId: typeof parseCurrentJobId;
@@ -96,7 +103,8 @@ export declare const importantDateRuntimeInternals: {
     findRegisteredJob: typeof findRegisteredJob;
     projectJob: typeof projectJob;
     validateActiveProjection: typeof validateActiveProjection;
+    waitForActiveProjection: typeof waitForActiveProjection;
     handleReplyPayloadSending: typeof handleReplyPayloadSending;
-    handleCronChanged: typeof handleCronChanged;
+    settleFinishedRun: typeof settleFinishedRun;
 };
 export {};

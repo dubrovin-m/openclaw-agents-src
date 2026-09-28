@@ -88,20 +88,30 @@ export function parseImportantDateProjection(text) {
 export async function readImportantDateProjection(path = importantDateProjectionPath()) {
     return parseImportantDateProjection(await readFile(path, "utf8"));
 }
-async function atomicWrite(path, value) {
+async function atomicWrite(path, value, signal) {
+    signal?.throwIfAborted();
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
     await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-    await rename(temp, path);
+    try {
+        signal?.throwIfAborted();
+        await rename(temp, path);
+    }
+    catch (error) {
+        await rm(temp, { force: true });
+        throw error;
+    }
 }
-async function withLock(path, action) {
+async function withLock(path, action, signal) {
     const lock = `${path}.lock`;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     for (let attempt = 0; attempt < LOCK_RETRIES; attempt += 1) {
+        signal?.throwIfAborted();
         try {
             const handle = await open(lock, "wx", 0o600);
             await handle.close();
             try {
+                signal?.throwIfAborted();
                 return await action();
             }
             finally {
@@ -137,12 +147,15 @@ export async function reconcileImportantDateProjection(params) {
             job: params.job,
             activeRun: current && sameStaticProjection(current, params.expectedRecipient, params.job) ? current.activeRun : null,
         };
-        await atomicWrite(path, next);
+        await atomicWrite(path, next, params.signal);
         return next;
-    });
+    }, params.signal);
 }
-export async function removeImportantDateProjection(path = importantDateProjectionPath()) {
-    await withLock(path, async () => { await rm(path, { force: true }); });
+export async function removeImportantDateProjection(path = importantDateProjectionPath(), signal) {
+    await withLock(path, async () => {
+        signal?.throwIfAborted();
+        await rm(path, { force: true });
+    }, signal);
 }
 export async function beginImportantDateProjectedRun(params) {
     if (!Number.isFinite(params.runAtMs))

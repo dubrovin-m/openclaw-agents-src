@@ -42,8 +42,9 @@ export declare function reconcileImportantDateProjection(params: {
     path?: string;
     expectedRecipient: string;
     job: ImportantDateProjectedJob;
+    signal?: AbortSignal;
 }): Promise<ImportantDateProjection>;
-export declare function removeImportantDateProjection(path?: string): Promise<void>;
+export declare function removeImportantDateProjection(path?: string, signal?: AbortSignal): Promise<void>;
 export declare function beginImportantDateProjectedRun(params: {
     path?: string;
     jobId: string;

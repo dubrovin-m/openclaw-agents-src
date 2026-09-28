@@ -114,21 +114,34 @@ export async function readImportantDateProjection(path = importantDateProjection
   return parseImportantDateProjection(await readFile(path, "utf8"));
 }
 
-async function atomicWrite(path: string, value: ImportantDateProjection): Promise<void> {
+async function atomicWrite(path: string, value: ImportantDateProjection, signal?: AbortSignal): Promise<void> {
+  signal?.throwIfAborted();
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   const temp = `${path}.${process.pid}.${Date.now()}.tmp`;
   await writeFile(temp, `${JSON.stringify(value, null, 2)}\n`, { encoding: "utf8", mode: 0o600 });
-  await rename(temp, path);
+  try {
+    signal?.throwIfAborted();
+    await rename(temp, path);
+  } catch (error) {
+    await rm(temp, { force: true });
+    throw error;
+  }
 }
 
-async function withLock<T>(path: string, action: () => Promise<T>): Promise<T> {
+async function withLock<T>(path: string, action: () => Promise<T>, signal?: AbortSignal): Promise<T> {
   const lock = `${path}.lock`;
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   for (let attempt = 0; attempt < LOCK_RETRIES; attempt += 1) {
+    signal?.throwIfAborted();
     try {
       const handle = await open(lock, "wx", 0o600);
       await handle.close();
-      try { return await action(); } finally { await rm(lock, { force: true }); }
+      try {
+        signal?.throwIfAborted();
+        return await action();
+      } finally {
+        await rm(lock, { force: true });
+      }
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
       await new Promise((resolve) => setTimeout(resolve, LOCK_DELAY_MS));
@@ -145,6 +158,7 @@ export async function reconcileImportantDateProjection(params: {
   path?: string;
   expectedRecipient: string;
   job: ImportantDateProjectedJob;
+  signal?: AbortSignal;
 }): Promise<ImportantDateProjection> {
   const path = params.path ?? importantDateProjectionPath();
   return withLock(path, async () => {
@@ -159,13 +173,16 @@ export async function reconcileImportantDateProjection(params: {
       job: params.job,
       activeRun: current && sameStaticProjection(current, params.expectedRecipient, params.job) ? current.activeRun : null,
     };
-    await atomicWrite(path, next);
+    await atomicWrite(path, next, params.signal);
     return next;
-  });
+  }, params.signal);
 }
 
-export async function removeImportantDateProjection(path = importantDateProjectionPath()): Promise<void> {
-  await withLock(path, async () => { await rm(path, { force: true }); });
+export async function removeImportantDateProjection(path = importantDateProjectionPath(), signal?: AbortSignal): Promise<void> {
+  await withLock(path, async () => {
+    signal?.throwIfAborted();
+    await rm(path, { force: true });
+  }, signal);
 }
 
 export async function beginImportantDateProjectedRun(params: {

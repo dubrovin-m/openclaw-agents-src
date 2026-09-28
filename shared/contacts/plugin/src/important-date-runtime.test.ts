@@ -13,7 +13,7 @@ const runInternal=vi.mocked(runImportantDateInternal);
 type Hook=(...args:any[])=>any;
 type RegisteredService={start:(context:any)=>Promise<void>|void;stop:()=>Promise<void>|void};
 const tempDirs:string[]=[];
-async function fixture(){
+async function fixture(options:{startRun?:boolean}={}){
   const stateDir=await mkdtemp(join(tmpdir(),"important-date-runtime-"));tempDirs.push(stateDir);
   const runAtMs=Date.now();
   const job={id:"job-1",declarationKey:IMPORTANT_DATE_DISPATCH_DECLARATION,agentId:"main",enabled:true,
@@ -28,7 +28,7 @@ async function fixture(){
   registerImportantDateRuntime(api as never);
   expect(registered).toBeDefined();
   await registered!.start({stateDir,getCron:()=>scheduler});
-  await hooks.get("cron_changed")?.({action:"started",jobId:job.id,runAtMs});
+  if(options.startRun!==false)await hooks.get("cron_changed")?.({action:"started",jobId:job.id,runAtMs});
   return{stateDir,path:importantDateProjectionPath(stateDir),runAtMs,job,scheduler,hooks,registered};
 }
 beforeEach(()=>{runInternal.mockReset();});
@@ -49,12 +49,20 @@ describe("Important Dates scheduler runtime",()=>{
     await expect(executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs})).resolves.toMatchObject({count:1});
     expect(runInternal).toHaveBeenCalledWith("date_dispatch",{claim_token:`important-date:job-1:${runAtMs}`,boundary:new Date(runAtMs).toISOString()},{signal:undefined});
   });
+  it("does not depend on cron_changed started observation completing before isolated tool execution",async()=>{
+    const{path,runAtMs,hooks}=await fixture({startRun:false});
+    runInternal.mockResolvedValueOnce({ok:true,count:1,message:"Важные даты"} as never);
+    const pending=executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs,waitMs:500,pollMs:5});
+    await new Promise(resolve=>setTimeout(resolve,30));
+    await hooks.get("cron_changed")?.({action:"started",jobId:"job-1",runAtMs});
+    await expect(pending).resolves.toMatchObject({count:1});
+  });
   it("fails closed when the durable projection is stale or tampered",async()=>{
     const{path,runAtMs}=await fixture();
-    await expect(executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs+6*60*1000})).rejects.toThrow("stale");
+    await expect(executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs+6*60*1000,waitMs:0})).rejects.toThrow("stale");
     const projection=JSON.parse(await readFile(path,"utf8"));projection.job.delivery.to="999";
     await writeFile(path,`${JSON.stringify(projection,null,2)}\n`);
-    await expect(executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs})).rejects.toThrow("delivery route drift");
+    await expect(executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs,waitMs:0})).rejects.toThrow("delivery route drift");
     expect(runInternal).not.toHaveBeenCalled();
   });
   it("re-renders immediately before send and settles only the matching native run",async()=>{
@@ -80,9 +88,9 @@ describe("Important Dates scheduler runtime",()=>{
     const result=await hooks.get("reply_payload_sending")?.({payload:{text:"stale"},sessionKey:"agent:main:cron:job-1:trigger"},{channelId:"telegram",accountId:"default",sessionKey:"agent:main:cron:job-1:trigger"});
     expect(result).toEqual({cancel:true,reason:"important_date_claim_no_longer_active"});
   });
-  it("invalidates the projection if the registered dispatcher drifts",async()=>{
-    const{path,job,hooks,scheduler}=await fixture();job.delivery.to="999";
-    await hooks.get("cron_reconciled")?.({enabled:true},{getCron:()=>scheduler});
+  it("uses cron_changed config events only as hints to reread authoritative scheduler state",async()=>{
+    const{path,job,hooks}=await fixture();job.delivery.to="999";
+    await hooks.get("cron_changed")?.({action:"updated",jobId:"job-1"});
     await expect(readFile(path,"utf8")).rejects.toMatchObject({code:"ENOENT"});
   });
 });
