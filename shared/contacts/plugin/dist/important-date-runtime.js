@@ -1,5 +1,6 @@
 import { Type } from "typebox";
 import { runImportantDateInternal } from "./index.js";
+import { beginImportantDateProjectedRun, finishImportantDateProjectedRun, importantDateProjectionPath, readImportantDateProjection, reconcileImportantDateProjection, removeImportantDateProjection, } from "./important-date-projection.js";
 export const CONTACT_DATE_REMINDER_DISPATCH_TOOL = "contact_date_reminder_dispatch";
 export const IMPORTANT_DATE_DISPATCH_DECLARATION = "contacts.important-dates.dispatch.v1";
 export const IMPORTANT_DATE_DISPATCH_NAME = "contacts-important-dates-dispatch";
@@ -8,10 +9,9 @@ export const IMPORTANT_DATE_TIMEZONE = "Europe/Moscow";
 const AGENT_ID = "main";
 const ACCOUNT_ID = "default";
 const CHANNEL_ID = "telegram";
+const ACTIVE_RUN_MAX_AGE_MS = 5 * 60 * 1000;
+const ACTIVE_RUN_FUTURE_TOLERANCE_MS = 30 * 1000;
 export const importantDateDispatchParameters = Type.Object({}, { additionalProperties: false });
-let schedulerGeneration;
-const activeClaims = new Map();
-const knownJobIds = new Set();
 function parseCurrentJobId(sessionKey, agentId) {
     if (agentId !== undefined && agentId !== AGENT_ID)
         return null;
@@ -23,12 +23,6 @@ function claimToken(jobId, runAtMs) {
     if (!jobId.trim() || !Number.isFinite(runAtMs))
         throw new Error("Important Dates run identity is invalid");
     return `important-date:${jobId}:${Math.trunc(runAtMs)}`;
-}
-function requireSchedulerGeneration() {
-    const generation = schedulerGeneration;
-    if (!generation || generation.abortSignal.aborted)
-        throw new Error("Important Dates scheduler projection is unavailable or stale");
-    return generation;
 }
 function requireObject(value, label) {
     if (!value || Array.isArray(value) || typeof value !== "object")
@@ -80,20 +74,40 @@ function validateJob(job, expectedRecipient) {
         throw new Error("Important Dates dispatcher delivery route drift detected");
     return job;
 }
-async function findJob(service, jobId, expectedRecipient) {
-    const jobs = await service.list({ includeDisabled: true }), matches = jobs.filter(job => job.id === jobId);
+async function findRegisteredJob(service, expectedRecipient) {
+    const jobs = await service.list({ includeDisabled: true });
+    const matches = jobs.filter(job => job.declarationKey === IMPORTANT_DATE_DISPATCH_DECLARATION);
     if (matches.length !== 1)
-        return null;
-    const job = matches[0];
-    if (job.declarationKey !== IMPORTANT_DATE_DISPATCH_DECLARATION)
-        return null;
-    return validateJob(job, expectedRecipient);
+        throw new Error(`Important Dates requires exactly one registered dispatcher; found ${matches.length}`);
+    return validateJob(matches[0], expectedRecipient);
 }
-function runningAtMs(job) {
-    const value = job.state?.runningAtMs;
-    if (typeof value !== "number" || !Number.isFinite(value))
-        throw new Error("Important Dates dispatcher has no current runningAtMs");
-    return value;
+function projectJob(job) {
+    return {
+        id: job.id,
+        declarationKey: job.declarationKey,
+        agentId: job.agentId,
+        enabled: job.enabled,
+        schedule: { kind: job.schedule.kind, expr: job.schedule.expr, tz: job.schedule.tz, ...(job.schedule.staggerMs === undefined ? {} : { staggerMs: job.schedule.staggerMs }) },
+        sessionTarget: job.sessionTarget,
+        payload: { kind: job.payload.kind, script: job.payload.script, toolsAllow: [...(job.payload.toolsAllow ?? [])] },
+        delivery: { mode: job.delivery.mode, channel: job.delivery.channel, accountId: job.delivery.accountId, to: job.delivery.to, ...(job.delivery.bestEffort === undefined ? {} : { bestEffort: job.delivery.bestEffort }) },
+    };
+}
+function validateActiveProjection(projection, jobId, nowMs) {
+    validateJob(projection.job, projection.expectedRecipient);
+    if (projection.job.id !== jobId)
+        throw new Error("Important Dates dispatcher identity mismatch");
+    const active = projection.activeRun;
+    if (!active)
+        throw new Error("Important Dates scheduler projection has no active run");
+    if (active.recordedAtMs > nowMs + ACTIVE_RUN_FUTURE_TOLERANCE_MS || nowMs - active.recordedAtMs > ACTIVE_RUN_MAX_AGE_MS)
+        throw new Error("Important Dates scheduler projection is stale");
+    if (active.runAtMs > nowMs + ACTIVE_RUN_FUTURE_TOLERANCE_MS || nowMs - active.runAtMs > ACTIVE_RUN_MAX_AGE_MS)
+        throw new Error("Important Dates scheduler run boundary is stale");
+    return projection;
+}
+async function requireActiveProjection(jobId, options = {}) {
+    return validateActiveProjection(await readImportantDateProjection(options.path), jobId, options.nowMs ?? Date.now());
 }
 export function buildImportantDateDispatchScript() {
     return [
@@ -105,22 +119,11 @@ export async function executeImportantDateDispatch(toolContext, deps = {}) {
     const jobId = parseCurrentJobId(toolContext.sessionKey, toolContext.agentId);
     if (!jobId)
         throw new Error(`${CONTACT_DATE_REMINDER_DISPATCH_TOOL} is available only to a main cron session`);
-    const generation = requireSchedulerGeneration(), job = await findJob(generation.service, jobId, generation.expectedRecipient);
-    if (!job)
-        throw new Error(`${CONTACT_DATE_REMINDER_DISPATCH_TOOL} is available only to the registered Important Dates dispatcher`);
-    generation.abortSignal.throwIfAborted();
-    const runAtMs = runningAtMs(job), token = claimToken(jobId, runAtMs);
+    const projection = await requireActiveProjection(jobId, { path: deps.path, nowMs: deps.nowMs });
+    const runAtMs = projection.activeRun.runAtMs, token = claimToken(jobId, runAtMs);
     const result = requireSuccessful(await runImportantDateInternal("date_dispatch", { claim_token: token, boundary: new Date(runAtMs).toISOString() }, { signal: deps.signal }), "Important Dates dispatch");
     if (!Number.isSafeInteger(result.count) || Number(result.count) < 0 || typeof result.message !== "string")
         throw new Error("Important Dates dispatch returned an invalid result");
-    knownJobIds.add(jobId);
-    if (Number(result.count) > 0) {
-        const claims = activeClaims.get(jobId) ?? [];
-        if (!claims.some(claim => claim.token === token)) {
-            claims.push({ token, runAtMs });
-            activeClaims.set(jobId, claims);
-        }
-    }
     return result;
 }
 export function createImportantDateDispatchTool(toolContext) {
@@ -137,23 +140,16 @@ export function createImportantDateDispatchTool(toolContext) {
         },
     };
 }
-async function handleReplyPayloadSending(event, context) {
+async function handleReplyPayloadSending(event, context, options = {}) {
     const jobId = parseCurrentJobId(event.sessionKey ?? context.sessionKey);
     if (!jobId)
         return undefined;
-    const claims = activeClaims.get(jobId) ?? [];
-    if (claims.length === 0)
-        return undefined;
-    const claim = claims.length === 1 ? claims[0] : undefined;
-    if (!claim)
-        return { cancel: true, reason: "important_date_claim_identity_ambiguous" };
     try {
-        const generation = requireSchedulerGeneration(), job = await findJob(generation.service, jobId, generation.expectedRecipient);
-        if (!job)
-            return { cancel: true, reason: "important_date_dispatcher_drift" };
+        const projection = await requireActiveProjection(jobId, options);
         if (context.channelId !== CHANNEL_ID || context.accountId !== ACCOUNT_ID)
             return { cancel: true, reason: "important_date_delivery_route_mismatch" };
-        const rendered = requireSuccessful(await runImportantDateInternal("date_render", { claim_token: claim.token }), "Important Dates pre-send render");
+        const token = claimToken(jobId, projection.activeRun.runAtMs);
+        const rendered = requireSuccessful(await runImportantDateInternal("date_render", { claim_token: token }), "Important Dates pre-send render");
         const count = Number(rendered.count), message = rendered.message;
         if (!Number.isSafeInteger(count) || count < 0 || typeof message !== "string")
             return { cancel: true, reason: "important_date_render_invalid" };
@@ -165,10 +161,34 @@ async function handleReplyPayloadSending(event, context) {
         return { cancel: true, reason: "important_date_pre_send_revalidation_failed" };
     }
 }
-async function handleCronChanged(event) {
-    if (event.action !== "finished" || typeof event.runAtMs !== "number" || !Number.isFinite(event.runAtMs))
+async function handleCronChanged(event, options = {}) {
+    const path = options.path;
+    let projection;
+    try {
+        projection = await readImportantDateProjection(path);
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return;
+        throw error;
+    }
+    if (projection.job.id !== event.jobId)
         return;
-    if (!knownJobIds.has(event.jobId))
+    if (event.action === "updated" || event.action === "removed") {
+        await removeImportantDateProjection(path);
+        return;
+    }
+    if (event.action === "started") {
+        if (typeof event.runAtMs !== "number" || !Number.isFinite(event.runAtMs))
+            throw new Error("Important Dates dispatcher started without a run boundary");
+        await beginImportantDateProjectedRun({ path, jobId: event.jobId, runAtMs: event.runAtMs, recordedAtMs: options.recordedAtMs });
+        return;
+    }
+    if (event.action !== "finished")
+        return;
+    if (typeof event.runAtMs !== "number" || !Number.isFinite(event.runAtMs))
+        throw new Error("Important Dates dispatcher finished without a run boundary");
+    if (projection.activeRun?.runAtMs !== event.runAtMs)
         return;
     const token = claimToken(event.jobId, event.runAtMs);
     const delivered = event.completionStatus === "succeeded" && event.delivered === true && event.deliveryStatus === "delivered";
@@ -176,36 +196,49 @@ async function handleCronChanged(event) {
         await runImportantDateInternal("date_settle", { claim_token: token, delivered });
     }
     finally {
-        const remaining = (activeClaims.get(event.jobId) ?? []).filter(claim => claim.token !== token);
-        if (remaining.length)
-            activeClaims.set(event.jobId, remaining);
-        else
-            activeClaims.delete(event.jobId);
+        await finishImportantDateProjectedRun({ path, jobId: event.jobId, runAtMs: event.runAtMs });
     }
 }
 export function registerImportantDateRuntime(api) {
-    api.on("cron_reconciled", (event, context) => {
+    let statePath;
+    const currentPath = () => statePath ?? importantDateProjectionPath();
+    const refresh = async (service, path) => {
+        const expectedRecipient = resolveExpectedRecipient(api.config);
+        const job = await findRegisteredJob(service, expectedRecipient);
+        await reconcileImportantDateProjection({ path, expectedRecipient, job: projectJob(job) });
+    };
+    api.registerService({
+        id: "contacts-important-date-projection",
+        start: async (context) => {
+            statePath = importantDateProjectionPath(context.stateDir);
+            const service = context.getCron?.();
+            if (!service)
+                throw new Error("Important Dates projection initialization requires native Automation access");
+            await refresh(service, statePath);
+        },
+        stop: () => { statePath = undefined; },
+    });
+    api.on("cron_reconciled", async (event, context) => {
+        const path = currentPath();
         if (!event.enabled) {
-            schedulerGeneration = undefined;
+            await removeImportantDateProjection(path);
             return;
         }
         const service = context.getCron?.();
         if (!service) {
-            schedulerGeneration = undefined;
+            await removeImportantDateProjection(path);
             return;
         }
         try {
-            schedulerGeneration = { service: service, abortSignal: context.abortSignal, expectedRecipient: resolveExpectedRecipient(api.config) };
+            await refresh(service, path);
         }
         catch {
-            schedulerGeneration = undefined;
+            await removeImportantDateProjection(path);
         }
     });
-    api.on("reply_payload_sending", (event, context) => handleReplyPayloadSending(event, context));
-    api.on("cron_changed", (event) => handleCronChanged(event));
-    api.on("gateway_stop", () => { schedulerGeneration = undefined; activeClaims.clear(); knownJobIds.clear(); });
+    api.on("reply_payload_sending", (event, context) => handleReplyPayloadSending(event, context, { path: currentPath() }));
+    api.on("cron_changed", (event) => handleCronChanged(event, { path: currentPath() }));
 }
 export const importantDateRuntimeInternals = {
-    parseCurrentJobId, claimToken, resolveExpectedRecipient, validateJob, findJob, handleReplyPayloadSending, handleCronChanged,
-    resetState: () => { schedulerGeneration = undefined; activeClaims.clear(); knownJobIds.clear(); }, activeClaims, knownJobIds,
+    parseCurrentJobId, claimToken, resolveExpectedRecipient, validateJob, findRegisteredJob, projectJob, validateActiveProjection, handleReplyPayloadSending, handleCronChanged,
 };
