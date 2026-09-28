@@ -1,5 +1,6 @@
 import type { AnyAgentTool, OpenClawPluginApi, OpenClawPluginToolContext } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
+import { type ImportantDateProjectedJob, type ImportantDateProjection } from "./important-date-projection.js";
 export declare const CONTACT_DATE_REMINDER_DISPATCH_TOOL = "contact_date_reminder_dispatch";
 export declare const IMPORTANT_DATE_DISPATCH_DECLARATION = "contacts.important-dates.dispatch.v1";
 export declare const IMPORTANT_DATE_DISPATCH_NAME = "contacts-important-dates-dispatch";
@@ -40,18 +41,35 @@ type SchedulerService = {
     }) => Promise<SchedulerJob[]>;
 };
 type JsonRecord = Record<string, unknown>;
-type ActiveClaim = {
-    token: string;
-    runAtMs: number;
+type CronChangedEvent = {
+    action: string;
+    jobId: string;
+    runAtMs?: number;
+    completionStatus?: string;
+    delivered?: boolean;
+    deliveryStatus?: string;
 };
 declare function parseCurrentJobId(sessionKey: string | undefined, agentId?: string): string | null;
 declare function claimToken(jobId: string, runAtMs: number): string;
 declare function resolveExpectedRecipient(config: unknown): string;
 declare function validateJob(job: SchedulerJob, expectedRecipient: string): SchedulerJob;
-declare function findJob(service: SchedulerService, jobId: string, expectedRecipient: string): Promise<SchedulerJob | null>;
+declare function findRegisteredJob(service: SchedulerService, expectedRecipient: string): Promise<SchedulerJob>;
+declare function projectJob(job: SchedulerJob): ImportantDateProjectedJob;
+declare function validateActiveProjection(projection: ImportantDateProjection, jobId: string, nowMs: number): ImportantDateProjection;
+declare function waitForActiveProjection(jobId: string, options?: {
+    path?: string;
+    nowMs?: number;
+    signal?: AbortSignal;
+    waitMs?: number;
+    pollMs?: number;
+}): Promise<ImportantDateProjection>;
 export declare function buildImportantDateDispatchScript(): string;
 export declare function executeImportantDateDispatch(toolContext: OpenClawPluginToolContext, deps?: {
     signal?: AbortSignal;
+    path?: string;
+    nowMs?: number;
+    waitMs?: number;
+    pollMs?: number;
 }): Promise<JsonRecord>;
 export declare function createImportantDateDispatchTool(toolContext: OpenClawPluginToolContext): AnyAgentTool | null;
 declare function handleReplyPayloadSending(event: {
@@ -61,6 +79,9 @@ declare function handleReplyPayloadSending(event: {
     channelId: string;
     accountId?: string;
     sessionKey?: string;
+}, options?: {
+    path?: string;
+    nowMs?: number;
 }): Promise<{
     cancel: boolean;
     reason: string;
@@ -72,25 +93,18 @@ declare function handleReplyPayloadSending(event: {
     cancel?: undefined;
     reason?: undefined;
 } | undefined>;
-declare function handleCronChanged(event: {
-    action: string;
-    jobId: string;
-    runAtMs?: number;
-    completionStatus?: string;
-    delivered?: boolean;
-    deliveryStatus?: string;
-}): Promise<void>;
+declare function settleFinishedRun(event: CronChangedEvent, path: string): Promise<void>;
 export declare function registerImportantDateRuntime(api: OpenClawPluginApi): void;
 export declare const importantDateRuntimeInternals: {
     parseCurrentJobId: typeof parseCurrentJobId;
     claimToken: typeof claimToken;
     resolveExpectedRecipient: typeof resolveExpectedRecipient;
     validateJob: typeof validateJob;
-    findJob: typeof findJob;
+    findRegisteredJob: typeof findRegisteredJob;
+    projectJob: typeof projectJob;
+    validateActiveProjection: typeof validateActiveProjection;
+    waitForActiveProjection: typeof waitForActiveProjection;
     handleReplyPayloadSending: typeof handleReplyPayloadSending;
-    handleCronChanged: typeof handleCronChanged;
-    resetState: () => void;
-    activeClaims: Map<string, ActiveClaim[]>;
-    knownJobIds: Set<string>;
+    settleFinishedRun: typeof settleFinishedRun;
 };
 export {};
