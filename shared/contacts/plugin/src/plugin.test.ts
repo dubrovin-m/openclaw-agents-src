@@ -20,6 +20,7 @@ describe("Contacts bounded tool surface",()=>{
     (entry as any).register({
       config:{},
       on:()=>{},
+      registerService:()=>{},
       registerTool:(definition:unknown,options?:Record<string,unknown>)=>{
         const resolved=typeof definition==="function"?(definition as (ctx:unknown)=>unknown)({toolContext:{agentId:"main",sessionKey:"agent:main:main"}}):definition;
         const items=Array.isArray(resolved)?resolved:[resolved];
