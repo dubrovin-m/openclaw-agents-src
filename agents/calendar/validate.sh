@@ -13,6 +13,8 @@ do
   [ -f "$path" ] || fail "missing required source: $path"
 done
 
+[ ! -e "$ROOT/workspace/TOOLS.md" ] || fail "retired workspace/TOOLS.md must not exist"
+
 [ ! -e "$ROOT/workspace/MEMORY.md" ] || fail "Calendar v1 must not ship persistent agent memory"
 [ ! -e "$ROOT/workspace/BOOTSTRAP.md" ] || fail "Calendar v1 must not ship an interactive bootstrap ritual"
 
