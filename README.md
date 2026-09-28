@@ -39,6 +39,7 @@ The runtime contract does not replace Nexus authority over intended runtime stat
 ## Shared infrastructure
 
 - `shared/runtime-contract/` — repository-wide OpenClaw/Node compatibility validation.
+- `shared/contacts/` — shared deterministic Contact Registry implementation and its bounded OpenClaw integration.
 - `shared/nexus-sync/` — generic read-only Nexus synchronization mechanics; the private remote is supplied externally at runtime.
 - `shared/voice-transcription/` — local voice-transcription preprocessing shared by Telegram agents.
 - `shared/public-boundary/` — deterministic checks that reject known private-source and credential material before publication.
