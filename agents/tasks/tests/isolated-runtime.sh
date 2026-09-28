@@ -197,7 +197,7 @@ const declared=manifest.contracts.tools,optional=new Set(Object.entries(manifest
 const publicNames=declared.filter((name)=>!optional.has(name)).sort();
 const pluginModule=await import(pathToFileURL(pluginPath).href);
 const registrations=[];const tools=[];
-pluginModule.default.register({config:{},pluginConfig:{},on:()=>{},registerTool(definition,options){
+pluginModule.default.register({config:{},pluginConfig:{},on:()=>{},registerService:()=>{},registerTool(definition,options){
   const resolved=typeof definition==='function'?definition({toolContext:{agentId:'main',sessionKey:'agent:main:main'}}):definition;
   const items=Array.isArray(resolved)?resolved:[resolved];for(const item of items)if(item)tools.push(item);
   registrations.push({names:items.filter(Boolean).map((item)=>item.name),optional:options?.optional===true});
