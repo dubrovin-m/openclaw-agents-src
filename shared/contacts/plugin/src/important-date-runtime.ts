@@ -5,6 +5,16 @@ import type {
 } from "openclaw/plugin-sdk/plugin-entry";
 import { Type } from "typebox";
 import { runImportantDateInternal } from "./index.js";
+import {
+  beginImportantDateProjectedRun,
+  finishImportantDateProjectedRun,
+  importantDateProjectionPath,
+  readImportantDateProjection,
+  reconcileImportantDateProjection,
+  removeImportantDateProjection,
+  type ImportantDateProjectedJob,
+  type ImportantDateProjection,
+} from "./important-date-projection.js";
 
 export const CONTACT_DATE_REMINDER_DISPATCH_TOOL = "contact_date_reminder_dispatch";
 export const IMPORTANT_DATE_DISPATCH_DECLARATION = "contacts.important-dates.dispatch.v1";
@@ -14,6 +24,8 @@ export const IMPORTANT_DATE_TIMEZONE = "Europe/Moscow";
 const AGENT_ID = "main";
 const ACCOUNT_ID = "default";
 const CHANNEL_ID = "telegram";
+const ACTIVE_RUN_MAX_AGE_MS = 5 * 60 * 1000;
+const ACTIVE_RUN_FUTURE_TOLERANCE_MS = 30 * 1000;
 
 export const importantDateDispatchParameters = Type.Object({}, { additionalProperties: false });
 
@@ -29,12 +41,7 @@ type SchedulerJob = {
   state?: { runningAtMs?: number };
 };
 type SchedulerService = { list: (opts?: { includeDisabled?: boolean }) => Promise<SchedulerJob[]> };
-type SchedulerGeneration = { service: SchedulerService; abortSignal: AbortSignal; expectedRecipient: string };
 type JsonRecord = Record<string, unknown>;
-type ActiveClaim = { token: string; runAtMs: number };
-let schedulerGeneration: SchedulerGeneration | undefined;
-const activeClaims = new Map<string, ActiveClaim[]>();
-const knownJobIds = new Set<string>();
 
 function parseCurrentJobId(sessionKey: string | undefined, agentId?: string): string | null {
   if (agentId !== undefined && agentId !== AGENT_ID) return null;
@@ -44,11 +51,6 @@ function parseCurrentJobId(sessionKey: string | undefined, agentId?: string): st
 function claimToken(jobId:string,runAtMs:number):string {
   if(!jobId.trim()||!Number.isFinite(runAtMs))throw new Error("Important Dates run identity is invalid");
   return `important-date:${jobId}:${Math.trunc(runAtMs)}`;
-}
-function requireSchedulerGeneration():SchedulerGeneration {
-  const generation=schedulerGeneration;
-  if(!generation||generation.abortSignal.aborted)throw new Error("Important Dates scheduler projection is unavailable or stale");
-  return generation;
 }
 function requireObject(value:unknown,label:string):JsonRecord {
   if(!value||Array.isArray(value)||typeof value!=="object")throw new Error(`${label} must be an object`);
@@ -90,17 +92,35 @@ function validateJob(job:SchedulerJob,expectedRecipient:string):SchedulerJob {
   if(job.delivery?.mode!=="announce"||job.delivery.channel!==CHANNEL_ID||job.delivery.accountId!==ACCOUNT_ID||job.delivery.to!==expectedRecipient||(job.delivery.bestEffort!==undefined&&job.delivery.bestEffort!==false))throw new Error("Important Dates dispatcher delivery route drift detected");
   return job;
 }
-async function findJob(service:SchedulerService,jobId:string,expectedRecipient:string):Promise<SchedulerJob|null> {
-  const jobs=await service.list({includeDisabled:true}),matches=jobs.filter(job=>job.id===jobId);
-  if(matches.length!==1)return null;
-  const job=matches[0]!;
-  if(job.declarationKey!==IMPORTANT_DATE_DISPATCH_DECLARATION)return null;
-  return validateJob(job,expectedRecipient);
+async function findRegisteredJob(service:SchedulerService,expectedRecipient:string):Promise<SchedulerJob> {
+  const jobs=await service.list({includeDisabled:true});
+  const matches=jobs.filter(job=>job.declarationKey===IMPORTANT_DATE_DISPATCH_DECLARATION);
+  if(matches.length!==1)throw new Error(`Important Dates requires exactly one registered dispatcher; found ${matches.length}`);
+  return validateJob(matches[0]!,expectedRecipient);
 }
-function runningAtMs(job:SchedulerJob):number {
-  const value=job.state?.runningAtMs;
-  if(typeof value!=="number"||!Number.isFinite(value))throw new Error("Important Dates dispatcher has no current runningAtMs");
-  return value;
+function projectJob(job:SchedulerJob):ImportantDateProjectedJob {
+  return {
+    id:job.id,
+    declarationKey:job.declarationKey!,
+    agentId:job.agentId!,
+    enabled:job.enabled!,
+    schedule:{kind:job.schedule!.kind!,expr:job.schedule!.expr!,tz:job.schedule!.tz!,...(job.schedule!.staggerMs===undefined?{}:{staggerMs:job.schedule!.staggerMs})},
+    sessionTarget:job.sessionTarget!,
+    payload:{kind:job.payload!.kind!,script:job.payload!.script!,toolsAllow:[...(job.payload!.toolsAllow??[])]},
+    delivery:{mode:job.delivery!.mode!,channel:job.delivery!.channel!,accountId:job.delivery!.accountId!,to:job.delivery!.to!,...(job.delivery!.bestEffort===undefined?{}:{bestEffort:job.delivery!.bestEffort})},
+  };
+}
+function validateActiveProjection(projection:ImportantDateProjection,jobId:string,nowMs:number):ImportantDateProjection {
+  validateJob(projection.job,projection.expectedRecipient);
+  if(projection.job.id!==jobId)throw new Error("Important Dates dispatcher identity mismatch");
+  const active=projection.activeRun;
+  if(!active)throw new Error("Important Dates scheduler projection has no active run");
+  if(active.recordedAtMs>nowMs+ACTIVE_RUN_FUTURE_TOLERANCE_MS||nowMs-active.recordedAtMs>ACTIVE_RUN_MAX_AGE_MS)throw new Error("Important Dates scheduler projection is stale");
+  if(active.runAtMs>nowMs+ACTIVE_RUN_FUTURE_TOLERANCE_MS||nowMs-active.runAtMs>ACTIVE_RUN_MAX_AGE_MS)throw new Error("Important Dates scheduler run boundary is stale");
+  return projection;
+}
+async function requireActiveProjection(jobId:string,options:{path?:string;nowMs?:number}={}):Promise<ImportantDateProjection> {
+  return validateActiveProjection(await readImportantDateProjection(options.path),jobId,options.nowMs??Date.now());
 }
 export function buildImportantDateDispatchScript():string {
   return [
@@ -108,20 +128,13 @@ export function buildImportantDateDispatchScript():string {
     "json(dispatch.count > 0 ? { notify: dispatch.message } : {});",
   ].join("\n");
 }
-export async function executeImportantDateDispatch(toolContext:OpenClawPluginToolContext,deps:{signal?:AbortSignal}={}):Promise<JsonRecord> {
+export async function executeImportantDateDispatch(toolContext:OpenClawPluginToolContext,deps:{signal?:AbortSignal;path?:string;nowMs?:number}={}):Promise<JsonRecord> {
   const jobId=parseCurrentJobId(toolContext.sessionKey,toolContext.agentId);
   if(!jobId)throw new Error(`${CONTACT_DATE_REMINDER_DISPATCH_TOOL} is available only to a main cron session`);
-  const generation=requireSchedulerGeneration(),job=await findJob(generation.service,jobId,generation.expectedRecipient);
-  if(!job)throw new Error(`${CONTACT_DATE_REMINDER_DISPATCH_TOOL} is available only to the registered Important Dates dispatcher`);
-  generation.abortSignal.throwIfAborted();
-  const runAtMs=runningAtMs(job),token=claimToken(jobId,runAtMs);
+  const projection=await requireActiveProjection(jobId,{path:deps.path,nowMs:deps.nowMs});
+  const runAtMs=projection.activeRun!.runAtMs,token=claimToken(jobId,runAtMs);
   const result=requireSuccessful(await runImportantDateInternal("date_dispatch",{claim_token:token,boundary:new Date(runAtMs).toISOString()},{signal:deps.signal}),"Important Dates dispatch");
   if(!Number.isSafeInteger(result.count)||Number(result.count)<0||typeof result.message!=="string")throw new Error("Important Dates dispatch returned an invalid result");
-  knownJobIds.add(jobId);
-  if(Number(result.count)>0){
-    const claims=activeClaims.get(jobId)??[];
-    if(!claims.some(claim=>claim.token===token)){claims.push({token,runAtMs});activeClaims.set(jobId,claims);}
-  }
   return result;
 }
 export function createImportantDateDispatchTool(toolContext:OpenClawPluginToolContext):AnyAgentTool|null {
@@ -137,47 +150,70 @@ export function createImportantDateDispatchTool(toolContext:OpenClawPluginToolCo
     },
   };
 }
-async function handleReplyPayloadSending(event:{payload:JsonRecord;sessionKey?:string},context:{channelId:string;accountId?:string;sessionKey?:string}) {
+async function handleReplyPayloadSending(event:{payload:JsonRecord;sessionKey?:string},context:{channelId:string;accountId?:string;sessionKey?:string},options:{path?:string;nowMs?:number}={}) {
   const jobId=parseCurrentJobId(event.sessionKey??context.sessionKey);
   if(!jobId)return undefined;
-  const claims=activeClaims.get(jobId)??[];
-  if(claims.length===0)return undefined;
-  const claim=claims.length===1?claims[0]:undefined;
-  if(!claim)return{cancel:true,reason:"important_date_claim_identity_ambiguous"};
   try{
-    const generation=requireSchedulerGeneration(),job=await findJob(generation.service,jobId,generation.expectedRecipient);
-    if(!job)return{cancel:true,reason:"important_date_dispatcher_drift"};
+    const projection=await requireActiveProjection(jobId,options);
     if(context.channelId!==CHANNEL_ID||context.accountId!==ACCOUNT_ID)return{cancel:true,reason:"important_date_delivery_route_mismatch"};
-    const rendered=requireSuccessful(await runImportantDateInternal("date_render",{claim_token:claim.token}),"Important Dates pre-send render");
+    const token=claimToken(jobId,projection.activeRun!.runAtMs);
+    const rendered=requireSuccessful(await runImportantDateInternal("date_render",{claim_token:token}),"Important Dates pre-send render");
     const count=Number(rendered.count),message=rendered.message;
     if(!Number.isSafeInteger(count)||count<0||typeof message!=="string")return{cancel:true,reason:"important_date_render_invalid"};
     if(count===0||!message.trim())return{cancel:true,reason:"important_date_claim_no_longer_active"};
     return{payload:{...event.payload,text:message}};
   }catch{return{cancel:true,reason:"important_date_pre_send_revalidation_failed"};}
 }
-async function handleCronChanged(event:{action:string;jobId:string;runAtMs?:number;completionStatus?:string;delivered?:boolean;deliveryStatus?:string}) {
-  if(event.action!=="finished"||typeof event.runAtMs!=="number"||!Number.isFinite(event.runAtMs))return;
-  if(!knownJobIds.has(event.jobId))return;
+async function handleCronChanged(event:{action:string;jobId:string;runAtMs?:number;completionStatus?:string;delivered?:boolean;deliveryStatus?:string},options:{path?:string;recordedAtMs?:number}={}) {
+  const path=options.path;
+  let projection:ImportantDateProjection;
+  try{projection=await readImportantDateProjection(path);}catch(error){if((error as NodeJS.ErrnoException).code==="ENOENT")return;throw error;}
+  if(projection.job.id!==event.jobId)return;
+  if(event.action==="updated"||event.action==="removed"){
+    await removeImportantDateProjection(path);
+    return;
+  }
+  if(event.action==="started"){
+    if(typeof event.runAtMs!=="number"||!Number.isFinite(event.runAtMs))throw new Error("Important Dates dispatcher started without a run boundary");
+    await beginImportantDateProjectedRun({path,jobId:event.jobId,runAtMs:event.runAtMs,recordedAtMs:options.recordedAtMs});
+    return;
+  }
+  if(event.action!=="finished")return;
+  if(typeof event.runAtMs!=="number"||!Number.isFinite(event.runAtMs))throw new Error("Important Dates dispatcher finished without a run boundary");
+  if(projection.activeRun?.runAtMs!==event.runAtMs)return;
   const token=claimToken(event.jobId,event.runAtMs);
   const delivered=event.completionStatus==="succeeded"&&event.delivered===true&&event.deliveryStatus==="delivered";
   try{await runImportantDateInternal("date_settle",{claim_token:token,delivered});}
-  finally{
-    const remaining=(activeClaims.get(event.jobId)??[]).filter(claim=>claim.token!==token);
-    if(remaining.length)activeClaims.set(event.jobId,remaining);else activeClaims.delete(event.jobId);
-  }
+  finally{await finishImportantDateProjectedRun({path,jobId:event.jobId,runAtMs:event.runAtMs});}
 }
 export function registerImportantDateRuntime(api:OpenClawPluginApi):void {
-  api.on("cron_reconciled",(event,context)=>{
-    if(!event.enabled){schedulerGeneration=undefined;return;}
-    const service=context.getCron?.();if(!service){schedulerGeneration=undefined;return;}
-    try{schedulerGeneration={service:service as SchedulerService,abortSignal:context.abortSignal,expectedRecipient:resolveExpectedRecipient(api.config)};}
-    catch{schedulerGeneration=undefined;}
+  let statePath:string|undefined;
+  const currentPath=()=>statePath??importantDateProjectionPath();
+  const refresh=async(service:SchedulerService,path:string)=>{
+    const expectedRecipient=resolveExpectedRecipient(api.config);
+    const job=await findRegisteredJob(service,expectedRecipient);
+    await reconcileImportantDateProjection({path,expectedRecipient,job:projectJob(job)});
+  };
+  api.registerService({
+    id:"contacts-important-date-projection",
+    start:async(context)=>{
+      statePath=importantDateProjectionPath(context.stateDir);
+      const service=context.getCron?.() as SchedulerService|undefined;
+      if(!service)throw new Error("Important Dates projection initialization requires native Automation access");
+      await refresh(service,statePath);
+    },
+    stop:()=>{statePath=undefined;},
   });
-  api.on("reply_payload_sending",(event,context)=>handleReplyPayloadSending(event as never,context));
-  api.on("cron_changed",(event)=>handleCronChanged(event));
-  api.on("gateway_stop",()=>{schedulerGeneration=undefined;activeClaims.clear();knownJobIds.clear();});
+  api.on("cron_reconciled",async(event,context)=>{
+    const path=currentPath();
+    if(!event.enabled){await removeImportantDateProjection(path);return;}
+    const service=context.getCron?.() as SchedulerService|undefined;
+    if(!service){await removeImportantDateProjection(path);return;}
+    try{await refresh(service,path);}catch{await removeImportantDateProjection(path);}
+  });
+  api.on("reply_payload_sending",(event,context)=>handleReplyPayloadSending(event as never,context,{path:currentPath()}));
+  api.on("cron_changed",(event)=>handleCronChanged(event,{path:currentPath()}));
 }
 export const importantDateRuntimeInternals={
-  parseCurrentJobId,claimToken,resolveExpectedRecipient,validateJob,findJob,handleReplyPayloadSending,handleCronChanged,
-  resetState:()=>{schedulerGeneration=undefined;activeClaims.clear();knownJobIds.clear();},activeClaims,knownJobIds,
+  parseCurrentJobId,claimToken,resolveExpectedRecipient,validateJob,findRegisteredJob,projectJob,validateActiveProjection,handleReplyPayloadSending,handleCronChanged,
 };
