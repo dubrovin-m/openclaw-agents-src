@@ -239,19 +239,18 @@ export function registerImportantDateRuntime(api) {
             return null;
         }
     };
-    if (typeof api.registerService === "function")
-        api.registerService({
-            id: "contacts-important-date-projection",
-            start: async (context) => {
-                statePath = importantDateProjectionPath(context.stateDir);
-                getCurrentCron = () => context.getCron?.();
-                const service = getCurrentCron();
-                if (!service)
-                    throw new Error("Important Dates projection initialization requires native Automation access");
-                await refresh(service, statePath);
-            },
-            stop: () => { getCurrentCron = undefined; statePath = undefined; },
-        });
+    api.registerService({
+        id: "contacts-important-date-projection",
+        start: async (context) => {
+            statePath = importantDateProjectionPath(context.stateDir);
+            getCurrentCron = () => context.getCron?.();
+            const service = getCurrentCron();
+            if (!service)
+                throw new Error("Important Dates projection initialization requires native Automation access");
+            await refresh(service, statePath);
+        },
+        stop: () => { getCurrentCron = undefined; statePath = undefined; },
+    });
     api.on("cron_reconciled", async (event, context) => {
         const path = currentPath(), signal = context.abortSignal;
         signal?.throwIfAborted();
