@@ -18,7 +18,7 @@
     "name": "openclaw-plugin-contacts",
     "version": "0.1.6",
     "artifact": "artifacts/openclaw-plugin-contacts-0.1.6.tgz",
-    "sha256": "d729e30bebe63ec6db0513f2cd9b91ffc06f82d3353998314d469bbe9627f1bc"
+    "sha256": "6b60ecf4238de1a310f0281677ab0ff4b507f5f795a28e2480d015521140e7c2"
   },
   "openclaw_build_version": "2026.9.5",
   "openclaw_compat": "2026.9.5",
