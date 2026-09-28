@@ -111,15 +111,20 @@ NODE
 
 validate_exact_predecessor_identity() {
   local backup=$1 task_source contacts_source taskctl_version task_plugin contacts_version contacts_schema contacts_plugin
-  read -r task_source taskctl_version task_plugin contacts_source contacts_version contacts_schema contacts_plugin < <(node - "$ROOT/release.json" "$REPO_ROOT/shared/contacts/release.json" <<'NODE'
-const task=require(process.argv[2]),contacts=require(process.argv[3]);
-const f=task?.from,cf=contacts?.from;
-if(!f||!cf||f.taskctl_versions?.length!==1||f.plugin_versions?.length!==1||typeof f.source_revision!=='string'||!f.source_revision||typeof cf.source_revision!=='string'||!cf.source_revision)process.exit(2);
-process.stdout.write([f.source_revision,f.taskctl_versions[0],f.plugin_versions[0],cf.source_revision,cf.implementation_version,cf.sqlite_schema,cf.plugin_version].join(' ')+'\n');
+  read -r task_source taskctl_version task_plugin < <(node - "$ROOT/release.json" <<'NODE'
+const task=require(process.argv[2]),f=task?.from;
+if(!f||f.taskctl_versions?.length!==1||f.plugin_versions?.length!==1||!/^[0-9a-f]{40}$/.test(f.source_revision||''))process.exit(2);
+process.stdout.write([f.source_revision,f.taskctl_versions[0],f.plugin_versions[0]].join(' ')+'\n');
 NODE
   ) || fail "Unable to resolve exact recovery predecessor identity"
   git -C "$REPO_ROOT" cat-file -e "$task_source^{commit}" 2>/dev/null || fail "Task recovery predecessor history is unavailable"
-  git -C "$REPO_ROOT" cat-file -e "$contacts_source^{commit}" 2>/dev/null || fail "Contacts recovery predecessor history is unavailable"
+  local predecessor_contacts
+  predecessor_contacts=$(git -C "$REPO_ROOT" show "$task_source:shared/contacts/release.json") || fail "Unable to read exact Task predecessor Contacts release"
+  read -r contacts_version contacts_schema contacts_plugin < <(node - "$predecessor_contacts" <<'NODE'
+const r=JSON.parse(process.argv[2]);if(r?.format!=='shared-contacts-release-v1'||!/^0[.]1[.][0-9]+$/.test(r.implementation_version||'')||!Number.isSafeInteger(r.sqlite_schema)||r.sqlite_schema<1||!/^0[.]1[.][0-9]+$/.test(r.plugin?.version||''))process.exit(2);process.stdout.write([r.implementation_version,r.sqlite_schema,r.plugin.version].join(' ')+'\n');
+NODE
+  ) || fail "Invalid exact Task predecessor Contacts release identity"
+  contacts_source="$task_source"
 
   local expected actual
   expected=$(git -C "$REPO_ROOT" show "$task_source:agents/tasks/taskctl" | sha256sum | awk '{print $1}') || fail "Unable to fingerprint predecessor taskctl"
@@ -131,8 +136,6 @@ const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),sch
 if(x.format!=='shared-contacts-recovery-v2'||x.db_present!==true||x.lib_present!==true||x.contactctl_present!==true||x.plugin_present!==true||x.schema_version!==schema)process.exit(2);
 NODE
 
-  local predecessor_contacts
-  predecessor_contacts=$(git -C "$REPO_ROOT" show "$contacts_source:shared/contacts/release.json") || fail "Unable to read predecessor Contacts release"
   node - "$predecessor_contacts" "$contacts_version" "$contacts_schema" "$contacts_plugin" <<'NODE' || fail "Predecessor Contacts release identity mismatch"
 const r=JSON.parse(process.argv[2]);if(r.implementation_version!==process.argv[3]||r.sqlite_schema!==Number(process.argv[4])||r.plugin?.version!==process.argv[5])process.exit(2);
 NODE

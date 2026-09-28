@@ -58,14 +58,19 @@ RECOVERY_FORMAT=$(node "$WORKSPACE_LAYOUT_HELPER" recovery-format "$RELEASE_FILE
 [ "${#TARGET_WORKSPACE_FILES[@]}" -gt 0 ] || fail_plain "Target workspace file set is empty"
 
 ARTIFACT="$ROOT/$ARTIFACT_REL"
-CONTACTS_RELEASE=""; CONTACTS_PLUGIN_ARTIFACT=""; CONTACTS_FROM_SOURCE=""; CONTACTS_FROM_VERSION=""; CONTACTS_FROM_SCHEMA=""; CONTACTS_FROM_PLUGIN=""; CONTACTS_FROM_RELEASE_SHA=""
+CONTACTS_RELEASE=""; CONTACTS_PLUGIN_ARTIFACT=""; CONTACTS_FROM_SOURCE="${FROM_SOURCE_REVISION:-}"; CONTACTS_FROM_VERSION=""; CONTACTS_FROM_SCHEMA=""; CONTACTS_FROM_PLUGIN=""; CONTACTS_FROM_RELEASE_SHA=""
 if [ "$CONTACTS_ENABLED" = "1" ]; then
   CONTACTS_RELEASE="$ROOT/$CONTACTS_RELEASE_REL"
   CONTACTS_PLUGIN_ARTIFACT="$CONTACTS_ROOT/$(node -e 'const r=require(process.argv[1]);const a=r?.plugin?.artifact;if(typeof a!=="string")process.exit(2);process.stdout.write(a)' "$CONTACTS_RELEASE")" || fail_plain "Invalid Shared Contacts plugin artifact"
-  read -r CONTACTS_FROM_SOURCE CONTACTS_FROM_VERSION CONTACTS_FROM_SCHEMA CONTACTS_FROM_PLUGIN CONTACTS_FROM_RELEASE_SHA < <(node - "$CONTACTS_RELEASE" <<'NODE'
-const r=require(process.argv[2]),f=r?.from;if(!f||!/^[0-9a-f]{40}$/.test(f.source_revision||'')||!/^0[.]1[.][0-9]+$/.test(f.implementation_version||'')||!Number.isSafeInteger(f.sqlite_schema)||f.sqlite_schema<1||!/^0[.]1[.][0-9]+$/.test(f.plugin_version||'')||!/^[0-9a-f]{64}$/.test(f.release_sha256||''))process.exit(2);process.stdout.write([f.source_revision,f.implementation_version,f.sqlite_schema,f.plugin_version,f.release_sha256].join(' ')+String.fromCharCode(10));
+  read -r CONTACTS_FROM_VERSION CONTACTS_FROM_SCHEMA CONTACTS_FROM_PLUGIN CONTACTS_FROM_RELEASE_SHA < <(node - "$REPO_ROOT" "$CONTACTS_FROM_SOURCE" <<'NODE'
+const {execFileSync}=require('child_process'),crypto=require('crypto'),repo=process.argv[2],source=process.argv[3];
+if(!/^[0-9a-f]{40}$/.test(source||''))process.exit(2);
+let raw;try{raw=execFileSync('git',['-C',repo,'show',source+':shared/contacts/release.json']);}catch{process.exit(2);}
+const r=JSON.parse(raw),sha=crypto.createHash('sha256').update(raw).digest('hex');
+if(r?.format!=='shared-contacts-release-v1'||!/^0[.]1[.][0-9]+$/.test(r.implementation_version||'')||!Number.isSafeInteger(r.sqlite_schema)||r.sqlite_schema<1||!/^0[.]1[.][0-9]+$/.test(r.plugin?.version||''))process.exit(2);
+process.stdout.write([r.implementation_version,r.sqlite_schema,r.plugin.version,sha].join(' ')+String.fromCharCode(10));
 NODE
-  ) || fail_plain "Invalid Shared Contacts predecessor metadata"
+  ) || fail_plain "Invalid exact Task predecessor Shared Contacts identity"
 fi
 ARTIFACT_SHA_FILE="${ARTIFACT%.tgz}.sha256"
 TARGET_TOOLS_JSON=$(node -e "const fs=require('fs');process.stdout.write(JSON.stringify(JSON.parse(fs.readFileSync(process.argv[1],'utf8'))))" "$ROOT/config/tasks-tools.json" 2>/dev/null || true)
@@ -374,7 +379,7 @@ NODE
 const {execFileSync}=require('child_process'),x=JSON.parse(process.argv[2]),p=x?.plugin,v=process.argv[3],repo=process.argv[4],sha=process.argv[5];const m=JSON.parse(execFileSync('git',['-C',repo,'show',sha+':shared/contacts/plugin/openclaw.plugin.json'],{encoding:'utf8'})),expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.id!=='contacts'||p?.packageVersion!==v||p?.enabled!==true||p?.status!=='loaded'||!expected.every(t=>p.toolNames?.includes(t)))process.exit(1);
 NODE
 }
-contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_runtime_exact || contacts_predecessor_exact; }
+contacts_starting_eligible(){ [ "$CONTACTS_ENABLED" != "1" ] || contacts_predecessor_exact; }
 taskctl_target_exact(){ local identity; [ -x "$TASKCTL_TARGET" ] && cmp -s "$ROOT/taskctl" "$TASKCTL_TARGET" || return 1; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$TARGET_TASKCTL_VERSION $TARGET_SQLITE_SCHEMA" ]; }
 taskctl_starting_eligible(){ local identity; identity=$(taskctl_runtime_identity) || return 1; [ "$identity" = "$FROM_TASKCTL_VERSIONS $FROM_SQLITE_SCHEMAS" ]; }
 db_generation_exact(){ local state; state=$(read_db_state) || return 1; node -e 'const s=JSON.parse(process.argv[1]),want=Number(process.argv[2]);if(s.user_version!==want||s.integrity!=="ok"||s.fk!==0||!s.physical_current)process.exit(1)' "$state" "$TARGET_SQLITE_SCHEMA"; }

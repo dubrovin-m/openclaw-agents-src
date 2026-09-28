@@ -9,6 +9,7 @@ const tasksRoot = path.resolve(here, "..");
 const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
 const recover = fs.readFileSync(path.join(tasksRoot, "recover.sh"), "utf8");
 const verifier = fs.readFileSync(path.join(tasksRoot, "production-control", "verify-release-predecessor.mjs"), "utf8");
+const deploySupport = fs.readFileSync(path.join(tasksRoot, "deploy-support.cjs"), "utf8");
 
 function section(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -26,11 +27,19 @@ test("Task deploy validates Shared Contacts against its exact predecessor lineag
   assert.doesNotMatch(fn, /predecessor_absent|CONTACTS_PREDECESSOR_MODE/);
 });
 
-test("Task deploy accepts only exact target or declared predecessor Shared Contacts state", () => {
+test("Task deploy binds Shared Contacts starting state to the exact Task predecessor source", () => {
+  assert.match(deploySupport, /FROM_SOURCE_REVISION=/);
+  assert.match(deploy, /CONTACTS_FROM_SOURCE="\$\{FROM_SOURCE_REVISION:-\}"/);
   const fn = section(deploy, "contacts_starting_eligible(){", "\ntaskctl_target_exact(){");
-  assert.match(fn, /contacts_runtime_exact/);
   assert.match(fn, /contacts_predecessor_exact/);
-  assert.doesNotMatch(fn, /contacts_predecessor_absent|absent/);
+  assert.doesNotMatch(fn, /contacts_runtime_exact|contacts_predecessor_absent|absent/);
+});
+
+test("Task recovery validates Shared Contacts against the exact Task predecessor source", () => {
+  const fn = section(recover, "validate_exact_predecessor_identity() {", "\n\nvalidate_recovery_set()");
+  assert.match(fn, /show "\$task_source:shared\/contacts\/release\.json"/);
+  assert.match(fn, /contacts_source="\$task_source"/);
+  assert.doesNotMatch(fn, /contacts\?\.from|cf=contacts\?\.from/);
 });
 
 test("Task recovery accepts only current schema 9 and current v4 format", () => {
