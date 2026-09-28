@@ -7,7 +7,7 @@ import { runImportantDateInternal } from "./index.js";
 import { importantDateProjectionPath } from "./important-date-projection.js";
 import {
   CONTACT_DATE_REMINDER_DISPATCH_TOOL,IMPORTANT_DATE_DISPATCH_CRON,IMPORTANT_DATE_DISPATCH_DECLARATION,IMPORTANT_DATE_TIMEZONE,
-  buildImportantDateDispatchScript,createImportantDateDispatchTool,executeImportantDateDispatch,importantDateRuntimeInternals,registerImportantDateRuntime,
+  buildImportantDateDispatchScript,createImportantDateDispatchTool,executeImportantDateDispatch,registerImportantDateRuntime,
 } from "./important-date-runtime.js";
 const runInternal=vi.mocked(runImportantDateInternal);
 type Hook=(...args:any[])=>any;
@@ -58,9 +58,9 @@ describe("Important Dates scheduler runtime",()=>{
     expect(runInternal).not.toHaveBeenCalled();
   });
   it("re-renders immediately before send and settles only the matching native run",async()=>{
-    const{runAtMs,hooks}=await fixture();
+    const{path,runAtMs,hooks}=await fixture();
     runInternal.mockResolvedValueOnce({ok:true,count:1,message:"stale"} as never);
-    await executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{nowMs:runAtMs});
+    await executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs});
     runInternal.mockResolvedValueOnce({ok:true,count:1,message:"fresh"} as never);
     const result=await hooks.get("reply_payload_sending")?.({payload:{text:"stale"},sessionKey:"agent:main:cron:job-1:trigger"},{channelId:"telegram",accountId:"default",sessionKey:"agent:main:cron:job-1:trigger"});
     expect(result).toEqual({payload:{text:"fresh"}});
@@ -73,9 +73,9 @@ describe("Important Dates scheduler runtime",()=>{
     expect(runInternal.mock.calls).toHaveLength(calls);
   });
   it("cancels outbound send when the claimed date/reminder was removed",async()=>{
-    const{runAtMs,hooks}=await fixture();
+    const{path,runAtMs,hooks}=await fixture();
     runInternal.mockResolvedValueOnce({ok:true,count:1,message:"stale"} as never);
-    await executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{nowMs:runAtMs});
+    await executeImportantDateDispatch({agentId:"main",sessionKey:"agent:main:cron:job-1:trigger"} as never,{path,nowMs:runAtMs});
     runInternal.mockResolvedValueOnce({ok:true,count:0,message:""} as never);
     const result=await hooks.get("reply_payload_sending")?.({payload:{text:"stale"},sessionKey:"agent:main:cron:job-1:trigger"},{channelId:"telegram",accountId:"default",sessionKey:"agent:main:cron:job-1:trigger"});
     expect(result).toEqual({cancel:true,reason:"important_date_claim_no_longer_active"});
