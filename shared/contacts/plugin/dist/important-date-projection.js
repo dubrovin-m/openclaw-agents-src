@@ -1,9 +1,12 @@
-import { mkdir, open, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { link, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
+import { randomUUID } from "node:crypto";
 import { dirname, join } from "node:path";
 import { resolveStateDir } from "openclaw/plugin-sdk/state-paths";
 const FORMAT = "contacts-important-date-dispatcher-projection-v1";
+const LOCK_FORMAT = "contacts-important-date-projection-lock-v1";
 const LOCK_RETRIES = 100;
 const LOCK_DELAY_MS = 10;
+const LOCK_STALE_MS = 30_000;
 export function importantDateProjectionPath(stateDir = resolveStateDir()) {
     return join(stateDir, "plugins", "contacts", "important-date-dispatcher.json");
 }
@@ -102,27 +105,116 @@ async function atomicWrite(path, value, signal) {
         throw error;
     }
 }
+function parseProjectionLock(text) {
+    const row = requireObject(JSON.parse(text), "Important Dates projection lock");
+    if (row.format !== LOCK_FORMAT || !Number.isSafeInteger(row.pid) || Number(row.pid) < 1) {
+        throw new Error("Important Dates projection lock owner is invalid");
+    }
+    if (typeof row.acquiredAtMs !== "number" || !Number.isFinite(row.acquiredAtMs)) {
+        throw new Error("Important Dates projection lock timestamp is invalid");
+    }
+    return {
+        format: LOCK_FORMAT,
+        pid: Number(row.pid),
+        acquiredAtMs: row.acquiredAtMs,
+        token: requireString(row.token, "Important Dates projection lock token"),
+    };
+}
+function lockOwnerAlive(pid) {
+    try {
+        process.kill(pid, 0);
+        return true;
+    }
+    catch (error) {
+        return error.code === "EPERM";
+    }
+}
+async function tryAcquireLock(lock) {
+    const token = randomUUID();
+    const acquiredAtMs = Date.now();
+    const candidate = `${lock}.${process.pid}.${token}.candidate`;
+    const value = { format: LOCK_FORMAT, pid: process.pid, acquiredAtMs, token };
+    await writeFile(candidate, `${JSON.stringify(value)}\n`, { encoding: "utf8", mode: 0o600, flag: "wx" });
+    try {
+        await link(candidate, lock);
+        return token;
+    }
+    catch (error) {
+        if (error.code !== "EEXIST")
+            throw error;
+        return null;
+    }
+    finally {
+        await rm(candidate, { force: true });
+    }
+}
+async function recoverStaleLock(lock) {
+    const now = Date.now();
+    let observed;
+    try {
+        observed = parseProjectionLock(await readFile(lock, "utf8"));
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return true;
+        try {
+            const metadata = await stat(lock);
+            if (now - metadata.mtimeMs < LOCK_STALE_MS)
+                return false;
+        }
+        catch (statError) {
+            if (statError.code === "ENOENT")
+                return true;
+            throw statError;
+        }
+        await rm(lock, { force: true });
+        return true;
+    }
+    const expired = now - observed.acquiredAtMs >= LOCK_STALE_MS || observed.acquiredAtMs > now + LOCK_STALE_MS;
+    if (!expired && lockOwnerAlive(observed.pid))
+        return false;
+    try {
+        const current = parseProjectionLock(await readFile(lock, "utf8"));
+        if (current.token !== observed.token)
+            return false;
+    }
+    catch (error) {
+        if (error.code === "ENOENT")
+            return true;
+        return false;
+    }
+    await rm(lock, { force: true });
+    return true;
+}
+async function releaseLock(lock, token) {
+    try {
+        const current = parseProjectionLock(await readFile(lock, "utf8"));
+        if (current.token === token)
+            await rm(lock, { force: true });
+    }
+    catch (error) {
+        if (error.code !== "ENOENT")
+            throw error;
+    }
+}
 async function withLock(path, action, signal) {
     const lock = `${path}.lock`;
     await mkdir(dirname(path), { recursive: true, mode: 0o700 });
     for (let attempt = 0; attempt < LOCK_RETRIES; attempt += 1) {
         signal?.throwIfAborted();
-        try {
-            const handle = await open(lock, "wx", 0o600);
-            await handle.close();
+        const token = await tryAcquireLock(lock);
+        if (token) {
             try {
                 signal?.throwIfAborted();
                 return await action();
             }
             finally {
-                await rm(lock, { force: true });
+                await releaseLock(lock, token);
             }
         }
-        catch (error) {
-            if (error.code !== "EEXIST")
-                throw error;
-            await new Promise((resolve) => setTimeout(resolve, LOCK_DELAY_MS));
-        }
+        if (await recoverStaleLock(lock))
+            continue;
+        await new Promise((resolve) => setTimeout(resolve, LOCK_DELAY_MS));
     }
     throw new Error("Important Dates projection lock is unavailable");
 }

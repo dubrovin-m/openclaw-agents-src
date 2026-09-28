@@ -4,7 +4,7 @@ import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 vi.mock("./index.js",()=>({runImportantDateInternal:vi.fn()}));
 import { runImportantDateInternal } from "./index.js";
-import { importantDateProjectionPath } from "./important-date-projection.js";
+import { importantDateProjectionPath, readImportantDateProjection } from "./important-date-projection.js";
 import {
   CONTACT_DATE_REMINDER_DISPATCH_TOOL,IMPORTANT_DATE_DISPATCH_CRON,IMPORTANT_DATE_DISPATCH_DECLARATION,IMPORTANT_DATE_TIMEZONE,
   buildImportantDateDispatchScript,createImportantDateDispatchTool,executeImportantDateDispatch,registerImportantDateRuntime,
@@ -56,6 +56,16 @@ describe("Important Dates scheduler runtime",()=>{
     await new Promise(resolve=>setTimeout(resolve,30));
     await hooks.get("cron_changed")?.({action:"started",jobId:"job-1",runAtMs});
     await expect(pending).resolves.toMatchObject({count:1});
+  });
+  it("recovers abandoned or expired durable projection locks",async()=>{
+    const{path,runAtMs,hooks}=await fixture({startRun:false});
+    const lock=`${path}.lock`;
+    await writeFile(lock,`${JSON.stringify({format:"contacts-important-date-projection-lock-v1",pid:2147483646,acquiredAtMs:Date.now(),token:"orphan"})}\n`);
+    await hooks.get("cron_changed")?.({action:"started",jobId:"job-1",runAtMs});
+    expect((await readImportantDateProjection(path)).activeRun?.runAtMs).toBe(runAtMs);
+    await writeFile(lock,`${JSON.stringify({format:"contacts-important-date-projection-lock-v1",pid:process.pid,acquiredAtMs:Date.now()-60_000,token:"expired"})}\n`);
+    await hooks.get("cron_changed")?.({action:"started",jobId:"job-1",runAtMs:runAtMs+1});
+    expect((await readImportantDateProjection(path)).activeRun?.runAtMs).toBe(runAtMs+1);
   });
   it("fails closed when the durable projection is stale or tampered",async()=>{
     const{path,runAtMs}=await fixture();
