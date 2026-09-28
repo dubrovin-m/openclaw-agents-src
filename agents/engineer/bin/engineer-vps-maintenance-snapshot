@@ -18,7 +18,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-COLLECTOR_VERSION = "1.0.1"
+COLLECTOR_VERSION = "1.0.2"
 HOME = Path.home()
 NEXUS = HOME / ".openclaw" / "workspace" / "nexus"
 STATE_DB = HOME / ".openclaw" / "state" / "openclaw.sqlite"
@@ -340,7 +340,7 @@ def journal_error_counts(since: str) -> dict:
 
 
 def openclaw_automation_health() -> dict:
-    result = run(["openclaw", "cron", "list", "--json"], timeout=15)
+    result = run(["openclaw", "cron", "list", "--json"], timeout=15, max_output=200000)
     if not result.get("ok"):
         return {"query": result}
     try:

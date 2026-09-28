@@ -8,7 +8,7 @@ RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
 
 fail(){ echo "Calendar Agent validation failed: $*" >&2; exit 2; }
 
-for path in   "$ROOT/README.md"   "$ROOT/config/calendar-agent.fragment.json"   "$ROOT/config/calendar-tools.json"   "$ROOT/plugin/package.json"   "$ROOT/plugin/package-lock.json"   "$ROOT/plugin/openclaw.plugin.json"   "$ROOT/plugin/src/core.ts"   "$ROOT/plugin/src/policy.ts"   "$ROOT/plugin/src/provider.ts"   "$ROOT/plugin/src/plugin.ts"   "$ROOT/workspace/AGENTS.md"   "$ROOT/workspace/SOUL.md"   "$ROOT/workspace/IDENTITY.md"   "$ROOT/workspace/USER.md"   "$ROOT/workspace/TOOLS.md"   "$ROOT/workspace/HEARTBEAT.md"   "$RUNTIME_CONTRACT"   "$RUNTIME_HELPER"
+for path in   "$ROOT/README.md"   "$ROOT/config/calendar-agent.fragment.json"   "$ROOT/config/calendar-tools.json"   "$ROOT/plugin/package.json"   "$ROOT/plugin/package-lock.json"   "$ROOT/plugin/openclaw.plugin.json"   "$ROOT/plugin/src/core.ts"   "$ROOT/plugin/src/policy.ts"   "$ROOT/plugin/src/provider.ts"   "$ROOT/plugin/src/plugin.ts"   "$ROOT/workspace/AGENTS.md"   "$ROOT/workspace/SOUL.md"   "$ROOT/workspace/IDENTITY.md"   "$ROOT/workspace/USER.md"   "$ROOT/workspace/HEARTBEAT.md"   "$RUNTIME_CONTRACT"   "$RUNTIME_HELPER"
 do
   [ -f "$path" ] || fail "missing required source: $path"
 done

@@ -144,3 +144,13 @@ Exact automation schedules, job identifiers, prompts, enabled state, and executi
 ## Proactivity
 
 Do not create new audits, updates, monitoring, maintenance schedules, persistent operational notes, standing jobs, `MEMORY.md`, or integrations on your own. The registered scheduled VPS maintenance capability may run only when invoked by its runtime-owned automation or explicitly requested by the owner/control plane.
+
+## Tools
+
+### Local notes (migrated from TOOLS.md)
+
+# Tools
+
+Tool availability and authority are controlled by effective OpenClaw runtime configuration, not by this file.
+
+Use `read` for workspace files, approval-gated `exec` for host commands, and `process` only for long-running Engineer-owned exec sessions.

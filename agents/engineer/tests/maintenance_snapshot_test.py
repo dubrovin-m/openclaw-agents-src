@@ -2,6 +2,7 @@ import importlib.machinery
 import importlib.util
 import tempfile
 import unittest
+from unittest import mock
 from pathlib import Path
 
 SOURCE = Path(__file__).resolve().parents[1] / "bin" / "engineer-vps-maintenance-snapshot"
@@ -42,6 +43,14 @@ class MaintenanceSnapshotTest(unittest.TestCase):
             stats = module.dir_stats(root)
             self.assertEqual(stats["file_count"], 2)
             self.assertEqual(stats["bytes"], 7)
+
+    def test_automation_health_uses_large_json_budget(self):
+        payload = '{"jobs":[{"id":"j1","name":"review","agentId":"engineer","enabled":true,"schedule":{},"state":{"lastRunStatus":"error","lastError":"boom"}}]}'
+        with mock.patch.object(module, "run", return_value={"ok": True, "stdout": payload}) as run_mock:
+            result = module.openclaw_automation_health()
+        self.assertEqual(run_mock.call_args.kwargs["max_output"], 200000)
+        self.assertEqual(result["jobs"][0]["last_status"], "error")
+        self.assertEqual(result["jobs"][0]["last_error"], "boom")
 
 
 if __name__ == "__main__":

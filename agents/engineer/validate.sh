@@ -21,7 +21,6 @@ for path in \
   "$ROOT/workspace/SOUL.md" \
   "$ROOT/workspace/IDENTITY.md" \
   "$ROOT/workspace/USER.md" \
-  "$ROOT/workspace/TOOLS.md" \
   "$ROOT/workspace/HEARTBEAT.md" \
   "$RUNTIME_CONTRACT" \
   "$RUNTIME_HELPER"
