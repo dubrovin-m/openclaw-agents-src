@@ -26,10 +26,11 @@ test("Task deploy validates Shared Contacts against its exact predecessor lineag
   assert.doesNotMatch(fn, /predecessor_absent|CONTACTS_PREDECESSOR_MODE/);
 });
 
-test("Task deploy supports only the declared current Shared Contacts predecessor", () => {
+test("Task deploy accepts only exact target or declared predecessor Shared Contacts state", () => {
   const fn = section(deploy, "contacts_starting_eligible(){", "\ntaskctl_target_exact(){");
+  assert.match(fn, /contacts_runtime_exact/);
   assert.match(fn, /contacts_predecessor_exact/);
-  assert.doesNotMatch(fn, /contacts_runtime_exact|contacts_predecessor_absent|absent/);
+  assert.doesNotMatch(fn, /contacts_predecessor_absent|absent/);
 });
 
 test("Task recovery accepts only current schema 9 and current v4 format", () => {
