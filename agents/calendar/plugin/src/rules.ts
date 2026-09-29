@@ -259,15 +259,16 @@ export function applyRuleProposal(rules: DurableRules, proposal: StoredRulePropo
       target.splice(index, 1);
       return next;
     }
-    if (!proposal.rule || !("categoryId" in proposal.rule)) throw new Error("Classification proposal is incomplete");
+    const rule = proposal.rule;
+    if (!rule || !("categoryId" in rule)) throw new Error("Classification proposal is incomplete");
     if (proposal.action === "replace") {
-      const index = target.findIndex((rule) => rule.id === proposal.rule!.id);
+      const index = target.findIndex((existing) => existing.id === rule.id);
       if (index < 0) throw new Error("Rule to replace no longer exists");
-      target[index] = proposal.rule;
+      target[index] = rule;
       return next;
     }
-    if (target.some((rule) => rule.id === proposal.rule.id)) throw new Error("Equivalent durable rule already exists");
-    target.push(proposal.rule);
+    if (target.some((existing) => existing.id === rule.id)) throw new Error("Equivalent durable rule already exists");
+    target.push(rule);
     return next;
   }
 
@@ -278,14 +279,15 @@ export function applyRuleProposal(rules: DurableRules, proposal: StoredRulePropo
     target.splice(index, 1);
     return next;
   }
-  if (!proposal.rule || !("requireLeader" in proposal.rule)) throw new Error("Hygiene proposal is incomplete");
+  const rule = proposal.rule;
+  if (!rule || !("requireLeader" in rule)) throw new Error("Hygiene proposal is incomplete");
   if (proposal.action === "replace") {
-    const index = target.findIndex((rule) => rule.id === proposal.rule!.id);
+    const index = target.findIndex((existing) => existing.id === rule.id);
     if (index < 0) throw new Error("Rule to replace no longer exists");
-    target[index] = proposal.rule;
+    target[index] = rule;
     return next;
   }
-  if (target.some((rule) => rule.id === proposal.rule.id)) throw new Error("Equivalent durable rule already exists");
-  target.push(proposal.rule);
+  if (target.some((existing) => existing.id === rule.id)) throw new Error("Equivalent durable rule already exists");
+  target.push(rule);
   return next;
 }
