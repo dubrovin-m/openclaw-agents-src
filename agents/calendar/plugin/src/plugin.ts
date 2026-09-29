@@ -21,13 +21,13 @@ const providerLabelSchema = Type.Object({
 
 const durableClassificationRuleSchema = Type.Object({
   id: Type.String({ minLength: 3, maxLength: 64, pattern: "^[a-z][a-z0-9_-]{2,63}$" }),
-  condition: Type.String({ minLength: 1, maxLength: 500 }),
+  condition: Type.String({ minLength: 1, maxLength: 320 }),
   categoryId: Type.String({ minLength: 1 }),
 }, { additionalProperties: false });
 
 const durableHygieneRuleSchema = Type.Object({
   id: Type.String({ minLength: 3, maxLength: 64, pattern: "^[a-z][a-z0-9_-]{2,63}$" }),
-  condition: Type.String({ minLength: 1, maxLength: 500 }),
+  condition: Type.String({ minLength: 1, maxLength: 320 }),
   requireLeader: Type.Boolean(),
   requireAgenda: Type.Boolean(),
 }, { additionalProperties: false });
@@ -106,7 +106,7 @@ const ruleProposalParameters = Type.Object({
   action: Type.Union([Type.Literal("create"), Type.Literal("replace"), Type.Literal("delete")]),
   kind: Type.Union([Type.Literal("classification"), Type.Literal("hygiene_exception")]),
   rule_id: Type.Optional(Type.String({ minLength: 3, maxLength: 64, pattern: "^[a-z][a-z0-9_-]{2,63}$" })),
-  condition: Type.Optional(Type.String({ minLength: 1, maxLength: 500 })),
+  condition: Type.Optional(Type.String({ minLength: 1, maxLength: 320 })),
   category_id: Type.Optional(Type.String({ minLength: 1 })),
   require_leader: Type.Optional(Type.Boolean()),
   require_agenda: Type.Optional(Type.Boolean()),
