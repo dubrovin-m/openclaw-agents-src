@@ -9,5 +9,14 @@ type ToolContext = {
 export declare function calendarToolPolicy(configValue: unknown, event: ToolEvent, context: ToolContext): {
     block: boolean;
     blockReason: string;
+} | {
+    requireApproval: {
+        title: string;
+        description: string;
+        severity: "warning";
+        timeoutMs: number;
+        timeoutReason: string;
+        allowedDecisions: Array<"allow-once" | "deny">;
+    };
 } | undefined;
 export {};
