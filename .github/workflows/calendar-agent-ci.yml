@@ -2,7 +2,7 @@ name: Calendar Agent CI
 
 on:
   push:
-    branches: [main, feat/calendar-durable-rules]
+    branches: [main]
   pull_request:
     branches: [main]
     types: [opened, synchronize, reopened, ready_for_review]
@@ -98,19 +98,6 @@ jobs:
           npm test
           npm run plugin:build
           npm run plugin:validate
-
-      - name: Export generated Calendar files
-        if: steps.scope.outputs.relevant == 'true'
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
-        with:
-          name: calendar-generated
-          path: |
-            agents/calendar/plugin/dist
-            agents/calendar/plugin/openclaw.plugin.json
-            agents/calendar/plugin/package.json
-            agents/calendar/plugin/package-lock.json
-          if-no-files-found: error
-          retention-days: 1
 
       - name: Verify generated Calendar metadata is frozen
         if: steps.scope.outputs.relevant == 'true'
