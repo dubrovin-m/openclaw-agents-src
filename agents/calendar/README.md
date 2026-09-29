@@ -6,15 +6,15 @@ Canonical purpose, behavior, authority, lifecycle, time model, review cadence, a
 
 ## v1 implementation boundary
 
-Calendar v1 is intentionally stateless. It contains:
+Calendar v1 has no independent durable state store. Durable operational rules live only in the validated Calendar plugin configuration; pending approval proposals are short-lived in-process interaction state and disappear on restart. The package contains:
 
 - `workspace/` — persistent runtime instructions and identity files;
 - `config/calendar-agent.fragment.json` — non-secret agent identity and workspace paths;
 - `config/calendar-tools.json` — the bounded OpenClaw-owned tool surface;
-- `plugin/` — deterministic operational-configuration validation, Google Calendar provider access, review-window/time-allocation arithmetic, and the Calendar Agent fail-closed tool policy;
+- `plugin/` — deterministic operational-configuration validation, durable-rule proposal/approval handling, Google Calendar provider access, review-window/time-allocation arithmetic, and the Calendar Agent fail-closed tool policy;
 - `validate.sh` — deterministic source validation.
 
-Calendar v1 has no Calendar database and no event mirror. Classification remains on the Google Calendar event through Google's custom event-label mechanism. Provider authentication is external runtime state and is never stored in this repository.
+Calendar v1 has no Calendar database and no event mirror. Classification remains on the Google Calendar event through Google's custom event-label mechanism. Durable classification guidance and meeting-hygiene exceptions persist only in `plugins.entries.calendar-analytics.config.durableRules`. Provider authentication is external runtime state and is never stored in this repository.
 
 ## Source authority
 
@@ -29,7 +29,7 @@ Calendar v1 has no Calendar database and no event mirror. Classification remains
 
 ## Operational configuration
 
-Taxonomy, category hierarchy, target allocation, provider event-label IDs/names/colors, designated calendar, and exact provider-tool identities are runtime configuration. They are deliberately not hard-coded into Nexus.
+Taxonomy, category hierarchy, target allocation, provider event-label IDs/names/colors, designated calendar, exact provider-tool identities, and human-approved durable classification/hygiene rules are runtime configuration. They are deliberately not hard-coded into Nexus. Conversation history, Dreaming, and model memory are not operational rule stores.
 
 The plugin validates that:
 
@@ -37,12 +37,20 @@ The plugin validates that:
 - service leaves are non-target classifications;
 - leaf and provider-label identities are unique;
 - the classification-write path can write only one configured leaf label to one event;
+- durable classification rules reference configured leaf categories;
+- durable hygiene exceptions waive at least one default meeting-hygiene requirement;
+- durable rule text is bounded so the native approval surface can display the exact proposal in full;
+- `calendar_rule_propose` changes no effective configuration;
+- `calendar_rule_commit` accepts only an opaque, short-lived `proposal_id`, is protected by native OpenClaw allow-once approval, and mutates only the Calendar plugin's `durableRules` configuration;
+- stale proposals fail closed when durable rules changed after proposal creation;
 - the label-administration path can synchronize only configured analytical label definitions and accepts no model-supplied mutation payload;
 - all other model-visible tool calls for the `calendar` agent fail closed unless explicitly admitted.
 
+Pending rule proposals are intentionally ephemeral and bounded. A runtime restart between proposal and approval requires a fresh proposal; this is not loss of authoritative state because an unapproved proposal is not an effective rule.
+
 ## Google integration boundary
 
-The v1 provider is an implementation-owned narrow adapter over the official Google Calendar API. The model sees only five provider tools:
+The v1 provider is an implementation-owned narrow adapter over the official Google Calendar API. The provider surface remains five model-visible tools:
 
 - `calendar_provider_list_events`;
 - `calendar_provider_get_event`;
@@ -66,7 +74,7 @@ Run:
 bash agents/calendar/validate.sh
 ```
 
-The package CI validates runtime compatibility, source/config shape, taxonomy validation, review-window arithmetic, overlap de-duplication, target calculations, weekend exclusion, provider write bounds, fail-closed tool policy, and absence of obvious secret material.
+The package CI validates runtime compatibility, source/config shape, taxonomy and durable-rule validation, proposal/commit semantics, native-approval policy, review-window arithmetic, overlap de-duplication, target calculations, weekend exclusion, provider write bounds, fail-closed tool policy, and absence of obvious secret material.
 
 Before activating or changing a runtime-owned Calendar automation that uses `trigger.script`, validate that script against the exact qualified OpenClaw code-mode runtime rather than Node.js alone.
 
@@ -82,6 +90,7 @@ Activation additionally requires:
 - owner-authorized Google ADC with the minimum required scopes;
 - representative provider read and label-write validation against the designated calendar;
 - owner-only Telegram account and route;
+- a working native plugin-approval route for Calendar rule commits;
 - Daily, Next Workday, and Biweekly native OpenClaw Automations;
 - representative allowed and forbidden behavior tests;
 - post-activation Nexus runtime reconciliation.
