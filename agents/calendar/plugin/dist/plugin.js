@@ -200,7 +200,7 @@ const entry = defineToolPlugin({
         tool({
             name: "calendar_provider_get_event",
             label: "Calendar event",
-            description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar reads.",
+            description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads.",
             parameters: providerEventParameters,
             optional: true,
             execute: async (params, config) => provider.getEvent(operationalConfig(config).baseValue, params),
