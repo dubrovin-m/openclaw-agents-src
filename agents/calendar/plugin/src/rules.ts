@@ -47,7 +47,8 @@ type StoredRuleProposal = {
 type JsonObject = Record<string, unknown>;
 const RULE_ID_PATTERN = /^[a-z][a-z0-9_-]{2,63}$/u;
 const PROPOSAL_ID_PATTERN = /^proposal_[0-9a-f]{16}$/u;
-const MAX_CONDITION_LENGTH = 500;
+const MAX_CONDITION_LENGTH = 320;
+const MAX_APPROVAL_DESCRIPTION_LENGTH = 512;
 const PROPOSAL_TTL_MS = 30 * 60 * 1000;
 const MAX_PROPOSALS = 100;
 const proposals = new Map<string, StoredRuleProposal>();
@@ -219,6 +220,9 @@ function normalizeProposal(config: RuleConfigView, input: RuleProposalInput): Om
 export function proposeRule(config: RuleConfigView, input: RuleProposalInput) {
   sweepProposals();
   const normalized = normalizeProposal(config, input);
+  if (normalized.summary.length > MAX_APPROVAL_DESCRIPTION_LENGTH) {
+    throw new Error(`Rule approval summary must be <= ${MAX_APPROVAL_DESCRIPTION_LENGTH} characters`);
+  }
   const proposalId = `proposal_${hash(normalized, 16)}`;
   const stored: StoredRuleProposal = { proposalId, ...normalized, createdAt: Date.now() };
   proposals.set(proposalId, stored);
