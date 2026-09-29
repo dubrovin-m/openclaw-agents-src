@@ -11,27 +11,37 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(VALID_CONFIG, { toolName: "task_list", params: {} }, { agentId: "tasks" })).toBeUndefined();
   });
 
-  it("blocks the Google Calendar provider surface for non-Calendar agents", () => {
+  it("blocks the Google Calendar provider and durable-rule surfaces for non-Calendar agents", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       { toolName: "calendar_provider_list_events", params: {} },
+      { agentId: "main" },
+    )).toMatchObject({ block: true });
+    expect(calendarToolPolicy(
+      RULE_CONFIG,
+      { toolName: "calendar_rule_propose", params: {} },
+      { agentId: "main" },
+    )).toMatchObject({ block: true });
+    expect(calendarToolPolicy(
+      RULE_CONFIG,
+      { toolName: "calendar_rule_commit", params: { proposal_id: "proposal_0000000000000000" } },
       { agentId: "main" },
     )).toMatchObject({ block: true });
   });
 
   it("allows only configured reads and bounded rule proposals for Calendar Agent", () => {
     expect(calendarToolPolicy(
-      VALID_CONFIG,
+      RULE_CONFIG,
       { toolName: "calendar_provider_list_events", params: {} },
       { agentId: "calendar" },
     )).toBeUndefined();
     expect(calendarToolPolicy(
-      VALID_CONFIG,
+      RULE_CONFIG,
       { toolName: "calendar_rule_propose", params: {} },
       { agentId: "calendar" },
     )).toBeUndefined();
     expect(calendarToolPolicy(
-      VALID_CONFIG,
+      RULE_CONFIG,
       { toolName: "calendar_provider_delete_event", params: { event_id: "x" } },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -51,6 +61,8 @@ describe("Calendar tool policy", () => {
       { agentId: "calendar" },
     )).toMatchObject({
       requireApproval: {
+        title: "Сохранить правило Calendar",
+        description: proposal.summary,
         allowedDecisions: ["allow-once", "deny"],
         severity: "warning",
       },
@@ -61,6 +73,11 @@ describe("Calendar tool policy", () => {
     expect(calendarToolPolicy(
       RULE_CONFIG,
       { toolName: "calendar_rule_commit", params: { proposal_id: "proposal_0000000000000000" } },
+      { agentId: "calendar" },
+    )).toMatchObject({ block: true });
+    expect(calendarToolPolicy(
+      RULE_CONFIG,
+      { toolName: "calendar_rule_commit", params: { proposal_id: "bad" } },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
     expect(calendarToolPolicy(
