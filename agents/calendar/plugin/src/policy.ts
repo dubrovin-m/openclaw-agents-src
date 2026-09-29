@@ -1,18 +1,30 @@
 import { parseCalendarConfig, type CalendarConfig } from "./core.js";
+import { getRuleProposal } from "./rules.js";
 
 export const CALENDAR_AGENT_ID = "calendar";
 const OWNED_TOOLS = new Set([
   "calendar_config_get",
   "calendar_review_window",
   "calendar_analyze",
+  "calendar_rule_propose",
+]);
+const CALENDAR_ONLY_OWNED_TOOLS = new Set([
+  "calendar_rule_propose",
+  "calendar_rule_commit",
 ]);
 const EVENT_REFERENCE_PATTERN = /^evt_[0-9]{8}_[0-9a-f]{16}$/u;
+const RULE_PROPOSAL_PATTERN = /^proposal_[0-9a-f]{16}$/u;
 
 type ToolEvent = { toolName?: string; params?: Record<string, unknown> };
 type ToolContext = { agentId?: string };
 
 function block(reason: string) {
   return { block: true, blockReason: reason };
+}
+function baseCalendarConfig(value: unknown) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
+  const { durableRules: _durableRules, ...base } = value as Record<string, unknown>;
+  return base;
 }
 function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | undefined) {
   if (!params || Object.keys(params).sort().join(",") !== "event_id,label_id") {
@@ -36,16 +48,35 @@ export function calendarToolPolicy(
   event: ToolEvent,
   context: ToolContext,
 ) {
-  const config = parseCalendarConfig(configValue);
+  const config = parseCalendarConfig(baseCalendarConfig(configValue));
   const toolName = event.toolName ?? "";
   const isNativeCalendarTool = toolName.startsWith(config.providerTools.prefix);
 
   if (context.agentId !== CALENDAR_AGENT_ID) {
-    return isNativeCalendarTool
-      ? block("Native Google Calendar tools are restricted to the Calendar Agent.")
+    return isNativeCalendarTool || CALENDAR_ONLY_OWNED_TOOLS.has(toolName)
+      ? block("Calendar provider and durable-rule tools are restricted to the Calendar Agent.")
       : undefined;
   }
 
+  if (toolName === "calendar_rule_commit") {
+    if (!event.params || Object.keys(event.params).join(",") !== "proposal_id"
+      || typeof event.params.proposal_id !== "string"
+      || !RULE_PROPOSAL_PATTERN.test(event.params.proposal_id)) {
+      return block("Calendar rule commit accepts exactly one valid proposal_id.");
+    }
+    const proposal = getRuleProposal(event.params.proposal_id);
+    if (!proposal) return block("Calendar rule proposal is unknown or expired; create a fresh proposal.");
+    return {
+      requireApproval: {
+        title: "Сохранить правило Calendar",
+        description: proposal.summary,
+        severity: "warning" as const,
+        timeoutMs: 120_000,
+        timeoutReason: "Calendar rule was not approved in time.",
+        allowedDecisions: ["allow-once", "deny"] as Array<"allow-once" | "deny">,
+      },
+    };
+  }
   if (OWNED_TOOLS.has(toolName)) return undefined;
   if (config.providerTools.read.includes(toolName)) return undefined;
   if (toolName === config.providerTools.classificationWrite) return writeAllowed(config, event.params);

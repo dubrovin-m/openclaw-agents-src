@@ -4,6 +4,8 @@
     "calendar_config_get",
     "calendar_review_window",
     "calendar_analyze",
+    "calendar_rule_propose",
+    "calendar_rule_commit",
     "calendar_provider_list_events",
     "calendar_provider_get_event",
     "calendar_provider_get_labels",

@@ -1,7 +1,7 @@
 {
   "id": "calendar-analytics",
   "name": "Calendar Analytics",
-  "description": "Stateless Calendar Agent configuration, deterministic analytics, and fail-closed tool policy.",
+  "description": "Calendar Agent operational configuration, deterministic analytics, and fail-closed tool policy.",
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
@@ -203,6 +203,77 @@
         "minItems": 1,
         "uniqueItems": true
       },
+      "durableRules": {
+        "type": "object",
+        "required": [
+          "classification",
+          "hygiene"
+        ],
+        "properties": {
+          "classification": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "condition",
+                "categoryId"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 64,
+                  "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+                },
+                "condition": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 320
+                },
+                "categoryId": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "hygiene": {
+            "type": "array",
+            "items": {
+              "type": "object",
+              "required": [
+                "id",
+                "condition",
+                "requireLeader",
+                "requireAgenda"
+              ],
+              "properties": {
+                "id": {
+                  "type": "string",
+                  "minLength": 3,
+                  "maxLength": 64,
+                  "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+                },
+                "condition": {
+                  "type": "string",
+                  "minLength": 1,
+                  "maxLength": 320
+                },
+                "requireLeader": {
+                  "type": "boolean"
+                },
+                "requireAgenda": {
+                  "type": "boolean"
+                }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
+        "additionalProperties": false
+      },
       "targets": {
         "type": "object",
         "required": [
@@ -242,6 +313,8 @@
   "contracts": {
     "tools": [
       "calendar_config_get",
+      "calendar_rule_propose",
+      "calendar_rule_commit",
       "calendar_review_window",
       "calendar_analyze",
       "calendar_provider_list_events",
@@ -253,6 +326,12 @@
   },
   "toolMetadata": {
     "calendar_config_get": {
+      "optional": true
+    },
+    "calendar_rule_propose": {
+      "optional": true
+    },
+    "calendar_rule_commit": {
       "optional": true
     },
     "calendar_review_window": {
