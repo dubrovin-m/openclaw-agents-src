@@ -8,7 +8,12 @@ const OWNED_TOOLS = new Set([
   "calendar_analyze",
   "calendar_rule_propose",
 ]);
+const CALENDAR_ONLY_OWNED_TOOLS = new Set([
+  "calendar_rule_propose",
+  "calendar_rule_commit",
+]);
 const EVENT_REFERENCE_PATTERN = /^evt_[0-9]{8}_[0-9a-f]{16}$/u;
+const RULE_PROPOSAL_PATTERN = /^proposal_[0-9a-f]{16}$/u;
 
 type ToolEvent = { toolName?: string; params?: Record<string, unknown> };
 type ToolContext = { agentId?: string };
@@ -48,15 +53,16 @@ export function calendarToolPolicy(
   const isNativeCalendarTool = toolName.startsWith(config.providerTools.prefix);
 
   if (context.agentId !== CALENDAR_AGENT_ID) {
-    return isNativeCalendarTool
-      ? block("Native Google Calendar tools are restricted to the Calendar Agent.")
+    return isNativeCalendarTool || CALENDAR_ONLY_OWNED_TOOLS.has(toolName)
+      ? block("Calendar provider and durable-rule tools are restricted to the Calendar Agent.")
       : undefined;
   }
 
   if (toolName === "calendar_rule_commit") {
     if (!event.params || Object.keys(event.params).join(",") !== "proposal_id"
-      || typeof event.params.proposal_id !== "string") {
-      return block("Calendar rule commit accepts exactly one proposal_id.");
+      || typeof event.params.proposal_id !== "string"
+      || !RULE_PROPOSAL_PATTERN.test(event.params.proposal_id)) {
+      return block("Calendar rule commit accepts exactly one valid proposal_id.");
     }
     const proposal = getRuleProposal(event.params.proposal_id);
     if (!proposal) return block("Calendar rule proposal is unknown or expired; create a fresh proposal.");
