@@ -25,6 +25,7 @@ describe("Calendar durable rules", () => {
       kind: "classification",
       rule: { condition: "Purpose is strategic review", categoryId: "strategy" },
     });
+    expect(proposal.summary.length).toBeLessThanOrEqual(512);
     const stored = getRuleProposal(proposal.proposal_id);
     expect(stored).toBeDefined();
     expect(applyRuleProposal(config().durableRules, stored!)).toMatchObject({
@@ -40,6 +41,25 @@ describe("Calendar durable rules", () => {
       condition: "Purpose is strategic review",
       category_id: "unknown",
     })).toThrow(/configured Calendar leaf category/u);
+  });
+
+  it("bounds rule text so native approval can show it in full", () => {
+    expect(() => proposeRule(config(), {
+      action: "create",
+      kind: "classification",
+      condition: "x".repeat(321),
+      category_id: "strategy",
+    })).toThrow(/1-320 characters/u);
+
+    const proposal = proposeRule(config(), {
+      action: "create",
+      kind: "hygiene_exception",
+      condition: "x".repeat(320),
+      require_leader: false,
+      require_agenda: false,
+    });
+    expect(proposal.summary.length).toBeLessThanOrEqual(512);
+    expect(proposal.summary).toContain("x".repeat(320));
   });
 
   it("creates a bounded hygiene exception and rejects a no-op exception", () => {
