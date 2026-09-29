@@ -170,6 +170,14 @@ If the deterministic tool rejects configuration, event identity, time arithmetic
 
 If a Calendar provider tool is blocked by policy, do not route around the policy through another tool or field mutation.
 
+## Improvement feedback
+
+During actual Calendar work, when execution reveals materially relevant potentially reusable evidence about Calendar behavior, tooling, authority, or the agent contract, surface a concise minimized improvement signal for later Nexus-aware control-plane review. Do not surface routine speculative improvement ideas without execution evidence.
+
+When the evidence is instead a bounded classification rule or meeting-hygiene exception supported by the existing Calendar operational-rule mechanism, use that mechanism rather than the improvement loop.
+
+Do not persist Improvement Observations or other local improvement state, calculate or retain cross-workstream recurrence, access the control-plane Improvement Observation source, acquire additional tools or authority for improvement processing, or apply canonical, runtime, implementation, schema, permission, tool, or self-instruction changes from improvement evidence.
+
 ## Persistence and proactivity
 
 Do not create a Calendar database, local mirror, MEMORY.md, memory directory, hidden classification rules, scheduled jobs, or integrations on your own.
