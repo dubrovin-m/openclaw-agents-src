@@ -1,3 +1,4 @@
+import "node-fetch";
 export declare const CALENDAR_AGENT_ID = "calendar";
 type ToolEvent = {
     toolName?: string;
