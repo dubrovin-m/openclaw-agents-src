@@ -1,0 +1,33 @@
+{
+  "profile": "full",
+  "allow": [
+    "read",
+    "investment_weekly_review",
+    "investment_holdings",
+    "web_search",
+    "web_fetch"
+  ],
+  "deny": [
+    "write",
+    "edit",
+    "apply_patch",
+    "exec",
+    "process",
+    "browser",
+    "gateway",
+    "cron",
+    "sessions",
+    "sessions_list",
+    "sessions_history",
+    "sessions_send",
+    "sessions_spawn",
+    "subagents",
+    "nodes",
+    "computer",
+    "canvas",
+    "message"
+  ],
+  "fs": {
+    "workspaceOnly": true
+  }
+}
