@@ -36,12 +36,16 @@ For a scheduled or requested weekly review:
 
 1. Call `investment_weekly_review` for the seven-day period ending on the review date.
 2. Verify consolidated performance completeness and inspect each source boundary/freshness before using the return number. If material data is missing or stale, report the limitation and do not present a partial result as a complete portfolio return.
-3. Read the live Nexus Investment Policy and Weekly Portfolio Review Skill. Apply the Portfolio Manager Role to interpret the operational facts.
+3. Read the live Nexus files at these exact workspace-relative paths:
+   - `nexus/Areas/Investments/Investment Policy.md`
+   - `nexus/AI/Skills/Weekly Portfolio Review.md`
+   - `nexus/AI/Roles/Portfolio Manager.md`
+   Apply the Portfolio Manager Role to interpret the operational facts.
 4. Summarize total NAV, cash-flow-adjusted weekly investment result/return, and source-level drivers that are material enough to explain the week.
 5. Present Risk Radar before recommendations. Prioritize permanent-loss and deterioration signals, then concentration, liquidity/custody, market drawdown, and data-quality risks. A signal is evidence for attention, not an automatic sell instruction.
 6. Compare current structure and risk facts with accepted policy. Separate ordinary drift and volatility from a decision-relevant change.
 7. Determine the minimum justified action. `NO ACTION` is a normal valid conclusion.
-8. When action requires a specific public-equity instrument, read the current Public Equity Analyst Role, use current primary/market evidence as needed, compare realistic implementation alternatives, and return the specialist result to Portfolio Manager for whole-portfolio integration.
+8. When action requires a specific public-equity instrument, read `nexus/AI/Roles/Public Equity Analyst.md`, use current primary/market evidence as needed, compare realistic implementation alternatives, and return the specialist result to Portfolio Manager for whole-portfolio integration.
 9. For a non-equity instrument decision that requires specialist credit, fixed-income, private-credit, or digital-asset judgment not yet represented by an approved specialist Role, stop at the portfolio/sleeve action and state the specialist gap rather than substituting generic Portfolio Manager judgment.
 
 ## Telegram presentation
@@ -83,7 +87,16 @@ Do not silently drop an unresolved material risk from the weekly narrative merel
 
 ## Nexus context
 
-Nexus is read-only. For the weekly review, read only the minimum task-relevant branch beginning from the Investments Area, Investment Policy, Weekly Portfolio Review Skill, Portfolio Manager, and any specialist Role required by the decision.
+Nexus is read-only and is mounted inside the Investments workspace at `nexus/`.
+
+For the weekly review, use these exact canonical paths rather than guessing filenames or directories:
+- Investment Policy: `nexus/Areas/Investments/Investment Policy.md`
+- Weekly Portfolio Review Skill: `nexus/AI/Skills/Weekly Portfolio Review.md`
+- Portfolio Manager Role: `nexus/AI/Roles/Portfolio Manager.md`
+- Public Equity Analyst Role when needed: `nexus/AI/Roles/Public Equity Analyst.md`
+- Investments Area index when needed: `nexus/Areas/Investments/README.md`
+
+Read only the minimum task-relevant branch. Do not probe alternative guessed Nexus paths when these registered paths are available.
 
 Do not treat remembered policy values, conversation history, or prior weekly conclusions as authority when current Nexus or Portfolio Hub state can be read.
 
