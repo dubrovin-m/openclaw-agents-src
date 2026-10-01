@@ -334,14 +334,7 @@ workspace_matches_from(){
 }
 plugin_version(){ node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/package.json" 2>/dev/null; }
 
-openclaw_version_compatible(){
-  node - "$1" "$TARGET_OPENCLAW_COMPAT" <<'NODE'
-const parse=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const cmp=(a,b)=>{for(let i=0;i<3;i++){if(a[i]<b[i])return-1;if(a[i]>b[i])return 1;}return 0};
-const actual=parse(process.argv[2]),range=process.argv[3]||'',tokens=range.trim().split(/\s+/).filter(Boolean);if(!actual||!tokens.length||range.includes('||'))process.exit(2);
-for(const token of tokens){const m=/^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/.exec(token);if(!m)process.exit(2);const c=cmp(actual,parse(m[2])),op=m[1]||'=';if(!({'>=':c>=0,'<=':c<=0,'>':c>0,'<':c<0,'=':c===0}[op]))process.exit(1);}
-NODE
-}
+openclaw_version_compatible(){ node "$DEPLOY_SUPPORT_HELPER" host-compatible "$RELEASE_FILE" "$1" >/dev/null 2>&1; }
 plugin_identity_matches_target(){ local pv tv; pv=$(plugin_version) || return 1; [ "$pv" = "$TARGET_PLUGIN_VERSION" ] || return 1; tv=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/node_modules/typebox/package.json" 2>/dev/null) || return 1; [ "$tv" = "1.3.15" ]; }
 taskctl_runtime_identity(){ local health; health=$(taskctl_health 2>/dev/null) || return 1; node -e 'const h=JSON.parse(process.argv[1]);if(!/^0\.4\.[0-9]+$/.test(h.implementation_version||"")||!Number.isSafeInteger(h.schema_version))process.exit(1);process.stdout.write(`${h.implementation_version} ${h.schema_version}`)' "$health"; }
 taskctl_version(){ local identity; identity=$(taskctl_runtime_identity) || return 1; printf '%s\n' "${identity%% *}"; }
@@ -352,8 +345,8 @@ contacts_source_exact(){
   node - "$ROOT/config/main-contacts-tools.json" <<'NODE' || return 1
 const fs=require('fs'),x=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(JSON.stringify(x)!==JSON.stringify({alsoAllow:['contacts']}))process.exit(1);
 NODE
-  node - "$CONTACTS_RELEASE" "$CONTACTS_ROOT" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || return 1
-const fs=require('fs'),crypto=require('crypto'),path=require('path'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=process.argv[3],v=process.argv[4],schema=Number(process.argv[5]),sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');if(r?.format!=='shared-contacts-release-v1'||r.implementation_version!==v||r.sqlite_schema!==schema)process.exit(2);for(const f of ['core.cjs','task-store.cjs','contactctl'])if(r.runtime_files?.[f]!==sha(path.join(root,f)))process.exit(2);const a=path.join(root,r.plugin.artifact);if(r.plugin?.name!=='openclaw-plugin-contacts'||r.plugin?.version!==v||r.plugin?.sha256!==sha(a))process.exit(2);
+  node - "$CONTACTS_RELEASE" "$CONTACTS_ROOT" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_PLUGIN_VERSION" "$TARGET_CONTACTS_SCHEMA" <<'NODE' || return 1
+const fs=require('fs'),crypto=require('crypto'),path=require('path'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),root=process.argv[3],v=process.argv[4],plugin=process.argv[5],schema=Number(process.argv[6]),sha=p=>crypto.createHash('sha256').update(fs.readFileSync(p)).digest('hex');if(r?.format!=='shared-contacts-release-v1'||r.implementation_version!==v||r.sqlite_schema!==schema)process.exit(2);for(const f of ['core.cjs','task-store.cjs','contactctl'])if(r.runtime_files?.[f]!==sha(path.join(root,f)))process.exit(2);const a=path.join(root,r.plugin.artifact);if(r.plugin?.name!=='openclaw-plugin-contacts'||r.plugin?.version!==plugin||r.plugin?.sha256!==sha(a))process.exit(2);
 NODE
   node --check "$CONTACTS_ROOT/core.cjs" >/dev/null && node --check "$CONTACTS_ROOT/task-store.cjs" >/dev/null && node --check "$CONTACTS_ROOT/contactctl" >/dev/null || return 1
   local tmp out; tmp=$(mktemp -d) || return 1; out=$(CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$tmp/contacts.sqlite3" "$CONTACTS_ROOT/contactctl" init 2>/dev/null) || { rm -rf "$tmp"; return 1; }; rm -rf "$tmp"
@@ -366,7 +359,7 @@ contacts_runtime_exact(){
   local h inspect; h=$(contactctl_health 2>/dev/null) || return 1
   node -e 'const x=JSON.parse(process.argv[1]);if(x.ok!==true||x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3])||x.integrity?.ok!==true)process.exit(1)' "$h" "$TARGET_CONTACTS_VERSION" "$TARGET_CONTACTS_SCHEMA" || return 1
   inspect=$(oc plugins inspect contacts --runtime --json 2>/dev/null) || return 1
-  node - "$inspect" "$TARGET_CONTACTS_VERSION" "$CONTACTS_ROOT/plugin/openclaw.plugin.json" <<'NODE' || return 1
+  node - "$inspect" "$TARGET_CONTACTS_PLUGIN_VERSION" "$CONTACTS_ROOT/plugin/openclaw.plugin.json" <<'NODE' || return 1
 const fs=require('fs'),x=JSON.parse(process.argv[2]),p=x?.plugin,v=process.argv[3],m=JSON.parse(fs.readFileSync(process.argv[4],'utf8')),expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.id!=='contacts'||p?.packageVersion!==v||p?.enabled!==true||p?.status!=='loaded'||!expected.every(t=>p.toolNames?.includes(t)))process.exit(1);
 NODE
 }
@@ -513,7 +506,7 @@ NODE
 }
 validate_target(){
   target_runtime_exact || return 1; validate_plugin_surface || return 1
-  if [ "$CONTACTS_ENABLED" = "1" ]; then node "$PLUGIN_REGISTRY_HELPER" verify-target "$STATE_DB" "$LIVE_OPENCLAW_VERSION" "$TARGET_PLUGIN_VERSION" "$TARGET_CONTACTS_VERSION" || return 1; fi
+  if [ "$CONTACTS_ENABLED" = "1" ]; then node "$PLUGIN_REGISTRY_HELPER" verify-target "$STATE_DB" "$LIVE_OPENCLAW_VERSION" "$TARGET_PLUGIN_VERSION" "$TARGET_CONTACTS_PLUGIN_VERSION" || return 1; fi
   [ "$(stat -c %a "$TASKCTL_TARGET")" = 700 ] || return 1; [ "$(stat -c %a "$CONFIG")" = 600 ] || return 1; [ "$(stat -c %a "$DB")" = 600 ] || return 1; [ "$CONTACTS_ENABLED" != "1" ] || { [ "$(stat -c %a "$CONTACTS_DB")" = 600 ] && [ "$(stat -c %a "$CONTACTCTL_TARGET")" = 700 ] && [ "$(stat -c %a "$CONTACTS_LIB/core.cjs")" = 600 ]; } || return 1
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do [ "$(stat -c %a "$WORKSPACE/$f")" = 644 ] || return 1; done
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1; fi

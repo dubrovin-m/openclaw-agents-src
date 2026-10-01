@@ -5,13 +5,14 @@ ROOT=$(cd "$(dirname "$0")/.." && pwd)
 REPO_ROOT=$(cd "$ROOT/../.." && pwd)
 NODE_BIN=$(command -v node)
 NODE_BIN_DIR=$(dirname "$NODE_BIN")
-TARGET_OPENCLAW_VERSION=$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")
+TARGET_OPENCLAW_VERSION=${TASK_AGENT_OPENCLAW_VERSION:-$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")}
 TARGET_TASKCTL_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.generation.taskctl_version))' "$ROOT/release.json")
 TARGET_PLUGIN_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.plugin.version))' "$ROOT/release.json")
 TARGET_SQLITE_SCHEMA=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.generation.sqlite_schema))' "$ROOT/release.json")
 TARGET_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$ROOT/plugins/taskctl/openclaw.plugin.json")
 CONTACTS_ROOT="$ROOT/../../shared/contacts"
 TARGET_CONTACTS_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.implementation_version))' "$CONTACTS_ROOT/release.json")
+TARGET_CONTACTS_PLUGIN_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(String(r.plugin.version))' "$CONTACTS_ROOT/release.json")
 TARGET_CONTACT_TOOL_COUNT=$(node -e 'const m=require(process.argv[1]);process.stdout.write(String(m.contracts.tools.length))' "$CONTACTS_ROOT/plugin/openclaw.plugin.json")
 TARGET_WORKSPACE_FILES=$(node "$ROOT/workspace-layout.mjs" target-files "$ROOT/release.json")
 TEST_BASE=$(mktemp -d /tmp/task-agent-isolated-runtime.XXXXXX)
@@ -149,7 +150,7 @@ assert_no_production_trace() {
 
 snapshot_production "$BEFORE"
 
-run_with_trace install env TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 bash "$ROOT/install.sh" --test-root "$RUNTIME"
+run_with_trace install env TASK_AGENT_TEST_PRODUCTION_WORKSPACE_LAYOUT=1 TASK_AGENT_TEST_OPENCLAW_VERSION="$TARGET_OPENCLAW_VERSION" bash "$ROOT/install.sh" --test-root "$RUNTIME"
 
 test -f "$RUNTIME/state/openclaw.json"
 test -x "$RUNTIME/bin/taskctl"
@@ -165,7 +166,7 @@ oc config validate
 taskctl_test health | jq -e --arg v "$TARGET_TASKCTL_VERSION" --argjson schema "$TARGET_SQLITE_SCHEMA" '.ok == true and .implementation_version == $v and .schema_version == $schema' >/dev/null
 node -e 'const p=require(process.argv[1]),v=process.argv[2];if(p.version!==v)process.exit(2)' "$RUNTIME/state/extensions/taskctl/package.json" "$TARGET_PLUGIN_VERSION"
 test "$(node -e "const p=require(process.argv[1]);process.stdout.write(p.version)" "$RUNTIME/state/extensions/taskctl/openclaw.plugin.json")" = "$TARGET_PLUGIN_VERSION"
-node -e 'const p=require(process.argv[1]),v=process.argv[2];if(p.version!==v)process.exit(2)' "$RUNTIME/state/extensions/contacts/package.json" "$TARGET_CONTACTS_VERSION"
+node -e 'const p=require(process.argv[1]),v=process.argv[2];if(p.version!==v)process.exit(2)' "$RUNTIME/state/extensions/contacts/package.json" "$TARGET_CONTACTS_PLUGIN_VERSION"
 CONTACTS_HEALTH=$(HOME="$RUNTIME/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$RUNTIME/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{}' "$RUNTIME/bin/contactctl" health)
 node -e 'const x=JSON.parse(process.argv[1]),v=process.argv[2];if(x.ok!==true||x.implementation_version!==v||x.integrity?.ok!==true)process.exit(1)' "$CONTACTS_HEALTH" "$TARGET_CONTACTS_VERSION"
 cmp -s "$ROOT/workspace/AGENTS.md" "$RUNTIME/workspace-tasks/AGENTS.md" || fail "Deployed AGENTS.md differs from source"
@@ -185,7 +186,7 @@ oc plugins inspect taskctl --runtime --json | jq -e --arg v "$TARGET_PLUGIN_VERS
 ' >/dev/null
 
 CONTACTS_INSPECT=$(oc plugins inspect contacts --runtime --json)
-node - "$CONTACTS_INSPECT" "$TARGET_CONTACTS_VERSION" "$CONTACTS_ROOT/plugin/openclaw.plugin.json" <<'JS_CONTACT_INSPECT'
+node - "$CONTACTS_INSPECT" "$TARGET_CONTACTS_PLUGIN_VERSION" "$CONTACTS_ROOT/plugin/openclaw.plugin.json" <<'JS_CONTACT_INSPECT'
 const fs=require('fs'),x=JSON.parse(process.argv[2]),v=process.argv[3],m=JSON.parse(fs.readFileSync(process.argv[4],'utf8')),p=x?.plugin;
 const expected=m?.contracts?.tools;if(!Array.isArray(expected)||p?.version!==v||p?.status!=='loaded'||p?.enabled!==true||JSON.stringify([...(p?.toolNames??[])].sort())!==JSON.stringify([...expected].sort()))process.exit(1);
 JS_CONTACT_INSPECT

@@ -3,6 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
+import { execFileSync } from "node:child_process";
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const tasksRoot = path.resolve(here, "..");
@@ -10,6 +11,7 @@ const deploy = fs.readFileSync(path.join(tasksRoot, "deploy.sh"), "utf8");
 const recover = fs.readFileSync(path.join(tasksRoot, "recover.sh"), "utf8");
 const verifier = fs.readFileSync(path.join(tasksRoot, "production-control", "verify-release-predecessor.mjs"), "utf8");
 const deploySupport = fs.readFileSync(path.join(tasksRoot, "deploy-support.cjs"), "utf8");
+const predecessorDeploy = fs.readFileSync(path.join(tasksRoot, "tests", "current-predecessor-deploy.sh"), "utf8");
 
 function section(source, startMarker, endMarker) {
   const start = source.indexOf(startMarker);
@@ -57,4 +59,23 @@ test("release predecessor verification uses only normal Git history", () => {
   assert.match(verifier, /provenance_mode: 'history'/);
   assert.match(verifier, /predecessor history is unavailable/);
   assert.doesNotMatch(verifier, /public-source-bootstrap|historical_test_revisions|bootstrapPath|bootstrapRevision/);
+});
+
+
+test("predecessor registry validation uses the predecessor Contacts plugin version", () => {
+  assert.match(predecessorDeploy, /verify-target[^\n]+\"\$PRED_PLUGIN\" \"\$PRED_CONTACTS_PLUGIN\"/);
+  assert.doesNotMatch(predecessorDeploy, /verify-target[^\n]+\"\$PRED_PLUGIN\" \"\$PRED_CONTACTS\"/);
+});
+
+test("Task OpenClaw compatibility range is bounded and shared by deployment admission", () => {
+  const helper = path.join(tasksRoot, "deploy-support.cjs");
+  const release = path.join(tasksRoot, "release.json");
+  const metadata = JSON.parse(fs.readFileSync(release, "utf8"));
+  const build = metadata?.generation?.openclaw_build_version;
+  assert.match(build, /^\d+\.\d+\.\d+$/);
+  assert.doesNotThrow(() => execFileSync(process.execPath, [helper, "host-compatible", release, build]));
+  assert.doesNotThrow(() => execFileSync(process.execPath, [helper, "release-env", release, build]));
+  for (const version of ["0.0.0", "9999.0.0"]) {
+    assert.throws(() => execFileSync(process.execPath, [helper, "host-compatible", release, version]));
+  }
 });

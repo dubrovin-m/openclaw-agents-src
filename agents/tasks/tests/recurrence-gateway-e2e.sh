@@ -20,6 +20,9 @@ RUNTIME="$TMP/runtime"
 GATEWAY_LOG="$TMP/gateway.log"
 STATUS_JSON="$TMP/status.json"
 GATEWAY_PID=""
+GATEWAY_PGID=""
+GATEWAY_SUPERVISOR_PID=""
+GATEWAY_PID_FILE="$TMP/gateway.pid"
 TOKEN="task-recurrence-e2e-$(date +%s)-$"
 
 fail(){
@@ -55,11 +58,31 @@ remove_tmp(){
   return 1
 }
 
-cleanup(){
-  if [ -n "$GATEWAY_PID" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
+stop_gateway_group(){
+  if [ -n "$GATEWAY_PGID" ]; then
+    kill -TERM -- "-$GATEWAY_PGID" 2>/dev/null || true
+    for _ in $(seq 1 40); do
+      kill -0 -- "-$GATEWAY_PGID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -0 -- "-$GATEWAY_PGID" 2>/dev/null && kill -KILL -- "-$GATEWAY_PGID" 2>/dev/null || true
+  elif [ -n "$GATEWAY_PID" ] && kill -0 "$GATEWAY_PID" 2>/dev/null; then
     kill -TERM "$GATEWAY_PID" 2>/dev/null || true
-    wait "$GATEWAY_PID" 2>/dev/null || true
   fi
+  if [ -n "$GATEWAY_SUPERVISOR_PID" ]; then
+    for _ in $(seq 1 40); do
+      kill -0 "$GATEWAY_SUPERVISOR_PID" 2>/dev/null || break
+      sleep 0.1
+    done
+    kill -0 "$GATEWAY_SUPERVISOR_PID" 2>/dev/null && kill -KILL "$GATEWAY_SUPERVISOR_PID" 2>/dev/null || true
+  fi
+  GATEWAY_PID=""
+  GATEWAY_PGID=""
+  GATEWAY_SUPERVISOR_PID=""
+}
+
+cleanup(){
+  stop_gateway_group
   stop_runtime_children
   remove_tmp
 }
@@ -105,13 +128,38 @@ automation(){
 
 start_gateway(){
   : > "$GATEWAY_LOG"
-  oc_env "$OPENCLAW_BIN" gateway run \
-    --allow-unconfigured \
-    --bind loopback \
-    --port "$PORT" \
-    --auth token \
-    --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
-  GATEWAY_PID=$!
+  env -i \
+    HOME="$RUNTIME/home" \
+    PATH="$ISOLATED_PATH" \
+    LANG=C.UTF-8 \
+    TZ=Europe/Moscow \
+    OPENCLAW_HOME="$RUNTIME/home" \
+    OPENCLAW_STATE_DIR="$RUNTIME/state" \
+    OPENCLAW_CONFIG_PATH="$RUNTIME/state/openclaw.json" \
+    OPENCLAW_GATEWAY_TOKEN="$TOKEN" \
+    OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1 \
+    OPENCLAW_SKIP_CHANNELS=1 \
+    OPENCLAW_SKIP_GMAIL_WATCHER=1 \
+    OPENCLAW_SKIP_CANVAS_HOST=1 \
+    OPENCLAW_SKIP_ACPX_RUNTIME=1 \
+    OPENCLAW_SKIP_ACPX_RUNTIME_PROBE=1 \
+    setsid --wait bash -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$GATEWAY_PID_FILE" "$OPENCLAW_BIN" gateway run \
+      --allow-unconfigured \
+      --bind loopback \
+      --port "$PORT" \
+      --auth token \
+      --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
+  GATEWAY_SUPERVISOR_PID=$!
+  for _ in $(seq 1 40); do
+    [ -s "$GATEWAY_PID_FILE" ] && break
+    kill -0 "$GATEWAY_SUPERVISOR_PID" 2>/dev/null || fail "isolated Gateway launcher exited before publishing its PID"
+    sleep 0.05
+  done
+  [ -s "$GATEWAY_PID_FILE" ] || fail "isolated Gateway did not publish its PID"
+  GATEWAY_PID=$(cat "$GATEWAY_PID_FILE")
+  [[ "$GATEWAY_PID" =~ ^[0-9]+$ ]] || fail "isolated Gateway published an invalid PID"
+  GATEWAY_PGID=$(ps -o pgid= -p "$GATEWAY_PID" 2>/dev/null | tr -d ' ')
+  [ "$GATEWAY_PGID" = "$GATEWAY_PID" ] || fail "isolated Gateway did not start in a dedicated process group"
   for _ in $(seq 1 160); do
     if ! kill -0 "$GATEWAY_PID" 2>/dev/null; then
       fail "isolated Gateway exited before readiness"
@@ -125,11 +173,7 @@ start_gateway(){
 }
 
 stop_gateway(){
-  if [ -n "$GATEWAY_PID" ]; then
-    kill -TERM "$GATEWAY_PID" 2>/dev/null || true
-    wait "$GATEWAY_PID" 2>/dev/null || true
-    GATEWAY_PID=""
-  fi
+  stop_gateway_group
   stop_runtime_children
 }
 

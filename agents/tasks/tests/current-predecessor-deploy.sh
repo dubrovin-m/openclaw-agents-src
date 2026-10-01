@@ -12,22 +12,22 @@ fail(){ echo "$*" >&2; exit 2; }
 eval "$(node - "$RELEASE" "$CONTACTS_RELEASE" <<'NODE'
 const r=require(process.argv[2]),c=require(process.argv[3]),q=v=>`'${String(v).replace(/'/g,"'\\''")}'`;
 if(r?.from?.sqlite_schemas?.length!==1||r.from.sqlite_schemas[0]!==9||r?.reminder_dispatcher?.predecessor_mode!=='exact'||!r?.important_date_dispatcher||r?.important_date_dispatcher?.predecessor_mode!=='exact'||r?.shared_contacts?.predecessor_mode!=='exact')process.exit(2);
-const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
+const vals={PRED:r.from.source_revision,PRED_TASKCTL:r.from.taskctl_versions[0],PRED_SCHEMA:r.from.sqlite_schemas[0],PRED_PLUGIN:r.from.plugin_versions[0],TARGET_TASKCTL:r.generation.taskctl_version,TARGET_SCHEMA:r.generation.sqlite_schema,TARGET_PLUGIN:r.plugin.version,TARGET_CONTACTS:c.implementation_version,TARGET_CONTACTS_PLUGIN:c.plugin.version,TARGET_CONTACTS_SCHEMA:c.sqlite_schema,MATERIALIZER_KEY:r.calendar_materializer.declaration_key,MATERIALIZER_NAME:r.calendar_materializer.name,MATERIALIZER_CRON:r.calendar_materializer.cron,MATERIALIZER_TZ:r.calendar_materializer.timezone,MATERIALIZER_TIMEOUT:r.calendar_materializer.timeout_seconds,REMINDER_KEY:r.reminder_dispatcher.declaration_key,REMINDER_NAME:r.reminder_dispatcher.name,REMINDER_CRON:r.reminder_dispatcher.cron,REMINDER_TZ:r.reminder_dispatcher.timezone,REMINDER_SUFFIX:JSON.stringify(r.reminder_dispatcher.command_argv_suffix),REMINDER_TIMEOUT:r.reminder_dispatcher.timeout_seconds,IMPORTANT_KEY:r.important_date_dispatcher.declaration_key,IMPORTANT_NAME:r.important_date_dispatcher.name,IMPORTANT_CRON:r.important_date_dispatcher.cron,IMPORTANT_TZ:r.important_date_dispatcher.timezone,IMPORTANT_SCRIPT:r.important_date_dispatcher.script,IMPORTANT_TOOL:r.important_date_dispatcher.tool,IMPORTANT_TIMEOUT:r.important_date_dispatcher.timeout_seconds,IMPORTANT_BUDGET:r.important_date_dispatcher.tool_budget};
 for(const [k,v] of Object.entries(vals))console.log(`${k}=${q(v)}`);
 NODE
 )" || fail "invalid release metadata"
 
-OPENCLAW_BIN=$(command -v openclaw || true)
-[ -x "$OPENCLAW_BIN" ] || OPENCLAW_BIN="$ROOT/plugins/taskctl/node_modules/.bin/openclaw"
-[ -x "$OPENCLAW_BIN" ] || fail "OpenClaw unavailable"
-OPENCLAW_ROOT=$(node - "$OPENCLAW_BIN" <<'NODE'
-const fs=require('fs'),path=require('path');let p=fs.realpathSync(process.argv[2]),d=path.dirname(p);while(d!=='/'){const f=path.join(d,'package.json');if(fs.existsSync(f)){const j=JSON.parse(fs.readFileSync(f,'utf8'));if(j.name==='openclaw'){process.stdout.write(d);process.exit(0)}}d=path.dirname(d)}process.exit(2);
-NODE
-) || fail "OpenClaw package root unavailable"
-export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
 PRED_SRC="$TMP/predecessor-source"
 git clone -q --shared --no-checkout "$REPO_ROOT" "$PRED_SRC"
 git -C "$PRED_SRC" checkout -q --detach "$PRED"
+( cd "$PRED_SRC/agents/tasks/plugins/taskctl" && timeout 300s npm ci >/dev/null )
+OPENCLAW_BIN="$PRED_SRC/agents/tasks/plugins/taskctl/node_modules/.bin/openclaw"
+[ -x "$OPENCLAW_BIN" ] || fail "Predecessor OpenClaw unavailable"
+OPENCLAW_ROOT=$(node - "$OPENCLAW_BIN" <<'NODE'
+const fs=require('fs'),path=require('path');let p=fs.realpathSync(process.argv[2]),d=path.dirname(p);while(d!=='/'){const f=path.join(d,'package.json');if(fs.existsSync(f)){const j=JSON.parse(fs.readFileSync(f,'utf8'));if(j.name==='openclaw'){process.stdout.write(d);process.exit(0)}}d=path.dirname(d)}process.exit(2);
+NODE
+) || fail "Predecessor OpenClaw package root unavailable"
+export TASK_AGENT_TEST_OPENCLAW_ROOT="$OPENCLAW_ROOT"
 read -r PRED_CONTACTS PRED_CONTACTS_SCHEMA PRED_CONTACTS_PLUGIN < <(node - "$PRED_SRC/shared/contacts/release.json" <<'NODE'
 const c=require(process.argv[2]);
 const version=/^0[.]1[.][0-9]+$/;
@@ -123,7 +123,7 @@ fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
 echo active > "$BASE/gateway.state"
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$(node "$PRED_SRC/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$PRED_SRC/runtime-contract.json")" "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$(node "$PRED_SRC/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$PRED_SRC/runtime-contract.json")" "$PRED_PLUGIN" "$PRED_CONTACTS_PLUGIN" || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
 SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'
@@ -183,7 +183,7 @@ assert_target(){
   ch=$(HOME="$r/home" CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$r/state/data/contacts/contacts.sqlite3" CONTACTCTL_PAYLOAD='{}' "$r/bin/contactctl" health) || fail "target Contacts unhealthy"
   node -e 'const x=JSON.parse(process.argv[1]);if(x.implementation_version!==process.argv[2]||x.schema_version!==Number(process.argv[3])||x.integrity?.ok!==true)process.exit(1)' "$ch" "$TARGET_CONTACTS" "$TARGET_CONTACTS_SCHEMA" || fail "target Contacts generation mismatch"
   [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/taskctl/package.json")" = "$TARGET_PLUGIN" ] || fail "target Task plugin mismatch"
-  [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$TARGET_CONTACTS" ] || fail "target Contacts plugin mismatch"
+  [ "$(node -e 'process.stdout.write(require(process.argv[1]).version)' "$r/state/extensions/contacts/package.json")" = "$TARGET_CONTACTS_PLUGIN" ] || fail "target Contacts plugin mismatch"
   local gov; gov=$(HOME="$r/home" TASKCTL_ALLOW_DB_OVERRIDE=1 TASKCTL_DB="$r/state/data/tasks/tasks.sqlite3" TASKCTL_CONTACTS_DB="$r/state/data/contacts/contacts.sqlite3" TASKCTL_PAYLOAD='{}' "$r/bin/taskctl" config validate) || fail "target governance bindings invalid"
   node -e 'const x=JSON.parse(process.argv[1]);if(x.office_ceo_group_id!=="PG-1"||x.personal_label_id!==process.argv[2])process.exit(1)' "$gov" "$PERSONAL_LABEL" || fail "target governance binding mismatch"
   node - "$r/state/data/contacts/contacts.sqlite3" "$SELF_PERSON" <<'NODE' || fail "target Office CEO membership mismatch"
@@ -223,6 +223,9 @@ assert_predecessor "$BASE"
 TASKS_BEFORE=$(task_state "$BASE")
 CONTACTS_BEFORE=$(contacts_state "$BASE")
 
+# Candidate deployment is qualified against the current source target while
+# the synthetic live host intentionally remains the exact predecessor OpenClaw.
+export TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT="$REPO_ROOT"
 R="$TMP/success"; clone_runtime "$BASE" "$R"; echo active > "$R/gateway.state"
 HOME="$R/home" bash "$ROOT/deploy.sh" --test-root "$R" --preflight | grep -q 'TASK_AGENT_DEPLOY_PREFLIGHT_PASS' || fail "current predecessor preflight failed"
 DEPLOY_LOG="$TMP/current-predecessor-deploy.log"
