@@ -1,3 +1,4 @@
+import "node-fetch";
 import { parseCalendarConfig } from "./core.js";
 import { getRuleProposal } from "./rules.js";
 export const CALENDAR_AGENT_ID = "calendar";
