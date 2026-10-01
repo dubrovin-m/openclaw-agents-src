@@ -24,8 +24,9 @@ SOURCE_REVISION=$(git -C "$REPO_ROOT" rev-parse HEAD)
 [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot establish exact source revision" >&2; exit 2; }
 [ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all)" ] || { echo "Refusing installation from a dirty source checkout" >&2; exit 2; }
 RUNTIME_CONTRACT="$REPO_ROOT/runtime-contract.json"
+OPENCLAW_QUALIFICATION="$REPO_ROOT/openclaw-qualification.json"
 RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
-[ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Runtime contract source unavailable" >&2; exit 2; }
+[ -f "$RUNTIME_CONTRACT" ] && [ -f "$OPENCLAW_QUALIFICATION" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Runtime contract or OpenClaw qualification source unavailable" >&2; exit 2; }
 node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || { echo "Runtime contract validation failed" >&2; exit 2; }
 
 if [ -n "$TEST_ROOT" ]; then
@@ -52,6 +53,7 @@ install -m 600 "$ROOT/lib.mjs" "$LIB_DIR/lib.mjs"
 install -m 700 "$ROOT/diagnose.mjs" "$LIB_DIR/diagnose.mjs"
 install -m 600 "$RUNTIME_HELPER" "$LIB_DIR/runtime-contract.mjs"
 install -m 600 "$RUNTIME_CONTRACT" "$LIB_DIR/runtime-contract.json"
+install -m 600 "$OPENCLAW_QUALIFICATION" "$LIB_DIR/openclaw-qualification.json"
 install -m 700 "$ROOT/execute-deploy.sh" "$LIB_DIR/execute-deploy.sh"
 install -m 700 "$ROOT/execute-rollout.sh" "$LIB_DIR/execute-rollout.sh"
 install -m 700 "$ROOT/poll.sh" "$LIB_DIR/poll.sh"
@@ -66,6 +68,7 @@ node --check "$LIB_DIR/diagnose.mjs"
 node --check "$LIB_DIR/lib.mjs"
 node --check "$LIB_DIR/runtime-contract.mjs"
 node "$LIB_DIR/runtime-contract.mjs" validate "$LIB_DIR/runtime-contract.json" >/dev/null
+node "$LIB_DIR/runtime-contract.mjs" openclaw-version "$LIB_DIR/openclaw-qualification.json" >/dev/null
 bash -n "$LIB_DIR/execute-rollout.sh"
 bash -n "$LIB_DIR/poll.sh"
 bash -n "$LIB_DIR/bootstrap.sh"

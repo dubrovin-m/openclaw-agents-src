@@ -7,6 +7,7 @@ RELEASE_FILE="$ROOT/release.json"
 WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
 RUNTIME_CONTRACT="$REPO_ROOT/runtime-contract.json"
 RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
+DEPLOY_SUPPORT_HELPER="$ROOT/deploy-support.cjs"
 CONTACTS_ROOT="$REPO_ROOT/shared/contacts"
 
 if [ "${GITHUB_ACTIONS:-}" != "true" ] && [ "${TASK_AGENT_ALLOW_LOCAL_QUALIFICATION:-}" != "1" ]; then
@@ -18,16 +19,7 @@ fi
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Runtime contract source missing" >&2; exit 2; }
 EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || { echo "Invalid runtime contract" >&2; exit 2; }
 node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || { echo "Repository runtime contract mismatch" >&2; exit 2; }
-RELEASE_ENV=$(EXPECTED_OPENCLAW_VERSION="$EXPECTED_OPENCLAW_VERSION" node - "$RELEASE_FILE" <<'NODE'
-const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.sqlite_schema;
-const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const exactHost=(v,range)=>tuple(v)!==null&&v===range;
-const sc=r?.shared_contacts;if(!sc||sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0\.1\.[0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1)process.exit(2);
-if(r?.format!=='task-agent-release-v2'||!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!exactHost(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15'||r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||'')||r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))process.exit(2);
-const q=s=>`'${String(s).replace(/'/g,"'\\''")}'`;console.log(`TARGET_TASKCTL_VERSION=${q(targetTaskctl)}`);console.log(`TARGET_SQLITE_SCHEMA=${q(targetSchema)}`);console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);console.log(`ARTIFACT_REL=${q(r.plugin.artifact)}`);console.log(`EXPECTED_ARTIFACT_SHA=${q(r.plugin.sha256)}`);
-NODE
-) || { echo "Invalid Task Agent release metadata" >&2; exit 2; }
+RELEASE_ENV=$(node "$DEPLOY_SUPPORT_HELPER" release-env "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION") || { echo "Invalid Task Agent release metadata" >&2; exit 2; }
 eval "$RELEASE_ENV"
 TARGET_WORKSPACE_LAYOUT=$(node "$WORKSPACE_LAYOUT_HELPER" layout "$RELEASE_FILE") || { echo "Invalid Task Agent workspace layout" >&2; exit 2; }
 TARGET_WORKSPACE_FILES=$(node "$WORKSPACE_LAYOUT_HELPER" target-files "$RELEASE_FILE") || { echo "Invalid Task Agent workspace layout" >&2; exit 2; }

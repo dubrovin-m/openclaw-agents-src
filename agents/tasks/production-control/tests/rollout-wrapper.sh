@@ -13,23 +13,43 @@ FAKE_STATE="$TMP/openclaw-version"
 FAKE_TRACE="$TMP/trace"
 FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
 TASK_RESULT_DIR="$TMP/task-results"
-mkdir -p "$SRC/agents/tasks" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
+FAKE_HOME="$TMP/home"
+mkdir -p "$FAKE_HOME" "$SRC/agents/tasks" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
 
 cat > "$SRC/runtime-contract.json" <<'JSON'
 {
-  "format": "openclaw-agents-runtime-contract-v1",
-  "openclaw": { "version": "2026.8.2" },
-  "node": { "ci_version": "26.7.0", "supported_lines": [], "required_builtin_modules": [] }
+  "format": "openclaw-agents-runtime-contract-v2",
+  "node": {
+    "ci_version": "26.7.0",
+    "supported_lines": [{ "major": 26, "minimum": "26.0.0" }],
+    "required_builtin_modules": ["node:sqlite"]
+  }
 }
 JSON
+cat > "$SRC/openclaw-qualification.json" <<'JSON'
+{
+  "format": "openclaw-qualification-target-v1",
+  "version": "2026.8.2"
+}
+JSON
+cp "$ROOT/shared/runtime-contract/runtime-contract.mjs" "$SRC/shared/runtime-contract/runtime-contract.mjs"
 cat > "$SRC/agents/tasks/deploy.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 mkdir -p "$FAKE_TASK_RESULT_DIR"
-RESULT="$FAKE_TASK_RESULT_DIR/result-${RANDOM}.json"
-OUTCOME=${FAKE_TASK_OUTCOME:-PASS}
-STAGE=${FAKE_TASK_STAGE:-COMPLETE}
-MUTATION=${FAKE_TASK_MUTATION:-false}
+count=$(cat "$FAKE_TASK_CALL_COUNTER" 2>/dev/null || echo 0)
+count=$((count+1))
+printf '%s\n' "$count" > "$FAKE_TASK_CALL_COUNTER"
+RESULT="$FAKE_TASK_RESULT_DIR/result-${count}-${RANDOM}.json"
+if [ "$count" -eq 1 ]; then
+  OUTCOME=${FAKE_PREDEPLOY_OUTCOME:-PASS}
+  STAGE=${FAKE_PREDEPLOY_STAGE:-COMPLETE}
+  MUTATION=${FAKE_PREDEPLOY_MUTATION:-true}
+else
+  OUTCOME=${FAKE_TASK_OUTCOME:-PASS}
+  STAGE=${FAKE_TASK_STAGE:-NOOP}
+  MUTATION=${FAKE_TASK_MUTATION:-false}
+fi
 printf '{"result":"%s","stage":"%s","mutation_started":%s}\n' "$OUTCOME" "$STAGE" "$MUTATION" > "$RESULT"
 echo "RESULT_FILE=$RESULT"
 [ "$OUTCOME" = PASS ] && exit 0
@@ -115,6 +135,7 @@ chmod 700 "$FAKEBIN/df"
 export PATH="$FAKEBIN:$PATH"
 export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
+export FAKE_TASK_CALL_COUNTER="$TMP/task-call-counter"
 
 read_result() { node -e "const v=require(process.argv[1]);process.stdout.write(JSON.stringify(v))" "$1"; }
 assert_field() {
@@ -130,10 +151,10 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
-  rm -f "$FAKE_DF_BACKUP_MARKER"
+  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_TASK_CALL_COUNTER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
-  env "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
+  env HOME="$FAKE_HOME" "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
   CASE_EXIT=$?
   set -e
   CASE_RESULT="$STATE/executions/request-$id.json"
@@ -151,6 +172,8 @@ const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'
 NODE
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
 assert_field "$CASE_RESULT" codex_version '"2026.8.2"'
+assert_field "$CASE_RESULT" task_predeploy_result '"PASS"'
+assert_field "$CASE_RESULT" task_predeploy_mutation_started true
 assert_field "$CASE_RESULT" task_deploy_result '"PASS"'
 
 run_case 102 FAKE_BACKUP_FAIL=1
@@ -190,6 +213,14 @@ run_case 107 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=PRECHECK FAKE_TASK_MUTATI
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" task_deploy_result '"BLOCKED"'
+
+run_case 111 FAKE_PREDEPLOY_OUTCOME=BLOCKED FAKE_PREDEPLOY_STAGE=PRECHECK FAKE_PREDEPLOY_MUTATION=false
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" task_predeploy_result '"BLOCKED"'
+assert_field "$CASE_RESULT" mutation_started false
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 run_case 108 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=APPLY FAKE_TASK_MUTATION=true
 [ "$CASE_EXIT" -eq 2 ]

@@ -22,22 +22,15 @@ for cmd in node git mkdir chmod mktemp find awk date wc tail mv rm sha256sum df;
 done
 
 RUNTIME_CONTRACT="$SOURCE_DIR/runtime-contract.json"
+RUNTIME_HELPER="$SOURCE_DIR/shared/runtime-contract/runtime-contract.mjs"
 DEPLOY="$SOURCE_DIR/agents/tasks/deploy.sh"
-[ -f "$RUNTIME_CONTRACT" ] || { echo "Frozen runtime contract is unavailable" >&2; exit 2; }
+[ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Frozen runtime requirements or qualification helper are unavailable" >&2; exit 2; }
 [ -x "$DEPLOY" ] || { echo "Frozen Task deploy entrypoint is unavailable or not executable" >&2; exit 2; }
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Frozen rollout source checkout is dirty" >&2; exit 2; }
 SOURCE_REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot establish exact rollout source revision" >&2; exit 2; }
 
-TARGET_OPENCLAW_VERSION=$(node - "$RUNTIME_CONTRACT" <<'NODE'
-const fs = require('fs');
-const contract = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
-if (contract?.format !== 'openclaw-agents-runtime-contract-v1') process.exit(2);
-const value = contract?.openclaw?.version;
-if (typeof value !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(value)) process.exit(2);
-process.stdout.write(value);
-NODE
-) || { echo "Invalid frozen runtime contract" >&2; exit 2; }
+TARGET_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || { echo "Invalid frozen OpenClaw qualification target" >&2; exit 2; }
 
 [ "$TARGET_OPENCLAW_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || { echo "Rollout target does not change OpenClaw version" >&2; exit 2; }
 if ! node - "$TARGET_OPENCLAW_VERSION" "$EXPECTED_OPENCLAW_VERSION" <<'NODE'
@@ -77,6 +70,9 @@ BACKUP_SHA256=""
 CORE_VERSION="$EXPECTED_OPENCLAW_VERSION"
 GATEWAY_READY=false
 CODEX_VERSION=""
+PREDEPLOY_RESULT=""
+PREDEPLOY_STAGE=""
+PREDEPLOY_MUTATION_STARTED=false
 TASK_DEPLOY_RESULT=""
 TASK_DEPLOY_STAGE=""
 TASK_MUTATION_STARTED=false
@@ -86,7 +82,8 @@ write_result() {
   STAGE_ENV="$STAGE" REASON_ENV="$REASON" SOURCE_REVISION_ENV="$SOURCE_REVISION" \
   PREDECESSOR_ENV="$EXPECTED_OPENCLAW_VERSION" TARGET_ENV="$TARGET_OPENCLAW_VERSION" \
   MUTATION_ENV="$MUTATION_STARTED" BACKUP_ENV="$BACKUP_CREATED" BACKUP_ARCHIVE_ENV="$BACKUP_ARCHIVE" BACKUP_SHA256_ENV="$BACKUP_SHA256" CORE_ENV="$CORE_VERSION" \
-  GATEWAY_ENV="$GATEWAY_READY" CODEX_ENV="$CODEX_VERSION" TASK_RESULT_ENV="$TASK_DEPLOY_RESULT" \
+  GATEWAY_ENV="$GATEWAY_READY" CODEX_ENV="$CODEX_VERSION" PREDEPLOY_RESULT_ENV="$PREDEPLOY_RESULT" \
+  PREDEPLOY_STAGE_ENV="$PREDEPLOY_STAGE" PREDEPLOY_MUTATION_ENV="$PREDEPLOY_MUTATION_STARTED" TASK_RESULT_ENV="$TASK_DEPLOY_RESULT" \
   TASK_STAGE_ENV="$TASK_DEPLOY_STAGE" TASK_MUTATION_ENV="$TASK_MUTATION_STARTED" \
   node - "$TMP_RESULT" <<'NODE'
 const fs=require('fs');
@@ -107,6 +104,9 @@ const out={
   core_version:process.env.CORE_ENV||null,
   gateway_ready:bool('GATEWAY_ENV'),
   codex_version:process.env.CODEX_ENV||null,
+  task_predeploy_result:process.env.PREDEPLOY_RESULT_ENV||null,
+  task_predeploy_stage:process.env.PREDEPLOY_STAGE_ENV||null,
+  task_predeploy_mutation_started:bool('PREDEPLOY_MUTATION_ENV'),
   task_deploy_result:process.env.TASK_RESULT_ENV||null,
   task_deploy_stage:process.env.TASK_STAGE_ENV||null,
   task_mutation_started:bool('TASK_MUTATION_ENV'),
@@ -155,6 +155,35 @@ disk_headroom_ok() {
     fi
   done
   return 0
+}
+
+run_task_deploy() {
+  local phase=$1 log_start task_exit result_file fields result stage mutated
+  log_start=$(wc -l < "$LOG" 2>/dev/null || echo 0)
+  set +e
+  PATH="$DEPLOY_PATH" "$DEPLOY" --apply >>"$LOG" 2>&1
+  task_exit=$?
+  set -e
+  result_file=$(tail -n "+$((log_start+1))" "$LOG" | awk -F= '/^RESULT_FILE=/{v=$2} END{print v}')
+  if [ -z "$result_file" ] || [ ! -f "$result_file" ]; then
+    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase did not publish durable Task result evidence"; finish
+  fi
+  fields=$(node - "$result_file" <<'NODE'
+const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));process.stdout.write(`${v?.result??''}\t${v?.stage??''}\t${v?.mutation_started===true?'true':'false'}`);
+NODE
+  ) || { OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase Task result evidence is unreadable"; finish; }
+  IFS=$'\t' read -r result stage mutated <<<"$fields"
+  if [ "$phase" = "TASK_PREDEPLOY" ]; then
+    PREDEPLOY_RESULT="$result"; PREDEPLOY_STAGE="$stage"; PREDEPLOY_MUTATION_STARTED="$mutated"
+  else
+    TASK_DEPLOY_RESULT="$result"; TASK_DEPLOY_STAGE="$stage"; TASK_MUTATION_STARTED="$mutated"
+  fi
+  if [ "$mutated" = true ]; then MUTATION_STARTED=true; fi
+  if [ "$task_exit" -ne 0 ] || [ "$result" != "PASS" ]; then
+    STAGE="$phase"; BLOCK_FURTHER=true
+    if [ "$result" = "BLOCKED" ] && [ "$mutated" = true ]; then OUTCOME="RECOVERY_REQUIRED"; REASON="$phase failed without a proven Task rollback"; else OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; REASON="$phase did not complete the frozen Task target"; fi
+    finish
+  fi
 }
 
 if ! disk_headroom_ok; then
@@ -215,6 +244,19 @@ if ! disk_headroom_ok; then
   finish
 fi
 
+# Stage plugins while the predecessor host is still active. The frozen plugin API range
+# must include both the predecessor and target hosts, so either side of the core update
+# remains recoverable.
+run_task_deploy "TASK_PREDEPLOY"
+CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
+if [ "$CORE_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || ! gateway_health; then
+  GATEWAY_READY=false; OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging did not preserve a healthy predecessor OpenClaw runtime"; finish
+fi
+GATEWAY_READY=true
+if ! disk_headroom_ok; then
+  OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Insufficient disk headroom after Task plugin staging; staged compatible plugins remain active and reconciliation is required"; finish
+fi
+
 UPDATE_JSON=$(mktemp "$EXEC_DIR/update-$REQUEST_ID.XXXXXX")
 chmod 600 "$UPDATE_JSON"
 MUTATION_STARTED=true
@@ -270,23 +312,7 @@ NODE
 then rm -f "$CODEX_JSON"; OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; BLOCK_FURTHER=true; STAGE="CODEX_ACCEPTANCE"; REASON="Codex runtime did not converge to the qualified OpenClaw release cohort"; finish; fi
 rm -f "$CODEX_JSON"
 
-TASK_LOG_START=$(wc -l < "$LOG" 2>/dev/null || echo 0)
-set +e
-PATH="$DEPLOY_PATH" "$DEPLOY" --apply >>"$LOG" 2>&1
-TASK_EXIT=$?
-set -e
-TASK_RESULT_FILE=$(tail -n "+$((TASK_LOG_START+1))" "$LOG" | awk -F= '/^RESULT_FILE=/{v=$2} END{print v}')
-if [ -z "$TASK_RESULT_FILE" ] || [ ! -f "$TASK_RESULT_FILE" ]; then OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="TASK_DEPLOY"; REASON="Task deploy did not publish durable result evidence"; finish; fi
-TASK_FIELDS=$(node - "$TASK_RESULT_FILE" <<'NODE'
-const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));process.stdout.write(`${v?.result??''}\t${v?.stage??''}\t${v?.mutation_started===true?'true':'false'}`);
-NODE
-) || { OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="TASK_DEPLOY"; REASON="Task deploy result evidence is unreadable"; finish; }
-IFS=$'\t' read -r TASK_DEPLOY_RESULT TASK_DEPLOY_STAGE TASK_MUTATION_STARTED <<<"$TASK_FIELDS"
-if [ "$TASK_EXIT" -ne 0 ] || [ "$TASK_DEPLOY_RESULT" != "PASS" ]; then
-  STAGE="TASK_DEPLOY"; BLOCK_FURTHER=true
-  if [ "$TASK_DEPLOY_RESULT" = "BLOCKED" ] && [ "$TASK_MUTATION_STARTED" = true ]; then OUTCOME="RECOVERY_REQUIRED"; REASON="Task deploy failed without a proven Task rollback"; else OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; REASON="Task deploy did not complete the frozen rollout target"; fi
-  finish
-fi
+run_task_deploy "TASK_ACCEPTANCE"
 
 CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
 if [ "$CORE_VERSION" != "$TARGET_OPENCLAW_VERSION" ] || ! gateway_health; then GATEWAY_READY=false; OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="FINAL_ACCEPTANCE"; REASON="Final OpenClaw/Gateway acceptance failed after Task deployment"; finish; fi

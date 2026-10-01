@@ -5,6 +5,7 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 CONFIG="$ROOT/config/tools-media-audio.json"
 INSTALLER="$ROOT/install.sh"
 RUNTIME_CONTRACT="$ROOT/../../runtime-contract.json"
+RUNTIME_HELPER="$ROOT/../../shared/runtime-contract/runtime-contract.mjs"
 MODEL_SHA256="1be3a9b2063867b937e64e2ec7483364a79917e157fa98c5d94b5c1fffea987b"
 BIN_TARGET="/home/dubrovin/.local/bin/whisper-cli"
 MODEL_TARGET="/home/dubrovin/.local/share/whisper.cpp/models/ggml-small.bin"
@@ -15,8 +16,9 @@ fail() {
 }
 
 command -v jq >/dev/null || fail "jq is required"
+command -v node >/dev/null || fail "node is required"
 test -f "$RUNTIME_CONTRACT" || fail "Runtime contract not found: $RUNTIME_CONTRACT"
-OPENCLAW_VERSION=$(jq -er '.openclaw.version | select(type == "string" and length > 0)' "$RUNTIME_CONTRACT") || fail "Invalid OpenClaw version in runtime contract"
+OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || fail "Invalid OpenClaw qualification target"
 jq -e . "$CONFIG" >/dev/null
 bash -n "$INSTALLER"
 

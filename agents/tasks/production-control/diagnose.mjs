@@ -21,9 +21,13 @@ const controllerStateFile = process.env.OPC_CONTROLLER_STATE || path.join(home, 
 const sourceDir = process.env.OPC_SOURCE_DIR || path.join(home, '.local', 'share', 'openclaw-production-control', 'openclaw-agents');
 const installedRevisionFile = process.env.OPC_INSTALLED_REVISION || path.join(here, 'installed-revision');
 const runtimeContractPath = process.env.OPC_RUNTIME_CONTRACT || path.join(here, 'runtime-contract.json');
+const openclawQualificationPath = process.env.OPC_OPENCLAW_QUALIFICATION || path.join(here, 'openclaw-qualification.json');
 const runtimeHelperPath = process.env.OPC_RUNTIME_CONTRACT_HELPER || path.join(here, 'runtime-contract.mjs');
 const openclawBin = process.env.OPC_OPENCLAW_BIN || 'openclaw';
+const gatewayHost = process.env.OPC_GATEWAY_HOST || '127.0.0.1';
+const gatewayPort = Number(process.env.OPC_GATEWAY_PORT || 18789);
 const SHA_RE = /^[0-9a-f]{40}$/u;
+
 
 function modeOf(p) {
   return (fs.statSync(p).mode & 0o777).toString(8).padStart(3, '0');
@@ -124,18 +128,19 @@ function openclawVersion() {
   return output.match(/(?:^|\s)([0-9]+\.[0-9]+\.[0-9]+)(?:\s|$)/u)?.[1] ?? null;
 }
 
-async function runtimeCheck(contractPath = runtimeContractPath) {
+async function runtimeCheck(contractPath = runtimeContractPath, qualificationPath = openclawQualificationPath) {
   try {
     const helper = await import(`${pathToFileURL(runtimeHelperPath).href}?runtime=${Date.now()}`);
     const contract = helper.loadRuntimeContract(contractPath);
     const nodeSupported = helper.isSupportedNodeVersion(process.version, contract);
+    const expectedOpenClaw = helper.loadOpenClawTargetVersion(fs.existsSync(qualificationPath) ? qualificationPath : contractPath);
     const actualOpenClaw = openclawVersion();
     return {
-      ok: nodeSupported && actualOpenClaw === contract.openclaw.version,
+      ok: nodeSupported && actualOpenClaw === expectedOpenClaw,
       node_version: process.version,
       node_supported: nodeSupported,
       openclaw_version: actualOpenClaw,
-      expected_openclaw_version: contract.openclaw.version,
+      expected_openclaw_version: expectedOpenClaw,
     };
   } catch (error) {
     return { ok: false, reason: 'runtime-contract-check-failed', error: error.message };
@@ -160,15 +165,18 @@ function sourceRevision() {
   return SHA_RE.test(revision) ? revision : null;
 }
 
-function runtimeContractForBaseline(expectedBaselineSha = null) {
+function runtimeFilesForBaseline(expectedBaselineSha = null) {
   try {
     const state = readControllerState();
     const baseline = expectedBaselineSha ?? state.production_baseline_sha;
     const source = sourceRevision();
-    const candidate = path.join(sourceDir, 'runtime-contract.json');
-    if (baseline && source === baseline && fs.existsSync(candidate)) return candidate;
+    const contract = path.join(sourceDir, 'runtime-contract.json');
+    const qualification = path.join(sourceDir, 'openclaw-qualification.json');
+    if (baseline && source === baseline && fs.existsSync(contract)) {
+      return { contract, qualification: fs.existsSync(qualification) ? qualification : contract };
+    }
   } catch {}
-  return runtimeContractPath;
+  return { contract: runtimeContractPath, qualification: fs.existsSync(openclawQualificationPath) ? openclawQualificationPath : runtimeContractPath };
 }
 
 function deploymentEvidence() {
@@ -235,7 +243,17 @@ function provenanceCheck(expectedProductionBaselineSha = null) {
 }
 
 function matchesOpenClawVersion(version, range) {
-  return /^(\d+)\.(\d+)\.(\d+)$/.test(version ?? '') && version === range;
+  const parse = (value) => { const match = /^(\d+)\.(\d+)\.(\d+)$/.exec(value ?? ''); return match ? match.slice(1).map(Number) : null; };
+  const actual = parse(version);
+  const tokens = String(range ?? '').trim().split(/\s+/u).filter(Boolean);
+  if (!actual || tokens.length === 0 || String(range).includes('||')) return false;
+  const compare = (left, right) => { for (let i = 0; i < 3; i += 1) { if (left[i] < right[i]) return -1; if (left[i] > right[i]) return 1; } return 0; };
+  return tokens.every((token) => {
+    const match = /^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/u.exec(token);
+    if (!match) return false;
+    const delta = compare(actual, parse(match[2]));
+    switch (match[1] || '=') { case '>=': return delta >= 0; case '<=': return delta <= 0; case '>': return delta > 0; case '<': return delta < 0; default: return delta === 0; }
+  });
 }
 
 function releaseCheck({ database, taskctl, plugin, runtime, provenance }) {
@@ -282,12 +300,15 @@ function releaseCheck({ database, taskctl, plugin, runtime, provenance }) {
 
 export async function diagnose(options = {}) {
   const gatewayActive = systemctlActive('openclaw-gateway.service');
-  const gatewayTcp = await tcpReady('127.0.0.1', 18789);
+  const gatewayTcp = Number.isSafeInteger(gatewayPort) && gatewayPort > 0 && gatewayPort <= 65535
+    ? await tcpReady(gatewayHost, gatewayPort)
+    : false;
   const database = databaseCheck();
   const taskctl = taskctlCheck();
   const plugin = pluginCheck();
   const provenance = provenanceCheck(options.expectedProductionBaselineSha ?? null);
-  const runtime = await runtimeCheck(runtimeContractForBaseline(provenance.production_baseline_sha ?? null));
+  const runtimeFiles = runtimeFilesForBaseline(provenance.production_baseline_sha ?? null);
+  const runtime = await runtimeCheck(runtimeFiles.contract, runtimeFiles.qualification);
   const checks = {
     gateway: { ok: gatewayActive && gatewayTcp, service_active: gatewayActive, tcp_ready: gatewayTcp },
     database,

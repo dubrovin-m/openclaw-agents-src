@@ -19,7 +19,7 @@ jobs:
   validate:
     name: Calendar Agent gate
     runs-on: ubuntu-latest
-    timeout-minutes: 12
+    timeout-minutes: 15
     env:
       npm_config_audit: "false"
       npm_config_fund: "false"
@@ -44,14 +44,14 @@ jobs:
           if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
             changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-            if grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/calendar/|\.github/workflows/calendar-agent-ci\.yml$)' <<<"$changed_files"; then
+            if grep -Eq '^(runtime-contract\.json$|openclaw-qualification\.json$|shared/runtime-contract/|agents/calendar/|\.github/workflows/calendar-agent-ci\.yml$)' <<<"$changed_files"; then
               relevant=true
             fi
           fi
           printf 'relevant=%s\n' "$relevant" >> "$GITHUB_OUTPUT"
           printf 'calendar_relevant=%s event=%s head=%s\n' "$relevant" "$GITHUB_EVENT_NAME" "$(git rev-parse HEAD)"
 
-      - name: Read runtime contract
+      - name: Read runtime requirements and qualification target
         if: steps.scope.outputs.relevant == 'true'
         id: runtime
         shell: bash
@@ -61,11 +61,18 @@ jobs:
           import json, os, re
           with open('runtime-contract.json', encoding='utf-8') as handle:
               contract=json.load(handle)
-          version=str(contract.get('node',{}).get('ci_version',''))
-          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+          with open('openclaw-qualification.json', encoding='utf-8') as handle:
+              qualification=json.load(handle)
+          node_version=str(contract.get('node',{}).get('ci_version',''))
+          openclaw_version=str(qualification.get('version',''))
+          version_re=r'[0-9]+\.[0-9]+\.[0-9]+'
+          if not re.fullmatch(version_re, node_version):
               raise SystemExit('invalid node.ci_version')
+          if qualification.get('format') != 'openclaw-qualification-target-v1' or not re.fullmatch(version_re, openclaw_version):
+              raise SystemExit('invalid OpenClaw qualification target')
           with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as output:
-              output.write(f'node_version={version}\n')
+              output.write(f'node_version={node_version}\n')
+              output.write(f'openclaw_version={openclaw_version}\n')
           PY
 
       - name: Set up Node.js
@@ -74,10 +81,12 @@ jobs:
         with:
           node-version: ${{ steps.runtime.outputs.node_version }}
 
-      - name: Validate repository runtime contract
+      - name: Validate repository runtime requirements
         if: steps.scope.outputs.relevant == 'true'
         run: |
           set -euo pipefail
+          node shared/runtime-contract/runtime-contract.mjs validate runtime-contract.json
+          node shared/runtime-contract/runtime-contract.mjs openclaw-version openclaw-qualification.json
           node shared/runtime-contract/runtime-contract.mjs repo-check .
           node --test shared/runtime-contract/runtime-contract.test.mjs
 
@@ -98,6 +107,17 @@ jobs:
           npm test
           npm run plugin:build
           npm run plugin:validate
+
+      - name: Validate Calendar against qualified OpenClaw host
+        if: steps.scope.outputs.relevant == 'true'
+        working-directory: agents/calendar/plugin
+        env:
+          OPENCLAW_QUALIFICATION_VERSION: ${{ steps.runtime.outputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          qualification_root="$RUNNER_TEMP/openclaw-calendar-qualification"
+          npm install --prefix "$qualification_root" --no-save --package-lock=false "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
+          "$qualification_root/node_modules/.bin/openclaw" plugins validate --root . --entry ./dist/plugin.js
 
       - name: Verify generated Calendar metadata is frozen
         if: steps.scope.outputs.relevant == 'true'

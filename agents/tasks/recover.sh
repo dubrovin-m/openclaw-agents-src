@@ -216,8 +216,20 @@ NODE
   validate_exact_predecessor_identity "$backup"
 }
 
+predecessor_openclaw_compat() {
+  node - "$REPO_ROOT" "$ROOT/release.json" <<'NODE'
+const {execFileSync}=require('child_process'),fs=require('fs'),repo=process.argv[2],release=JSON.parse(fs.readFileSync(process.argv[3],'utf8')),source=release?.from?.source_revision;if(!/^[0-9a-f]{40}$/.test(source||''))process.exit(2);const pred=JSON.parse(execFileSync('git',['-C',repo,'show',source+':agents/tasks/release.json'],{encoding:'utf8'}));const compat=pred?.generation?.openclaw_compat;if(typeof compat!=='string'||!compat.trim())process.exit(2);process.stdout.write(compat);
+NODE
+}
+
+host_matches_range() {
+  node - "$1" "$2" <<'NODE'
+const parse=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};const cmp=(a,b)=>{for(let i=0;i<3;i++){if(a[i]<b[i])return-1;if(a[i]>b[i])return 1;}return 0};const actual=parse(process.argv[2]),range=process.argv[3]||'',tokens=range.trim().split(/\s+/).filter(Boolean);if(!actual||!tokens.length||range.includes('||'))process.exit(2);for(const token of tokens){const m=/^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/.exec(token);if(!m)process.exit(2);const c=cmp(actual,parse(m[2])),op=m[1]||'=';if(!({'>=':c>=0,'<=':c<=0,'>':c>0,'<':c<0,'=':c===0}[op]))process.exit(1);}
+NODE
+}
+
 resolve_host_openclaw_root() {
-  local openclaw_bin=$1 resolved dir pkg name version
+  local openclaw_bin=$1 resolved dir pkg name version compat
   if [ -n "${TEST_ROOT:-}" ] && [ -n "${TASK_AGENT_TEST_OPENCLAW_ROOT:-}" ]; then
     realpath -e "$TASK_AGENT_TEST_OPENCLAW_ROOT"
     return
@@ -230,7 +242,8 @@ resolve_host_openclaw_root() {
       name=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.name||''))" "$pkg")
       version=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$pkg")
       if [ "$name" = "openclaw" ]; then
-        [ "$version" = "$EXPECTED_OPENCLAW_VERSION" ] || fail "Unexpected host OpenClaw package version: $version (expected $EXPECTED_OPENCLAW_VERSION)"
+        compat=$(predecessor_openclaw_compat) || fail "Unable to resolve predecessor OpenClaw compatibility"
+        host_matches_range "$version" "$compat" || fail "Unexpected host OpenClaw package version: $version (predecessor compatibility $compat)"
         realpath -e "$dir"
         return
       fi

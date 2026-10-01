@@ -1,8 +1,5 @@
 {
-  "format": "openclaw-agents-runtime-contract-v1",
-  "openclaw": {
-    "version": "2026.9.5"
-  },
+  "format": "openclaw-agents-runtime-contract-v2",
   "node": {
     "ci_version": "26.7.0",
     "supported_lines": [

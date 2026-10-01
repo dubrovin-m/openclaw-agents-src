@@ -5,6 +5,7 @@ on:
     branches: [main]
     paths:
       - 'runtime-contract.json'
+      - 'openclaw-qualification.json'
       - 'shared/runtime-contract/**'
       - 'agents/tasks/deploy.sh'
       - 'agents/tasks/recover.sh'
@@ -59,7 +60,7 @@ jobs:
           if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
             changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-            if grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/tasks/deploy\.sh$|agents/tasks/recover\.sh$|agents/tasks/install\.sh$|agents/tasks/workspace-layout\.mjs$|agents/tasks/tests/current-predecessor-deploy\.sh$|agents/tasks/tests/compatibility-window\.sh$|agents/tasks/tests/isolated-runtime\.sh$|agents/tasks/production-control/|\.github/workflows/task-production-control-ci\.yml$)' <<<"$changed_files"; then
+            if grep -Eq '^(runtime-contract\.json$|openclaw-qualification\.json$|shared/runtime-contract/|agents/tasks/deploy\.sh$|agents/tasks/recover\.sh$|agents/tasks/install\.sh$|agents/tasks/workspace-layout\.mjs$|agents/tasks/tests/current-predecessor-deploy\.sh$|agents/tasks/tests/compatibility-window\.sh$|agents/tasks/tests/isolated-runtime\.sh$|agents/tasks/production-control/|\.github/workflows/task-production-control-ci\.yml$)' <<<"$changed_files"; then
               relevant=true
             fi
           fi
@@ -109,6 +110,7 @@ jobs:
           set -euo pipefail
           node --check shared/runtime-contract/runtime-contract.mjs
           node shared/runtime-contract/runtime-contract.mjs repo-check .
+          node shared/runtime-contract/runtime-contract.mjs openclaw-version openclaw-qualification.json >/dev/null
           node --test shared/runtime-contract/runtime-contract.test.mjs
 
       - name: Static syntax checks
@@ -150,6 +152,7 @@ jobs:
           grep -q -- "--implementation-repository" agents/tasks/production-control/bootstrap.sh
           grep -q "/rollout openclaw" agents/tasks/production-control/lib.mjs
           grep -q "'runtime-contract.json'" agents/tasks/production-control/lib.mjs
+          grep -q "'openclaw-qualification.json'" agents/tasks/production-control/lib.mjs
           grep -q "'shared/runtime-contract/'" agents/tasks/production-control/lib.mjs
           grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/deploy.sh
           grep -q "TASK_AGENT_TEST_RUNTIME_CONTRACT_ROOT" agents/tasks/recover.sh

@@ -18,7 +18,11 @@ trap handle_validation_term TERM
 mkdir -p "$VALIDATION_TMP/tmp" "$VALIDATION_TMP/node-compile-cache"
 export TMPDIR="$VALIDATION_TMP/tmp"
 export NODE_COMPILE_CACHE="$VALIDATION_TMP/node-compile-cache"
-EXPECTED_OPENCLAW=$(node -e 'const x=require(process.argv[1]);process.stdout.write(x.openclaw.version)' "$REPO_ROOT/runtime-contract.json")
+RUNTIME_CONTRACT="$REPO_ROOT/runtime-contract.json"
+RUNTIME_HELPER="$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs"
+EXPECTED_OPENCLAW=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT")
+node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null
+node "$ROOT/deploy-support.cjs" release-env "$ROOT/release.json" "$EXPECTED_OPENCLAW" >/dev/null
 test "$(openclaw --version | awk '{print $2}')" = "$EXPECTED_OPENCLAW"
 openclaw config validate
 
@@ -71,23 +75,17 @@ const aggregate=sizes.reduce((sum,[,size])=>sum+size,0);
 if(aggregate>total)throw new Error('Task Agent bootstrap files exceed total injection budget: '+aggregate+' > '+total);
 NODE
 
-node - "$ROOT/plugins/taskctl/package.json" "$ROOT/plugins/taskctl/package-lock.json" "$ROOT/release.json" "$REPO_ROOT/runtime-contract.json" <<'NODE'
+node - "$ROOT/plugins/taskctl/package.json" "$ROOT/plugins/taskctl/package-lock.json" "$ROOT/release.json" <<'NODE'
 const fs=require('fs');
 const pkg=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const lock=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
 const release=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
-const runtime=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
-const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
-const exactHost=(v,r)=>tuple(v)!==null&&v===r;
 const root=lock.packages?.[''];
 const typebox=lock.packages?.['node_modules/typebox'];
 if(pkg.version!==release.plugin?.version||lock.version!==pkg.version||root?.version!==pkg.version)throw new Error('taskctl package/lock version must match the frozen release plugin version');
-if(release.format!=='task-agent-release-v2')throw new Error('unsupported Task release format');
 const build=release.generation?.openclaw_build_version,compat=release.generation?.openclaw_compat;
-if(!tuple(build)||build!==runtime?.openclaw?.version||!exactHost(runtime?.openclaw?.version,compat))throw new Error('OpenClaw release compatibility invalid');
-if(build!==pkg.devDependencies?.openclaw||build!==pkg.openclaw?.build?.openclawVersion||build!==root?.devDependencies?.openclaw)throw new Error('OpenClaw build identity mismatch');
-if(compat!==pkg.peerDependencies?.openclaw||compat!==pkg.openclaw?.compat?.pluginApi||compat!==root?.peerDependencies?.openclaw)throw new Error('OpenClaw compatibility contract mismatch');
-if(release.generation?.typebox_version!==pkg.dependencies?.typebox)throw new Error('TypeBox release identity mismatch');
+if(build!==root?.devDependencies?.openclaw)throw new Error('OpenClaw lock build identity mismatch');
+if(compat!==root?.peerDependencies?.openclaw)throw new Error('OpenClaw lock compatibility contract mismatch');
 if(pkg.dependencies?.typebox!=='1.3.15'||root?.dependencies?.typebox!=='1.3.15')throw new Error('root TypeBox dependency must be exactly 1.3.15');
 if(typebox?.version!=='1.3.15'||typebox?.resolved!=='https://registry.npmjs.org/typebox/-/typebox-1.3.15.tgz'||typebox?.integrity!=='sha512-gOKAjLqUr+bFGbO5vxCEO5+nHh2wO+swzSIkiJJC0kJ4oLN6f65SrZn6tJYhsYO+qdnpf2NmlQwgsayYoi1NkQ==')throw new Error('resolved TypeBox identity drift');
 NODE

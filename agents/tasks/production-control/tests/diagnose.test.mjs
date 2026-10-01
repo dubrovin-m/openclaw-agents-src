@@ -12,7 +12,8 @@ const mkdir = (p) => fs.mkdirSync(p, { recursive: true });
 const here = path.dirname(fileURLToPath(import.meta.url));
 const repoRoot = path.resolve(here, '../../../..');
 const runtimeContract = JSON.parse(fs.readFileSync(path.join(repoRoot, 'runtime-contract.json'), 'utf8'));
-const expectedOpenClawVersion = runtimeContract.openclaw.version;
+const openclawQualification = JSON.parse(fs.readFileSync(path.join(repoRoot, 'openclaw-qualification.json'), 'utf8'));
+const expectedOpenClawVersion = openclawQualification.version;
 
 test('diagnostics fail closed on runtime, release, and provenance drift without exposing secrets', async () => {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'opc-diagnose-'));
@@ -99,14 +100,19 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
   setEnv('OPC_INSTALLED_REVISION', installedRevision);
   setEnv('OPC_RUNTIME_CONTRACT', path.join(repoRoot, 'runtime-contract.json'));
   setEnv('OPC_RUNTIME_CONTRACT_HELPER', path.join(repoRoot, 'shared', 'runtime-contract', 'runtime-contract.mjs'));
+  setEnv('OPC_OPENCLAW_QUALIFICATION', path.join(repoRoot, 'openclaw-qualification.json'));
   setEnv('OPC_OPENCLAW_BIN', openclawCli);
 
   const server = net.createServer(() => {});
   await new Promise((resolve, reject) => {
     server.once('error', reject);
-    server.listen(18789, '127.0.0.1', resolve);
+    server.listen(0, '127.0.0.1', resolve);
   });
   try {
+    const address = server.address();
+    assert.equal(typeof address, 'object');
+    setEnv('OPC_GATEWAY_HOST', '127.0.0.1');
+    setEnv('OPC_GATEWAY_PORT', String(address.port));
     const loadDiagnose = async () => (await import(`../diagnose.mjs?test=${Date.now()}-${Math.random()}`)).diagnose;
 
     let diagnose = await loadDiagnose();
@@ -150,11 +156,9 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
     assert.equal(result.checks.release.ok, false, JSON.stringify(result));
     writePlugin('0.4.0');
 
-    const unqualifiedRuntimeContract = path.join(root, 'runtime-contract-unqualified-patch.json');
-    const unqualifiedContract = JSON.parse(JSON.stringify(runtimeContract));
-    unqualifiedContract.openclaw.version = '2026.9.6';
-    fs.writeFileSync(unqualifiedRuntimeContract, JSON.stringify(unqualifiedContract));
-    process.env.OPC_RUNTIME_CONTRACT = unqualifiedRuntimeContract;
+    const unqualifiedTarget = path.join(root, 'openclaw-qualification-unqualified.json');
+    fs.writeFileSync(unqualifiedTarget, JSON.stringify({ format: 'openclaw-qualification-target-v1', version: '2026.9.6' }));
+    process.env.OPC_OPENCLAW_QUALIFICATION = unqualifiedTarget;
     writeOpenClaw('2026.9.6');
     diagnose = await loadDiagnose();
     result = await diagnose();
@@ -163,7 +167,7 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
     assert.equal(result.checks.release.expected.openclaw_build_version, expectedOpenClawVersion);
     assert.equal(result.checks.release.expected.openclaw_compat, expectedOpenClawVersion);
     assert.equal(result.checks.runtime.openclaw_version, '2026.9.6');
-    process.env.OPC_RUNTIME_CONTRACT = path.join(repoRoot, 'runtime-contract.json');
+    process.env.OPC_OPENCLAW_QUALIFICATION = path.join(repoRoot, 'openclaw-qualification.json');
     writeOpenClaw(expectedOpenClawVersion);
 
     execFileSync('git', ['commit', '--allow-empty', '-q', '-m', 'candidate source revision'], { cwd: source });

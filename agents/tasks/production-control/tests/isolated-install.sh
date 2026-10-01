@@ -23,6 +23,7 @@ SYSTEMD="$TMP/home/.config/systemd/user"
 [ -x "$LIB/bootstrap.sh" ]
 [ -f "$LIB/runtime-contract.mjs" ]
 [ -f "$LIB/runtime-contract.json" ]
+[ -f "$LIB/openclaw-qualification.json" ]
 [ -d "$SOURCE" ]
 [ "$(stat -c %a "$SOURCE")" = 700 ]
 [ "$(stat -c %a "$LIB/controller.mjs")" = 700 ]
@@ -33,6 +34,7 @@ SYSTEMD="$TMP/home/.config/systemd/user"
 [ "$(stat -c %a "$LIB/lib.mjs")" = 600 ]
 [ "$(stat -c %a "$LIB/runtime-contract.mjs")" = 600 ]
 [ "$(stat -c %a "$LIB/runtime-contract.json")" = 600 ]
+[ "$(stat -c %a "$LIB/openclaw-qualification.json")" = 600 ]
 [ "$(stat -c %a "$LIB/installed-revision")" = 600 ]
 [ "$(cat "$LIB/installed-revision")" = "$EXPECTED_REVISION" ]
 [ -f "$SYSTEMD/openclaw-task-production-control.service" ]
@@ -46,6 +48,7 @@ node --check "$LIB/diagnose.mjs"
 node --check "$LIB/lib.mjs"
 node --check "$LIB/runtime-contract.mjs"
 node "$LIB/runtime-contract.mjs" validate "$LIB/runtime-contract.json" >/dev/null
+node "$LIB/runtime-contract.mjs" openclaw-version "$LIB/openclaw-qualification.json" >/dev/null
 bash -n "$LIB/poll.sh"
 bash -n "$LIB/bootstrap.sh"
 
