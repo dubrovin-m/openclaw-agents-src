@@ -177,6 +177,7 @@ oc_env(){
 automation(){ oc_env "$OPENCLAW_BIN" automations "$@" --url "$GATEWAY_URL" --token "$TOKEN"; }
 
 start_gateway(){
+  rm -f "$GATEWAY_PID_FILE" "$GATEWAY_PID_FILE.new"
   : >"$GATEWAY_LOG"
   env -i \
     HOME="$RUNTIME/home" PATH="$ISOLATED_PATH" LANG=C.UTF-8 TZ=Europe/Moscow \
@@ -184,7 +185,7 @@ start_gateway(){
     OPENCLAW_GATEWAY_PORT="$GATEWAY_PORT" OPENCLAW_GATEWAY_URL="$GATEWAY_URL" OPENCLAW_GATEWAY_TOKEN="$TOKEN" \
     OPENCLAW_ALLOW_INSECURE_PRIVATE_WS=1 OPENCLAW_SKIP_GMAIL_WATCHER=1 OPENCLAW_SKIP_CANVAS_HOST=1 \
     OPENCLAW_SKIP_ACPX_RUNTIME=1 OPENCLAW_SKIP_ACPX_RUNTIME_PROBE=1 \
-    setsid --wait bash -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$GATEWAY_PID_FILE" "$OPENCLAW_BIN" gateway run --bind loopback --port "$GATEWAY_PORT" --auth token --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
+    setsid --wait bash -c 'tmp="$1.new"; printf "%s\n" "$$" > "$tmp"; mv -f "$tmp" "$1"; shift; exec "$@"' _ "$GATEWAY_PID_FILE" "$OPENCLAW_BIN" gateway run --bind loopback --port "$GATEWAY_PORT" --auth token --token "$TOKEN" >"$GATEWAY_LOG" 2>&1 &
   GATEWAY_SUPERVISOR_PID=$!
   for _ in $(seq 1 40); do
     [ -s "$GATEWAY_PID_FILE" ] && break
