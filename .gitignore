@@ -19,3 +19,5 @@ backups/
 openclaw.json
 auth-profiles.json
 credentials/
+
+agents/investments/plugin/node_modules/

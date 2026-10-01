@@ -1,0 +1,41 @@
+{
+  "id": "investment-analytics",
+  "name": "Investment Analytics",
+  "description": "Read-only Portfolio Hub access for the Investments Agent.",
+  "version": "0.1.0",
+  "configSchema": {
+    "type": "object",
+    "required": [
+      "portfolioHubRoot",
+      "pythonPath"
+    ],
+    "properties": {
+      "portfolioHubRoot": {
+        "type": "string",
+        "minLength": 1
+      },
+      "pythonPath": {
+        "type": "string",
+        "minLength": 1
+      }
+    },
+    "additionalProperties": false
+  },
+  "activation": {
+    "onStartup": true
+  },
+  "contracts": {
+    "tools": [
+      "investment_weekly_review",
+      "investment_holdings"
+    ]
+  },
+  "toolMetadata": {
+    "investment_weekly_review": {
+      "optional": true
+    },
+    "investment_holdings": {
+      "optional": true
+    }
+  }
+}
