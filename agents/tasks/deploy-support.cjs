@@ -1,14 +1,15 @@
 #!/usr/bin/env node
 'use strict';
 
-if (process.argv[2] !== 'release-env' || !process.argv[3] || !process.argv[4]) {
-  process.stderr.write('Usage: deploy-support.cjs release-env RELEASE_FILE EXPECTED_OPENCLAW_VERSION\n');
+const command = process.argv[2];
+if (!['release-env', 'host-compatible'].includes(command) || !process.argv[3] || !process.argv[4]) {
+  process.stderr.write('Usage: deploy-support.cjs <release-env|host-compatible> RELEASE_FILE OPENCLAW_VERSION\n');
   process.exit(2);
 }
 process.argv[2] = process.argv[3];
 process.env.EXPECTED_OPENCLAW_VERSION = process.argv[4];
 
-const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const fs=require('fs'),path=require('path'),r=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const files=['AGENTS.md','SOUL.md','USER.md','IDENTITY.md','HEARTBEAT.md'];
 const bad=()=>process.exit(2);
 if(r?.format!=='task-agent-release-v2')bad();
@@ -16,10 +17,12 @@ const targetTaskctl=r?.generation?.taskctl_version,targetSchema=r?.generation?.s
 const tuple=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
 const cmp=(a,b)=>{for(let i=0;i<3;i++){if(a[i]<b[i])return-1;if(a[i]>b[i])return 1;}return 0};
 const hostCompatible=(v,range)=>{const actual=tuple(v),tokens=String(range??'').trim().split(/\s+/).filter(Boolean);if(!actual||tokens.length===0||range.includes('||'))return false;return tokens.every(token=>{const m=/^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/.exec(token);if(!m)return false;const c=cmp(actual,tuple(m[2]));switch(m[1]||'='){case'>=':return c>=0;case'<=':return c<=0;case'>':return c>0;case'<':return c<0;default:return c===0;}})};
+if(command==='host-compatible'){if(!hostCompatible(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat))bad();process.stdout.write('OPENCLAW_HOST_COMPATIBLE\n');process.exit(0);}
 if(!/^0\.4\.[0-9]+$/.test(targetTaskctl||'')||!Number.isSafeInteger(targetSchema)||targetSchema<1||!tuple(r?.generation?.openclaw_build_version)||r?.generation?.openclaw_build_version!==process.env.EXPECTED_OPENCLAW_VERSION||!hostCompatible(process.env.EXPECTED_OPENCLAW_VERSION,r?.generation?.openclaw_compat)||r?.generation?.typebox_version!=='1.3.15')bad();
 if(r?.plugin?.name!=='openclaw-plugin-taskctl'||!/^0\.4\.[0-9]+$/.test(r?.plugin?.version||''))bad();
 if(r?.plugin?.artifact!==`artifacts/openclaw-plugin-taskctl-${r.plugin.version}.tgz`||!/^[0-9a-f]{64}$/.test(r?.plugin?.sha256||''))bad();
 const sc=r?.shared_contacts??null;if(sc&&(sc.release_path!=='../../shared/contacts/release.json'||!/^[0-9a-f]{64}$/.test(sc.release_sha256||'')||!/^0[.]1[.][0-9]+$/.test(sc.implementation_version||'')||!Number.isSafeInteger(sc.sqlite_schema)||sc.sqlite_schema<1||sc.predecessor_mode!=='exact'))bad();
+const scRelease=sc?JSON.parse(fs.readFileSync(path.resolve(path.dirname(process.argv[2]),sc.release_path),'utf8')):null;if(scRelease&&(scRelease?.format!=='shared-contacts-release-v1'||scRelease.implementation_version!==sc.implementation_version||scRelease.sqlite_schema!==sc.sqlite_schema||scRelease?.plugin?.name!=='openclaw-plugin-contacts'||!/^0[.]1[.][0-9]+$/.test(scRelease?.plugin?.version||'')))bad();
 const mat=r?.calendar_materializer??null;
 if(mat!==null&&(mat?.kind!=='openclaw-command-automation-v1'||typeof mat?.declaration_key!=='string'||!mat.declaration_key.trim()||typeof mat?.name!=='string'||!mat.name.trim()||typeof mat?.cron!=='string'||!mat.cron.trim()||mat?.timezone!=='Europe/Moscow'||mat?.exact!==true||!Number.isSafeInteger(mat?.timeout_seconds)||mat.timeout_seconds<1))bad();
 const rem=r?.reminder_dispatcher??null;
@@ -43,6 +46,7 @@ console.log(`TARGET_PLUGIN_VERSION=${q(r.plugin.version)}`);
 console.log(`TARGET_OPENCLAW_COMPAT=${q(r.generation.openclaw_compat)}`);
 console.log(`CONTACTS_ENABLED=${q(sc?'1':'0')}`);
 console.log(`TARGET_CONTACTS_VERSION=${q(sc?.implementation_version||'')}`);
+console.log(`TARGET_CONTACTS_PLUGIN_VERSION=${q(scRelease?.plugin?.version||'')}`);
 console.log(`TARGET_CONTACTS_SCHEMA=${q(sc?.sqlite_schema||'')}`);
 console.log(`CONTACTS_RELEASE_REL=${q(sc?.release_path||'')}`);
 console.log(`EXPECTED_CONTACTS_RELEASE_SHA=${q(sc?.release_sha256||'')}`);

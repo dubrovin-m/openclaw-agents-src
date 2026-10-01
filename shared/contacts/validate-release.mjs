@@ -33,7 +33,7 @@ const pkg=JSON.parse(fs.readFileSync(path.join(pluginDir,'package.json'),'utf8')
 const lock=JSON.parse(fs.readFileSync(path.join(pluginDir,'package-lock.json'),'utf8'));
 const manifest=JSON.parse(fs.readFileSync(path.join(pluginDir,'openclaw.plugin.json'),'utf8'));
 const plugin=release.plugin;
-if(plugin?.name!=='openclaw-plugin-contacts'||plugin.version!==release.implementation_version||pkg.name!==plugin.name||pkg.version!==plugin.version||lock.version!==plugin.version||lock.packages?.['']?.version!==plugin.version||manifest.id!=='contacts'||manifest.version!==plugin.version)fail('Contacts plugin identity mismatch');
+if(plugin?.name!=='openclaw-plugin-contacts'||!/^0\.1\.\d+$/.test(plugin.version||'')||pkg.name!==plugin.name||pkg.version!==plugin.version||lock.version!==plugin.version||lock.packages?.['']?.version!==plugin.version||manifest.id!=='contacts'||manifest.version!==plugin.version)fail('Contacts plugin identity mismatch');
 if(!/^\d+\.\d+\.\d+$/.test(release.openclaw_build_version||'')||typeof release.openclaw_compat!=='string'||release.openclaw_compat.trim()==='')fail('Contacts OpenClaw build/compatibility metadata is invalid');
 if(pkg.dependencies?.typebox!==release.typebox_version||pkg.devDependencies?.openclaw!==release.openclaw_build_version||pkg.peerDependencies?.openclaw!==release.openclaw_compat||pkg.openclaw?.build?.openclawVersion!==release.openclaw_build_version||pkg.openclaw?.compat?.pluginApi!==release.openclaw_compat)fail('Contacts plugin compatibility metadata mismatch');
 const artifact=path.join(root,plugin.artifact);

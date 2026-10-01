@@ -24,17 +24,18 @@ test('runtime contract contains runtime requirements without an OpenClaw host pi
 
 test('OpenClaw qualification target is explicit and separate from runtime requirements', () => {
   assert.equal(qualification.format, 'openclaw-qualification-target-v1');
-  assert.equal(qualification.version, '2026.9.5');
+  assert.match(qualification.version, /^\d+\.\d+\.\d+$/u);
 });
 
 test('Task and Contacts release metadata stays internally consistent without a host equality gate', () => {
   const result = assertRepositoryMetadataConsistency(repoRoot, contract);
   assert.equal(result.ok, true);
   assert.equal(result.node_ci_version, '26.7.0');
-  assert.equal(result.openclaw_build_version, '2026.9.5');
-  assert.equal(result.openclaw_compat, '2026.9.5');
-  assert.equal(result.contacts_openclaw_build_version, '2026.9.5');
-  assert.equal(result.contacts_openclaw_compat, '2026.9.5');
+  assert.equal(result.openclaw_build_version, qualification.version);
+  assert.equal(result.contacts_openclaw_build_version, qualification.version);
+  assert.equal(result.openclaw_compat, result.contacts_openclaw_compat);
+  assert.equal(typeof result.openclaw_compat, 'string');
+  assert.notEqual(result.openclaw_compat.trim(), '');
 });
 
 test('supported Node lines are explicit and bounded', () => {
