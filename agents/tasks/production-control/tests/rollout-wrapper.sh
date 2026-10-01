@@ -41,6 +41,9 @@ count=$(cat "$FAKE_TASK_CALL_COUNTER" 2>/dev/null || echo 0)
 count=$((count+1))
 printf '%s\n' "$count" > "$FAKE_TASK_CALL_COUNTER"
 RESULT="$FAKE_TASK_RESULT_DIR/result-${count}-${RANDOM}.json"
+if [ "$count" -eq 1 ] && [ "${FAKE_PREDEPLOY_NO_RESULT:-0}" = 1 ]; then
+  exit 2
+fi
 if [ "$count" -eq 1 ]; then
   OUTCOME=${FAKE_PREDEPLOY_OUTCOME:-PASS}
   STAGE=${FAKE_PREDEPLOY_STAGE:-COMPLETE}
@@ -220,6 +223,14 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" task_predeploy_result '"BLOCKED"'
 assert_field "$CASE_RESULT" mutation_started false
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
+
+run_case 112 FAKE_PREDEPLOY_NO_RESULT=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"UNKNOWN"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" stage '"TASK_PREDEPLOY"'
 ! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 run_case 108 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=APPLY FAKE_TASK_MUTATION=true

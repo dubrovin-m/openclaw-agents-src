@@ -166,12 +166,12 @@ run_task_deploy() {
   set -e
   result_file=$(tail -n "+$((log_start+1))" "$LOG" | awk -F= '/^RESULT_FILE=/{v=$2} END{print v}')
   if [ -z "$result_file" ] || [ ! -f "$result_file" ]; then
-    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase did not publish durable Task result evidence"; finish
+    OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase did not publish durable Task result evidence"; finish
   fi
   fields=$(node - "$result_file" <<'NODE'
 const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));process.stdout.write(`${v?.result??''}\t${v?.stage??''}\t${v?.mutation_started===true?'true':'false'}`);
 NODE
-  ) || { OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase Task result evidence is unreadable"; finish; }
+  ) || { OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="$phase"; REASON="$phase Task result evidence is unreadable"; finish; }
   IFS=$'\t' read -r result stage mutated <<<"$fields"
   if [ "$phase" = "TASK_PREDEPLOY" ]; then
     PREDEPLOY_RESULT="$result"; PREDEPLOY_STAGE="$stage"; PREDEPLOY_MUTATION_STARTED="$mutated"

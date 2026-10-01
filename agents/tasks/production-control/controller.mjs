@@ -235,10 +235,9 @@ function gitExec(args, token, options = {}) {
   }
 }
 
-function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
-  const token = readToken();
-  const binding = currentBinding();
-  const repoUrl = `https://github.com/${binding.implementation_repository}.git`;
+export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, token }) {
+  if (!SHA_RE.test(String(targetSha ?? ''))) throw new Error('prepared checkout target SHA invalid');
+  if (!checkoutDir || !repoUrl || !token) throw new Error('prepared checkout inputs incomplete');
   fs.mkdirSync(checkoutDir, { recursive: true, mode: 0o700 });
   fs.chmodSync(checkoutDir, 0o700);
   if (!fs.existsSync(path.join(checkoutDir, '.git'))) {
@@ -247,13 +246,28 @@ function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
   } else {
     gitExec(['remote', 'set-url', 'origin', repoUrl], token, { cwd: checkoutDir });
   }
-  gitExec(['fetch', '--force', '--no-tags', '--depth=1', 'origin', 'refs/heads/main'], token, { cwd: checkoutDir, timeout: 120000 });
+  const shallow = gitExec(['rev-parse', '--is-shallow-repository'], token, { cwd: checkoutDir }) === 'true';
+  const fetchArgs = ['fetch', '--force', '--no-tags'];
+  if (shallow) fetchArgs.push('--unshallow');
+  fetchArgs.push('origin', 'refs/heads/main');
+  gitExec(fetchArgs, token, { cwd: checkoutDir, timeout: 120000 });
   const fetched = gitExec(['rev-parse', 'FETCH_HEAD'], token, { cwd: checkoutDir });
   if (fetched !== targetSha) throw new Error(`fetched main ${fetched} does not equal requested ${targetSha}`);
   gitExec(['checkout', '--detach', '--force', 'FETCH_HEAD'], token, { cwd: checkoutDir });
   gitExec(['clean', '-fdx'], token, { cwd: checkoutDir });
   const head = gitExec(['rev-parse', 'HEAD'], token, { cwd: checkoutDir });
   if (head !== targetSha) throw new Error('prepared checkout HEAD mismatch');
+}
+
+function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
+  const token = readToken();
+  const binding = currentBinding();
+  prepareGitSourceCheckout({
+    targetSha,
+    checkoutDir,
+    repoUrl: `https://github.com/${binding.implementation_repository}.git`,
+    token,
+  });
 }
 
 function unitIsActive(unit) {
