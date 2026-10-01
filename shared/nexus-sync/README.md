@@ -6,7 +6,7 @@ Non-secret implementation for read-only Nexus mirrors used by OpenClaw workspace
 
 This package owns the reproducible non-secret mechanics required to maintain the configured Nexus mirrors:
 
-- `nexus-sync.service` refreshes the primary and Task Agent Nexus checkouts with `git pull --ff-only`;
+- `nexus-sync.service` refreshes the primary, Task Agent, and Investments Agent Nexus checkouts with `git pull --ff-only`;
 - `nexus-sync.timer` schedules the refresh every five minutes and is enabled as a persistent user timer;
 - `install.sh` validates or recreates the configured checkouts after read-only authentication has been provisioned separately, disables the Git push path, installs the user units, performs one sync, and validates the result;
 - `validate.sh` provides source-only and effective-runtime checks.
@@ -17,6 +17,7 @@ No private repository URL, deploy key, SSH private key, token, credential, Nexus
 
 - primary checkout: `/home/dubrovin/.openclaw/workspace/nexus`
 - Task Agent checkout: `/home/dubrovin/.openclaw/workspace-tasks/nexus`
+- Investments Agent checkout: `/home/dubrovin/.openclaw/workspace-investments/nexus`
 - user units: `/home/dubrovin/.config/systemd/user/nexus-sync.service` and `nexus-sync.timer`
 - branch: `main`
 
@@ -51,7 +52,7 @@ Apply is intentionally fail-closed:
 1. existing Nexus paths must either be absent or valid clean `main` checkouts of the supplied private repository;
 2. existing installed unit files must either be absent or exactly match this implementation package;
 3. the remote Git push URL is set to the intentionally unusable `disabled://nexus-read-only` endpoint while the fetch URL remains unchanged;
-4. both checkouts are synchronized with fast-forward-only pulls;
+4. all registered checkouts are synchronized with fast-forward-only pulls;
 5. the exact service and timer files are installed under the user systemd unit directory;
 6. systemd is reloaded, the timer is enabled, and one synchronization service run is executed;
 7. runtime validation must pass using the same externally supplied remote binding.

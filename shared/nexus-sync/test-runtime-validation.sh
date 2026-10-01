@@ -8,11 +8,12 @@ trap 'rm -rf "$TMP"' EXIT
 PACKAGE="$TMP/nexus-sync"
 PRIMARY="$TMP/runtime/workspace/nexus"
 TASK="$TMP/runtime/workspace-tasks/nexus"
+INVESTMENTS="$TMP/runtime/workspace-investments/nexus"
 UNIT_DIR="$TMP/runtime/systemd"
 MOCK_BIN="$TMP/bin"
 TEST_REMOTE='ssh://git@example.invalid/private/nexus.git'
 
-mkdir -p "$PACKAGE" "$PRIMARY/.git" "$TASK/.git" "$UNIT_DIR" "$MOCK_BIN"
+mkdir -p "$PACKAGE" "$PRIMARY/.git" "$TASK/.git" "$INVESTMENTS/.git" "$UNIT_DIR" "$MOCK_BIN"
 cp -R "$ROOT/." "$PACKAGE/"
 cp "$ROOT/nexus-sync.service" "$UNIT_DIR/nexus-sync.service"
 cp "$ROOT/nexus-sync.timer" "$UNIT_DIR/nexus-sync.timer"
@@ -21,6 +22,7 @@ chmod 664 "$UNIT_DIR/nexus-sync.timer"
 
 sed -i "s|^PRIMARY_CHECKOUT=.*|PRIMARY_CHECKOUT=\"$PRIMARY\"|" "$PACKAGE/validate.sh"
 sed -i "s|^TASK_CHECKOUT=.*|TASK_CHECKOUT=\"$TASK\"|" "$PACKAGE/validate.sh"
+sed -i "s|^INVESTMENTS_CHECKOUT=.*|INVESTMENTS_CHECKOUT=\"$INVESTMENTS\"|" "$PACKAGE/validate.sh"
 sed -i "s|^UNIT_DIR=.*|UNIT_DIR=\"$UNIT_DIR\"|" "$PACKAGE/validate.sh"
 
 cat > "$MOCK_BIN/git" <<'EOF'
@@ -38,7 +40,7 @@ if [ "${1:-}" = "remote" ] && [ "${2:-}" = "get-url" ]; then
   fi
   if [ "${3:-}" = "--push" ] && [ "${4:-}" = "origin" ]; then
     case "$checkout" in
-      "$TEST_PRIMARY"|"$TEST_TASK") printf '%s\n' 'DISABLED' ;;
+      "$TEST_PRIMARY"|"$TEST_TASK"|"$TEST_INVESTMENTS") printf '%s\n' 'DISABLED' ;;
       *) exit 91 ;;
     esac
     exit 0
@@ -90,7 +92,7 @@ chmod +x "$MOCK_BIN/systemctl"
 run_runtime() {
   local home=$1 systemd_drift=$2 output rc
   set +e
-  output=$(PATH="$MOCK_BIN:$PATH" HOME="$home" TEST_PRIMARY="$PRIMARY" TEST_TASK="$TASK" TEST_REMOTE="$TEST_REMOTE" \
+  output=$(PATH="$MOCK_BIN:$PATH" HOME="$home" TEST_PRIMARY="$PRIMARY" TEST_TASK="$TASK" TEST_INVESTMENTS="$INVESTMENTS" TEST_REMOTE="$TEST_REMOTE" \
     OPENCLAW_NEXUS_REMOTE="$TEST_REMOTE" TEST_SYSTEMD_DRIFT="$systemd_drift" bash "$PACKAGE/validate.sh" --runtime 2>&1)
   rc=$?
   set -e
@@ -107,10 +109,10 @@ runtime_output=$(printf '%s\n' "$runtime_result" | tail -n +2)
 [ "$runtime_rc" -eq 2 ]
 printf '%s\n' "$runtime_output" | grep -F 'Installed nexus-sync.timer differs from source' >/dev/null
 printf '%s\n' "$runtime_output" | grep -F 'Installed nexus-sync.timer mode is not 0644: 664' >/dev/null
-[ "$(printf '%s\n' "$runtime_output" | grep -Fc 'Nexus push path is not disabled:')" -eq 2 ]
+[ "$(printf '%s\n' "$runtime_output" | grep -Fc 'Nexus push path is not disabled:')" -eq 3 ]
 printf '%s\n' "$runtime_output" | grep -F 'nexus-sync.timer is not enabled' >/dev/null
 printf '%s\n' "$runtime_output" | grep -F 'nexus-sync.timer is not active' >/dev/null
-printf '%s\n' "$runtime_output" | grep -F 'NEXUS_SYNC_RUNTIME_VALIDATION_MISMATCHES=6' >/dev/null
+printf '%s\n' "$runtime_output" | grep -F 'NEXUS_SYNC_RUNTIME_VALIDATION_MISMATCHES=7' >/dev/null
 if printf '%s\n' "$runtime_output" | grep -F 'NEXUS_SYNC_RUNTIME_VALIDATION_PASS' >/dev/null; then
   echo 'Runtime PASS must not be emitted when mismatches exist' >&2
   exit 1

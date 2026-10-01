@@ -8,6 +8,7 @@ REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"
 BRANCH="main"
 PRIMARY_CHECKOUT="/home/dubrovin/.openclaw/workspace/nexus"
 TASK_CHECKOUT="/home/dubrovin/.openclaw/workspace-tasks/nexus"
+INVESTMENTS_CHECKOUT="/home/dubrovin/.openclaw/workspace-investments/nexus"
 UNIT_DIR="/home/dubrovin/.config/systemd/user"
 DISABLED_PUSH_URL="disabled://nexus-read-only"
 MISMATCHES=0
@@ -45,7 +46,8 @@ grep -Fx "DISABLED_PUSH_URL=\"$DISABLED_PUSH_URL\"" "$ROOT/install.sh" >/dev/nul
 grep -Fx 'Type=oneshot' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
-[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 2 ] || fail "nexus-sync.service must own exactly two sync commands"
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
+[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 3 ] || fail "nexus-sync.service must own exactly three sync commands"
 grep -Fx 'OnCalendar=*:0/5' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Persistent=true' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Unit=nexus-sync.service' "$TIMER_SOURCE" >/dev/null
@@ -100,6 +102,7 @@ validate_checkout() {
 
 validate_checkout "$PRIMARY_CHECKOUT"
 validate_checkout "$TASK_CHECKOUT"
+validate_checkout "$INVESTMENTS_CHECKOUT"
 
 timer_enabled=$(systemctl --user is-enabled nexus-sync.timer 2>/dev/null || true)
 [ "$timer_enabled" = "enabled" ] || mismatch "nexus-sync.timer is not enabled"

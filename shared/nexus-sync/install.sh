@@ -8,6 +8,7 @@ REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"
 BRANCH="main"
 PRIMARY_CHECKOUT="/home/dubrovin/.openclaw/workspace/nexus"
 TASK_CHECKOUT="/home/dubrovin/.openclaw/workspace-tasks/nexus"
+INVESTMENTS_CHECKOUT="/home/dubrovin/.openclaw/workspace-investments/nexus"
 UNIT_DIR="/home/dubrovin/.config/systemd/user"
 SERVICE_TARGET="$UNIT_DIR/nexus-sync.service"
 TIMER_TARGET="$UNIT_DIR/nexus-sync.timer"
@@ -74,6 +75,7 @@ check_existing_unit "$SERVICE_SOURCE" "$SERVICE_TARGET"
 check_existing_unit "$TIMER_SOURCE" "$TIMER_TARGET"
 check_checkout "$PRIMARY_CHECKOUT"
 check_checkout "$TASK_CHECKOUT"
+check_checkout "$INVESTMENTS_CHECKOUT"
 
 if [ "$MODE" = "preflight" ]; then
   printf 'NEXUS_SYNC_PREFLIGHT_PASS\n'
@@ -97,6 +99,7 @@ prepare_checkout() {
 
 prepare_checkout "$PRIMARY_CHECKOUT"
 prepare_checkout "$TASK_CHECKOUT"
+prepare_checkout "$INVESTMENTS_CHECKOUT"
 
 if [ ! -e "$UNIT_DIR" ]; then
   install -d -m 700 "$UNIT_DIR"
