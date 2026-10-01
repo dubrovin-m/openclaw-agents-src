@@ -127,6 +127,7 @@ automation(){
 }
 
 start_gateway(){
+  rm -f "$GATEWAY_PID_FILE" "$GATEWAY_PID_FILE.new"
   : > "$GATEWAY_LOG"
   env -i \
     HOME="$RUNTIME/home" \
@@ -143,7 +144,7 @@ start_gateway(){
     OPENCLAW_SKIP_CANVAS_HOST=1 \
     OPENCLAW_SKIP_ACPX_RUNTIME=1 \
     OPENCLAW_SKIP_ACPX_RUNTIME_PROBE=1 \
-    setsid --wait bash -c 'printf "%s\n" "$$" > "$1"; shift; exec "$@"' _ "$GATEWAY_PID_FILE" "$OPENCLAW_BIN" gateway run \
+    setsid --wait bash -c 'tmp="$1.new"; printf "%s\n" "$$" > "$tmp"; mv -f "$tmp" "$1"; shift; exec "$@"' _ "$GATEWAY_PID_FILE" "$OPENCLAW_BIN" gateway run \
       --allow-unconfigured \
       --bind loopback \
       --port "$PORT" \
