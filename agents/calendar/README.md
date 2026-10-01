@@ -87,7 +87,7 @@ Source preparation does not activate Calendar Agent.
 Activation additionally requires:
 
 - confirmed initial operational taxonomy/targets/labels and designated Google Calendar;
-- owner-authorized Google ADC with the minimum required scopes;
+- owner-authorized Google ADC with the minimum required scopes; when ADC uses External user OAuth, the OAuth app must be `In production` before issuing the production refresh token; `Testing` authorizations expire after seven days and are not acceptable for production use;
 - representative provider read and label-write validation against the designated calendar;
 - owner-only Telegram account and route;
 - a working native plugin-approval route for Calendar rule commits;
