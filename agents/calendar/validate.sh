@@ -18,14 +18,13 @@ done
 [ ! -e "$ROOT/workspace/MEMORY.md" ] || fail "Calendar v1 must not ship persistent agent memory"
 [ ! -e "$ROOT/workspace/BOOTSTRAP.md" ] || fail "Calendar v1 must not ship an interactive bootstrap ritual"
 
-node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || fail "repository runtime contract mismatch"
+node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || fail "repository runtime requirements mismatch"
 
-node - "$ROOT/config/calendar-agent.fragment.json" "$ROOT/config/calendar-tools.json" "$ROOT/plugin/package.json" "$RUNTIME_CONTRACT" <<'NODE' || exit 2
+node - "$ROOT/config/calendar-agent.fragment.json" "$ROOT/config/calendar-tools.json" "$ROOT/plugin/package.json" <<'NODE' || exit 2
 const fs=require('node:fs');
 const agent=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const tools=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
 const pkg=JSON.parse(fs.readFileSync(process.argv[4],'utf8'));
-const runtime=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
 const fail=(m)=>{console.error('Calendar Agent validation failed: '+m);process.exit(2);};
 
 if(agent.id!=='calendar')fail('agent id must be calendar');
@@ -42,11 +41,12 @@ if(!Array.isArray(tools.deny)||requiredDenied.some((name)=>!tools.deny.includes(
 if('alsoAllow' in tools)fail('Calendar must use a finite allowlist rather than additive broad tools');
 if(tools.fs?.workspaceOnly!==true)fail('Calendar filesystem boundary must remain workspace-only');
 
-const version=runtime?.openclaw?.version;
-if(pkg.devDependencies?.openclaw!==version)fail('Calendar plugin build version must equal runtime contract');
-if(pkg.openclaw?.build?.openclawVersion!==version)fail('Calendar plugin build metadata must equal runtime contract');
-if(pkg.peerDependencies?.openclaw!=='>='+version)fail('Calendar plugin compatibility floor must equal runtime contract');
-if(pkg.openclaw?.compat?.pluginApi!=='>='+version)fail('Calendar plugin API floor must equal runtime contract');
+const buildVersion=pkg.devDependencies?.openclaw;
+if(!/^\d+\.\d+\.\d+$/.test(buildVersion||''))fail('Calendar plugin build version must be an exact semantic version');
+if(pkg.openclaw?.build?.openclawVersion!==buildVersion)fail('Calendar plugin build metadata must match its development dependency');
+const compatRange=pkg.openclaw?.compat?.pluginApi;
+if(typeof compatRange!=='string'||compatRange.trim()==='')fail('Calendar plugin compatibility metadata must be non-empty');
+if(pkg.peerDependencies?.openclaw!==compatRange)fail('Calendar peer range must match plugin API compatibility metadata');
 if(pkg.dependencies?.typebox!=='1.3.15')fail('Calendar plugin TypeBox version must stay pinned');
 if(pkg.dependencies?.['google-auth-library']!=='^10.3.0')fail('Calendar Google auth library version must stay pinned to the reviewed major/minor');
 NODE

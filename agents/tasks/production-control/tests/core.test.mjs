@@ -75,6 +75,7 @@ test('rejects invalid binding, pre-activation, edited and non-owner comments', (
 test('protects executable authority paths without treating docs/tests as authority', () => {
   for (const p of [
     'runtime-contract.json',
+    'openclaw-qualification.json',
     'shared/runtime-contract/runtime-contract.mjs',
     'agents/tasks/production-control/controller.mjs',
     'agents/tasks/production-control/execute-rollout.sh',
@@ -102,6 +103,7 @@ test('rollout protects controller and execution semantics but permits the frozen
     '.github/workflows/task-production-control-ci.yml',
   ]) assert.equal(isRolloutProtectedPath(p), true, p);
   assert.equal(isRolloutProtectedPath('runtime-contract.json'), false);
+  assert.equal(isRolloutProtectedPath('openclaw-qualification.json'), false);
   assert.equal(isRolloutProtectedPath('agents/tasks/production-control/README.md'), false);
   assert.equal(isRolloutProtectedPath('agents/tasks/production-control/tests/core.test.mjs'), false);
 });

@@ -47,7 +47,7 @@ jobs:
           if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
             changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-            if grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|shared/contacts/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)' <<<"$changed_files"; then
+            if grep -Eq '^(runtime-contract\.json$|openclaw-qualification\.json$|shared/runtime-contract/|shared/contacts/|agents/tasks/|\.github/workflows/task-agent-ci\.yml$)' <<<"$changed_files"; then
               relevant=true
             fi
           fi
@@ -91,10 +91,12 @@ jobs:
         with:
           node-version: ${{ steps.runtime.outputs.node_version }}
 
-      - name: Validate repository runtime contract
+      - name: Validate repository runtime requirements and qualification target
         run: |
           set -euo pipefail
           node --check shared/runtime-contract/runtime-contract.mjs
+          node shared/runtime-contract/runtime-contract.mjs validate runtime-contract.json
+          node shared/runtime-contract/runtime-contract.mjs openclaw-version openclaw-qualification.json
           node shared/runtime-contract/runtime-contract.mjs repo-check .
           node --test shared/runtime-contract/runtime-contract.test.mjs
 
@@ -217,8 +219,6 @@ jobs:
           const sha256 = /^[0-9a-f]{64}$/;
           const bad = (message) => { throw new Error(message); };
           const tuple = (value) => { const m = /^(\d+)\.(\d+)\.(\d+)$/.exec(value || ''); return m ? m.slice(1).map(Number) : null; };
-          const exactHost = (value, range) => tuple(value) !== null && value === range;
-          const runtime = JSON.parse(fs.readFileSync('runtime-contract.json', 'utf8'));
           if (release?.format !== 'task-agent-release-v2') bad('unsupported release format');
           if (!version.test(release?.generation?.taskctl_version || '')) bad('invalid taskctl release identity');
           const schema = release?.generation?.sqlite_schema;
@@ -227,9 +227,9 @@ jobs:
           if (!version.test(release?.plugin?.version || '')) bad('invalid plugin release identity');
           const buildVersion = release?.generation?.openclaw_build_version;
           const compatRange = release?.generation?.openclaw_compat;
-          if (!tuple(buildVersion) || buildVersion !== runtime?.openclaw?.version || !exactHost(runtime?.openclaw?.version, compatRange)) bad('OpenClaw build/compatibility metadata is invalid');
+          if (!tuple(buildVersion) || typeof compatRange !== 'string' || compatRange.trim() === '') bad('OpenClaw build/compatibility metadata is invalid');
           if (buildVersion !== pkg.devDependencies?.openclaw || buildVersion !== pkg.openclaw?.build?.openclawVersion) bad('OpenClaw build identity mismatch');
-          if (compatRange !== pkg.peerDependencies?.openclaw || compatRange !== pkg.openclaw?.compat?.pluginApi) bad('OpenClaw compatibility contract mismatch');
+          if (compatRange !== pkg.peerDependencies?.openclaw || compatRange !== pkg.openclaw?.compat?.pluginApi) bad('OpenClaw compatibility metadata mismatch');
           if (release?.generation?.typebox_version !== pkg.dependencies?.typebox) bad('TypeBox version mismatch');
           if (!sha256.test(release?.plugin?.sha256 || '')) bad('invalid artifact sha256');
           const from = release?.from;

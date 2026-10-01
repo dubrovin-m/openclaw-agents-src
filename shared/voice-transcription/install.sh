@@ -5,6 +5,7 @@ umask 077
 ROOT=$(cd "$(dirname "$0")" && pwd)
 CONFIG="$ROOT/config/tools-media-audio.json"
 RUNTIME_CONTRACT="$ROOT/../../runtime-contract.json"
+RUNTIME_HELPER="$ROOT/../../shared/runtime-contract/runtime-contract.mjs"
 WHISPER_COMMIT="306c88f4d1286aec1bf96e544632897886af5501"
 WHISPER_REPO="https://github.com/ggml-org/whisper.cpp.git"
 MODEL_URL="https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-small.bin"
@@ -27,12 +28,12 @@ require_command() {
 [ "$(id -u)" -ne 0 ] || fail "Run as the normal OpenClaw owner, not root"
 [ "$HOME" = "/home/dubrovin" ] || fail "Unexpected HOME: $HOME"
 
-for cmd in openclaw ffmpeg git cmake cc c++ curl sha256sum jq install mktemp nproc df awk stat date tr systemctl; do
+for cmd in openclaw node ffmpeg git cmake cc c++ curl sha256sum jq install mktemp nproc df awk stat date tr systemctl; do
   require_command "$cmd"
 done
 
 [ -f "$RUNTIME_CONTRACT" ] || fail "Runtime contract not found: $RUNTIME_CONTRACT"
-OPENCLAW_VERSION=$(jq -er '.openclaw.version | select(type == "string" and length > 0)' "$RUNTIME_CONTRACT") || fail "Invalid OpenClaw version in runtime contract"
+OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || fail "Invalid OpenClaw qualification target"
 [ "$(openclaw --version | awk '{print $2}')" = "$OPENCLAW_VERSION" ] || fail "Expected OpenClaw $OPENCLAW_VERSION"
 [ "$(nproc)" -ge 2 ] || fail "At least 2 vCPU are required"
 mem_kib=$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)

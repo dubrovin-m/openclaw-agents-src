@@ -12,6 +12,7 @@ WORKSPACE_LAYOUT_HELPER="$ROOT/workspace-layout.mjs"
 PLUGIN_REGISTRY_HELPER="$ROOT/production-control/plugin-registry-state.cjs"
 DEPLOY_SUPPORT_HELPER="$ROOT/deploy-support.cjs"
 TARGET_WORKSPACE_FILES=()
+LIVE_OPENCLAW_VERSION=""
 
 TEST_ROOT=""
 MODE=""
@@ -332,6 +333,15 @@ workspace_matches_from(){
   [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1
 }
 plugin_version(){ node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/package.json" 2>/dev/null; }
+
+openclaw_version_compatible(){
+  node - "$1" "$TARGET_OPENCLAW_COMPAT" <<'NODE'
+const parse=v=>{const m=/^(\d+)\.(\d+)\.(\d+)$/.exec(v||'');return m?m.slice(1).map(Number):null};
+const cmp=(a,b)=>{for(let i=0;i<3;i++){if(a[i]<b[i])return-1;if(a[i]>b[i])return 1;}return 0};
+const actual=parse(process.argv[2]),range=process.argv[3]||'',tokens=range.trim().split(/\s+/).filter(Boolean);if(!actual||!tokens.length||range.includes('||'))process.exit(2);
+for(const token of tokens){const m=/^(>=|<=|>|<|=)?(\d+\.\d+\.\d+)$/.exec(token);if(!m)process.exit(2);const c=cmp(actual,parse(m[2])),op=m[1]||'=';if(!({'>=':c>=0,'<=':c<=0,'>':c>0,'<':c<0,'=':c===0}[op]))process.exit(1);}
+NODE
+}
 plugin_identity_matches_target(){ local pv tv; pv=$(plugin_version) || return 1; [ "$pv" = "$TARGET_PLUGIN_VERSION" ] || return 1; tv=$(node -e "const p=require(process.argv[1]);process.stdout.write(String(p.version||''))" "$PLUGIN_DIR/node_modules/typebox/package.json" 2>/dev/null) || return 1; [ "$tv" = "1.3.15" ]; }
 taskctl_runtime_identity(){ local health; health=$(taskctl_health 2>/dev/null) || return 1; node -e 'const h=JSON.parse(process.argv[1]);if(!/^0\.4\.[0-9]+$/.test(h.implementation_version||"")||!Number.isSafeInteger(h.schema_version))process.exit(1);process.stdout.write(`${h.implementation_version} ${h.schema_version}`)' "$health"; }
 taskctl_version(){ local identity; identity=$(taskctl_runtime_identity) || return 1; printf '%s\n' "${identity%% *}"; }
@@ -409,7 +419,7 @@ source_taskctl_identity_exact(){
 validate_source(){
   [ -n "$REPO_ROOT" ] || abort_deploy "SOURCE" "repository root unavailable"
   SOURCE_REVISION=$(git -C "$REPO_ROOT" rev-parse HEAD 2>/dev/null) || abort_deploy "SOURCE" "cannot resolve source revision"
-  [ -z "$(git -C "$REPO_ROOT" status --porcelain -- agents/tasks shared/contacts runtime-contract.json shared/runtime-contract)" ] || abort_deploy "SOURCE" "runtime-affecting checkout is not clean"
+  [ -z "$(git -C "$REPO_ROOT" status --porcelain -- agents/tasks shared/contacts runtime-contract.json openclaw-qualification.json shared/runtime-contract)" ] || abort_deploy "SOURCE" "runtime-affecting checkout is not clean"
   node "$RUNTIME_HELPER" repo-check "$RUNTIME_CONTRACT_ROOT" >/dev/null || abort_deploy "SOURCE" "repository runtime contract mismatch"
   node --check "$WORKSPACE_LAYOUT_HELPER" >/dev/null || abort_deploy "SOURCE" "workspace layout helper syntax invalid"
   node --check "$PLUGIN_REGISTRY_HELPER" >/dev/null || abort_deploy "SOURCE" "plugin registry state helper syntax invalid"
@@ -433,7 +443,9 @@ NODE
 
 validate_live_boundary(){
   local version
-  version=$(oc --version 2>/dev/null|awk '{print $2}') || abort_deploy "PREFLIGHT" "OpenClaw version unavailable"; [ "$version" = "$EXPECTED_OPENCLAW_VERSION" ] || abort_deploy "PREFLIGHT" "unsupported OpenClaw generation: $version (expected $EXPECTED_OPENCLAW_VERSION)"
+  version=$(oc --version 2>/dev/null|awk '{print $2}') || abort_deploy "PREFLIGHT" "OpenClaw version unavailable"
+  LIVE_OPENCLAW_VERSION="$version"
+  openclaw_version_compatible "$version" || abort_deploy "PREFLIGHT" "unsupported OpenClaw generation: $version (plugin API compatibility $TARGET_OPENCLAW_COMPAT)"
   [ -f "$CONFIG" ] && [ -f "$DB" ] && [ -x "$TASKCTL_TARGET" ] && [ -f "$PLUGIN_DIR/package.json" ] || abort_deploy "PREFLIGHT" "required runtime files missing"
   systemctl_user is-active --quiet openclaw-gateway.service || abort_deploy "PREFLIGHT" "Gateway is not active"
   node - "$CONFIG" <<'NODE' || abort_deploy "PREFLIGHT" "Task Agent config entry unavailable"
@@ -501,7 +513,7 @@ NODE
 }
 validate_target(){
   target_runtime_exact || return 1; validate_plugin_surface || return 1
-  if [ "$CONTACTS_ENABLED" = "1" ]; then node "$PLUGIN_REGISTRY_HELPER" verify-target "$STATE_DB" "$EXPECTED_OPENCLAW_VERSION" "$TARGET_PLUGIN_VERSION" "$TARGET_CONTACTS_VERSION" || return 1; fi
+  if [ "$CONTACTS_ENABLED" = "1" ]; then node "$PLUGIN_REGISTRY_HELPER" verify-target "$STATE_DB" "$LIVE_OPENCLAW_VERSION" "$TARGET_PLUGIN_VERSION" "$TARGET_CONTACTS_VERSION" || return 1; fi
   [ "$(stat -c %a "$TASKCTL_TARGET")" = 700 ] || return 1; [ "$(stat -c %a "$CONFIG")" = 600 ] || return 1; [ "$(stat -c %a "$DB")" = 600 ] || return 1; [ "$CONTACTS_ENABLED" != "1" ] || { [ "$(stat -c %a "$CONTACTS_DB")" = 600 ] && [ "$(stat -c %a "$CONTACTCTL_TARGET")" = 700 ] && [ "$(stat -c %a "$CONTACTS_LIB/core.cjs")" = 600 ]; } || return 1
   local f; for f in "${TARGET_WORKSPACE_FILES[@]}"; do [ "$(stat -c %a "$WORKSPACE/$f")" = 644 ] || return 1; done
   if [ "$TARGET_WORKSPACE_LAYOUT" = "agents-md-tools-v1" ]; then [ ! -e "$WORKSPACE/TOOLS.md" ] || return 1; fi
@@ -512,7 +524,7 @@ main(){
   echo "EXECUTION_ID=$EXECUTION_ID"
   validate_source; validate_live_boundary
   if [ "$MODE" = "preflight" ]; then echo "TASK_AGENT_DEPLOY_PREFLIGHT_PASS start_is_target=$START_IS_TARGET target_taskctl=$TARGET_TASKCTL_VERSION current_taskctl=$START_TASKCTL_VERSION target_plugin=$TARGET_PLUGIN_VERSION current_plugin=$START_PLUGIN_VERSION"; exit 0; fi
-  if [ "$START_IS_TARGET" -eq 1 ]; then json_result "PASS" "NOOP" "target runtime already exact; no mutation required"; echo "TASK_AGENT_DEPLOY_NOOP"; echo "RESULT_FILE=$RESULT_FILE"; exit 0; fi
+  if [ "$START_IS_TARGET" -eq 1 ]; then validate_target || abort_deploy "PREFLIGHT" "target runtime validation failed"; json_result "PASS" "NOOP" "target runtime already exact; no mutation required"; echo "TASK_AGENT_DEPLOY_NOOP"; echo "RESULT_FILE=$RESULT_FILE"; exit 0; fi
 
   create_recovery_set || abort_deploy "BACKUP" "failed to create or validate recovery set"; maybe_fault "after-backup"
   if [ "$MATERIALIZER_ENABLED" = "1" ] && [ "$START_MATERIALIZER_EXACT" -eq 1 ]; then

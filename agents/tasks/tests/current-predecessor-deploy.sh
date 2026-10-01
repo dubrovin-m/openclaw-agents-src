@@ -123,7 +123,7 @@ fs.writeFileSync(p,JSON.stringify({jobs},null,2)+'\n');
 NODE
 echo active > "$BASE/gateway.state"
 oc "$BASE" plugins registry --refresh --json >/dev/null
-node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$(node "$REPO_ROOT/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$REPO_ROOT/runtime-contract.json")" "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
+node "$PRED_SRC/agents/tasks/production-control/plugin-registry-state.cjs" verify-target "$BASE/state/state/openclaw.sqlite" "$(node "$PRED_SRC/shared/runtime-contract/runtime-contract.mjs" openclaw-version "$PRED_SRC/runtime-contract.json")" "$PRED_PLUGIN" "$PRED_CONTACTS" || fail "predecessor plugin registry is not exact"
 oc "$BASE" config validate >/dev/null || fail "synthetic predecessor config invalid"
 
 SELF_PERSON=$(node - "$BASE/state/data/contacts/contacts.sqlite3" <<'NODE'

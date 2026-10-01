@@ -124,7 +124,7 @@ async function githubGet(endpoint) {
   if (text) {
     try { data = JSON.parse(text); } catch { data = text; }
   }
-  if (!response.ok) throw new Error(`GitHub API GET ${endpoint} failed: ${response.status}`);
+  if (!response.ok) { const error = new Error(`GitHub API GET ${endpoint} failed: ${response.status}`); error.status = response.status; throw error; }
   return data;
 }
 
@@ -146,14 +146,28 @@ async function getMainSha() {
   return commit.sha;
 }
 
-async function runtimeContractVersionAtSha(sha) {
-  if (!SHA_RE.test(sha ?? '')) throw new Error('runtime-contract lookup requires exact SHA');
+async function openClawTargetVersionAtSha(sha) {
+  if (!SHA_RE.test(sha ?? '')) throw new Error('OpenClaw target lookup requires exact SHA');
   const binding = currentBinding();
-  const data = await githubGet(`/repos/${binding.implementation_repository}/contents/runtime-contract.json?ref=${sha}`);
-  if (data?.encoding !== 'base64' || typeof data?.content !== 'string') throw new Error('runtime-contract content response is invalid');
-  const contract = JSON.parse(Buffer.from(data.content.replace(/\s+/gu, ''), 'base64').toString('utf8'));
+  let data;
+  try {
+    data = await githubGet(`/repos/${binding.implementation_repository}/contents/openclaw-qualification.json?ref=${sha}`);
+  } catch (error) {
+    if (error?.status !== 404) throw error;
+    data = null;
+  }
+  if (data) {
+    if (data?.encoding !== 'base64' || typeof data?.content !== 'string') throw new Error('OpenClaw qualification content response is invalid');
+    const qualification = JSON.parse(Buffer.from(data.content.replace(/\s+/gu, ''), 'base64').toString('utf8'));
+    const version = qualification?.version;
+    if (qualification?.format !== 'openclaw-qualification-target-v1' || typeof version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)) throw new Error('OpenClaw qualification target is invalid');
+    return version;
+  }
+  const legacy = await githubGet(`/repos/${binding.implementation_repository}/contents/runtime-contract.json?ref=${sha}`);
+  if (legacy?.encoding !== 'base64' || typeof legacy?.content !== 'string') throw new Error('legacy runtime-contract content response is invalid');
+  const contract = JSON.parse(Buffer.from(legacy.content.replace(/\s+/gu, ''), 'base64').toString('utf8'));
   const version = contract?.openclaw?.version;
-  if (contract?.format !== 'openclaw-agents-runtime-contract-v1' || typeof version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)) throw new Error('runtime-contract OpenClaw version is invalid');
+  if (contract?.format !== 'openclaw-agents-runtime-contract-v1' || typeof version !== 'string' || !/^[0-9]+\.[0-9]+\.[0-9]+$/u.test(version)) throw new Error('legacy runtime-contract OpenClaw version is invalid');
   return version;
 }
 
@@ -284,8 +298,8 @@ async function validateRolloutTarget(state, sha) {
   }
   const protectedChanges = (await changedFiles(state.protected_path_baseline_sha, sha)).filter(isRolloutProtectedPath);
   if (protectedChanges.length) throw new Error(`rollout target changes protected production-control paths: ${protectedChanges.join(', ')}`);
-  const predecessorVersion = await runtimeContractVersionAtSha(state.production_baseline_sha);
-  const targetVersion = await runtimeContractVersionAtSha(sha);
+  const predecessorVersion = await openClawTargetVersionAtSha(state.production_baseline_sha);
+  const targetVersion = await openClawTargetVersionAtSha(sha);
   if (compareRuntimeVersions(targetVersion, predecessorVersion) <= 0) throw new Error(`rollout target OpenClaw ${targetVersion} is not newer than production ${predecessorVersion}`);
   return { predecessorVersion, targetVersion };
 }

@@ -18,6 +18,7 @@ const CONTROL_RUNTIME_PATHS = [
 
 export const PROTECTED_DEPLOYMENT_PATHS = [
   'runtime-contract.json',
+  'openclaw-qualification.json',
   'shared/runtime-contract/',
   ...CONTROL_RUNTIME_PATHS,
   'agents/tasks/deploy.sh',
