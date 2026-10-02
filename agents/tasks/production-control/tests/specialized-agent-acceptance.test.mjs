@@ -15,6 +15,70 @@ import {
 
 const acceptancePath = 'agents/tasks/production-control/specialized-agent-acceptance.mjs';
 
+const baseAgents = [
+  {
+    id: 'main',
+    workspace: '/runtime/main',
+    agentDir: '/runtime/agents/main',
+    model: 'openai/gpt-main',
+    bindings: 1,
+    isDefault: true,
+  },
+  {
+    id: 'tasks',
+    workspace: '/runtime/tasks',
+    agentDir: '/runtime/agents/tasks',
+    model: 'openai/gpt-tasks',
+    bindings: 1,
+    isDefault: false,
+  },
+];
+
+const basePlugins = {
+  plugins: [
+    {
+      id: 'taskctl',
+      enabled: true,
+      origin: 'global',
+      status: 'loaded',
+      version: '0.4.31',
+      toolNames: ['task_list', 'task_get'],
+    },
+    {
+      id: 'codex',
+      enabled: true,
+      origin: 'global',
+      status: 'loaded',
+      version: '2026.9.7',
+      toolNames: ['codex_threads'],
+      trustedOfficialInstall: true,
+    },
+    {
+      id: 'telegram',
+      enabled: true,
+      origin: 'bundled',
+      status: 'loaded',
+      version: '2026.9.7',
+      toolNames: [],
+    },
+  ],
+};
+
+function runnerFor({ agents = baseAgents, plugins = basePlugins } = {}) {
+  return (_bin, args) => {
+    const command = args.join(' ');
+    if (command === 'config validate --json') return { valid: true };
+    if (command === 'plugins doctor --json') return { ok: true };
+    if (command === 'agents list --json') return agents;
+    if (command === 'plugins list --json') return plugins;
+    throw new Error(`unexpected command ${command}`);
+  };
+}
+
+function baselineSnapshot() {
+  return collectSnapshot('/bin/openclaw', runnerFor());
+}
+
 test('classifies the runtime acceptance helper inside controller protection boundaries', () => {
   assert.equal(isProtectedDeploymentPath(acceptancePath), true);
   assert.equal(isRolloutProtectedPath(acceptancePath), true);
@@ -36,7 +100,7 @@ test('normalizes agent roster from object output', () => {
   ]);
 });
 
-test('tracks only active non-bundled plugins and requires every active plugin loaded', () => {
+test('tracks active non-bundled plugins and requires every active plugin loaded', () => {
   const plugins = {
     plugins: [
       { id: 'taskctl', enabled: true, origin: 'global', status: 'loaded' },
@@ -56,28 +120,43 @@ test('tracks only active non-bundled plugins and requires every active plugin lo
   );
 });
 
-test('collectSnapshot requires config and plugin health before inventory', () => {
+test('collectSnapshot captures agent runtime and custom plugin contracts', () => {
   const calls = [];
-  const runner = (_bin, args) => {
+  const baseRunner = runnerFor();
+  const runner = (bin, args) => {
     calls.push(args.join(' '));
-    const command = args.join(' ');
-    if (command === 'config validate --json') return { valid: true };
-    if (command === 'plugins doctor --json') return { ok: true };
-    if (command === 'agents list --json') return [{ id: 'tasks' }, { id: 'main' }];
-    if (command === 'plugins list --json') {
-      return {
-        plugins: [
-          { id: 'taskctl', enabled: true, origin: 'global', status: 'loaded' },
-          { id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' },
-        ],
-      };
-    }
-    throw new Error(`unexpected command ${command}`);
+    return baseRunner(bin, args);
   };
   assert.deepEqual(collectSnapshot('/bin/openclaw', runner), {
     agent_ids: ['main', 'tasks'],
-    active_plugin_ids: ['taskctl', 'telegram'],
-    external_plugin_ids: ['taskctl'],
+    agent_runtime: [
+      {
+        id: 'main',
+        workspace: '/runtime/main',
+        agent_dir: '/runtime/agents/main',
+        model: 'openai/gpt-main',
+        bindings: 1,
+        is_default: true,
+      },
+      {
+        id: 'tasks',
+        workspace: '/runtime/tasks',
+        agent_dir: '/runtime/agents/tasks',
+        model: 'openai/gpt-tasks',
+        bindings: 1,
+        is_default: false,
+      },
+    ],
+    active_plugin_ids: ['codex', 'taskctl', 'telegram'],
+    external_plugin_ids: ['codex', 'taskctl'],
+    active_plugin_contracts: [
+      { id: 'codex', version: '2026.9.7', tool_names: ['codex_threads'] },
+      { id: 'taskctl', version: '0.4.31', tool_names: ['task_get', 'task_list'] },
+      { id: 'telegram', version: '2026.9.7', tool_names: [] },
+    ],
+    required_plugin_contracts: [
+      { id: 'taskctl', version: '0.4.31', tool_names: ['task_get', 'task_list'] },
+    ],
   });
   assert.deepEqual(calls, [
     'config validate --json',
@@ -88,18 +167,17 @@ test('collectSnapshot requires config and plugin health before inventory', () =>
 });
 
 test('collectSnapshot accepts a healthy runtime without external plugins', () => {
-  const runner = (_bin, args) => {
-    const command = args.join(' ');
-    if (command === 'config validate --json') return { valid: true };
-    if (command === 'plugins doctor --json') return { ok: true };
-    if (command === 'agents list --json') return [{ id: 'engineer' }];
-    if (command === 'plugins list --json') return { plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] };
-    throw new Error(`unexpected command ${command}`);
-  };
-  assert.deepEqual(collectSnapshot('/bin/openclaw', runner), {
+  const snapshot = collectSnapshot('/bin/openclaw', runnerFor({
+    agents: [{ id: 'engineer' }],
+    plugins: { plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] },
+  }));
+  assert.deepEqual(snapshot, {
     agent_ids: ['engineer'],
+    agent_runtime: [{ id: 'engineer' }],
     active_plugin_ids: ['telegram'],
     external_plugin_ids: [],
+    active_plugin_contracts: [{ id: 'telegram', version: null, tool_names: [] }],
+    required_plugin_contracts: [],
   });
 });
 
@@ -121,40 +199,88 @@ test('collectSnapshot fails closed on unhealthy deterministic probes', () => {
   );
 });
 
-test('preservation accepts plugin origin migration and new plugins', () => {
-  const expected = {
-    agent_ids: ['main', 'tasks'],
-    active_plugin_ids: ['taskctl', 'telegram'],
-    external_plugin_ids: ['taskctl'],
-  };
-  const actual = {
-    agent_ids: ['main', 'tasks'],
-    active_plugin_ids: ['contacts', 'taskctl', 'telegram'],
-    external_plugin_ids: ['contacts'],
-  };
+test('preservation accepts plugin origin migration, additive plugins, and official plugin generation changes', () => {
+  const expected = baselineSnapshot();
+  const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: [
+        {
+          id: 'taskctl',
+          enabled: true,
+          origin: 'bundled',
+          status: 'loaded',
+          version: '0.4.31',
+          toolNames: ['task_get', 'task_list'],
+        },
+        {
+          id: 'codex',
+          enabled: true,
+          origin: 'global',
+          status: 'loaded',
+          version: '2026.9.8',
+          toolNames: ['codex_threads'],
+          trustedOfficialInstall: true,
+        },
+        {
+          id: 'contacts',
+          enabled: true,
+          origin: 'global',
+          status: 'loaded',
+          version: '0.1.7',
+          toolNames: ['contact_get'],
+        },
+        {
+          id: 'telegram',
+          enabled: true,
+          origin: 'bundled',
+          status: 'loaded',
+          version: '2026.9.8',
+          toolNames: [],
+        },
+      ],
+    },
+  }));
   assert.deepEqual(assertSnapshotPreserved(expected, actual), actual);
 });
 
-test('preservation rejects agent drift or loss of a previously active external plugin', () => {
-  const expected = {
-    agent_ids: ['main', 'tasks'],
-    active_plugin_ids: ['taskctl', 'telegram'],
-    external_plugin_ids: ['taskctl'],
-  };
-  assert.throws(
-    () => assertSnapshotPreserved(expected, {
-      agent_ids: ['main'],
-      active_plugin_ids: ['taskctl', 'telegram'],
-      external_plugin_ids: ['taskctl'],
-    }),
-    /agent roster changed/,
-  );
-  assert.throws(
-    () => assertSnapshotPreserved(expected, {
-      agent_ids: ['main', 'tasks'],
-      active_plugin_ids: ['telegram'],
-      external_plugin_ids: [],
-    }),
-    /no longer active/,
-  );
+test('preservation rejects agent roster and runtime contract drift', () => {
+  const expected = baselineSnapshot();
+  const missingAgent = collectSnapshot('/bin/openclaw', runnerFor({ agents: [baseAgents[0]] }));
+  assert.throws(() => assertSnapshotPreserved(expected, missingAgent), /agent roster changed/);
+
+  const changedRuntime = collectSnapshot('/bin/openclaw', runnerFor({
+    agents: [
+      baseAgents[0],
+      { ...baseAgents[1], bindings: 0 },
+    ],
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedRuntime), /agent runtime contract changed/);
+});
+
+test('preservation rejects loss or contract drift of a specialized external plugin', () => {
+  const expected = baselineSnapshot();
+  const missingPlugin = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.filter((plugin) => plugin.id !== 'taskctl'),
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, missingPlugin), /no longer active/);
+
+  const changedVersion = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.map((plugin) => plugin.id === 'taskctl'
+        ? { ...plugin, version: '0.4.32' }
+        : plugin),
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedVersion), /required specialized plugin contract changed: taskctl/);
+
+  const changedTools = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.map((plugin) => plugin.id === 'taskctl'
+        ? { ...plugin, toolNames: ['task_get'] }
+        : plugin),
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedTools), /required specialized plugin contract changed: taskctl/);
 });
