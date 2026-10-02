@@ -71,8 +71,8 @@ function normalizeStringSet(value, label) {
   return sorted;
 }
 
-function normalizeToolPolicyValue(value, path = 'tools') {
-  if (Array.isArray(value)) return value.map((item, index) => normalizeToolPolicyValue(item, `${path}[${index}]`));
+function normalizeAgentToolPolicyValue(value, path = 'tools') {
+  if (Array.isArray(value)) return value.map((item, index) => normalizeAgentToolPolicyValue(item, `${path}[${index}]`));
   if (value && typeof value === 'object') {
     const out = {};
     for (const key of Object.keys(value).sort()) {
@@ -80,7 +80,7 @@ function normalizeToolPolicyValue(value, path = 'tools') {
       if (['allow', 'deny', 'alsoAllow'].includes(key) && Array.isArray(child)) {
         out[key] = normalizeStringSet(child, `${path}.${key}`);
       } else {
-        out[key] = normalizeToolPolicyValue(child, `${path}.${key}`);
+        out[key] = normalizeAgentToolPolicyValue(child, `${path}.${key}`);
       }
     }
     return out;
@@ -98,7 +98,7 @@ function normalizeAgentToolPolicies(value, agentIds) {
     const entry = requireObject(entries[id], `agent entries.${id}`);
     return {
       id,
-      tools: entry.tools === undefined ? null : normalizeToolPolicyValue(entry.tools),
+      tools: entry.tools === undefined ? null : normalizeAgentToolPolicyValue(entry.tools),
     };
   });
 }
@@ -239,7 +239,7 @@ function normalizeAgentToolPolicySnapshot(items, agentIds) {
     }
     return {
       id: item.id,
-      tools: item.tools === null || item.tools === undefined ? null : normalizeToolPolicyValue(item.tools),
+      tools: item.tools === null || item.tools === undefined ? null : normalizeAgentToolPolicyValue(item.tools),
     };
   }).sort((a, b) => a.id.localeCompare(b.id));
   if (JSON.stringify(normalized.map((item) => item.id)) !== JSON.stringify(agentIds)) {
@@ -274,6 +274,10 @@ export function normalizeSnapshot(value) {
   return normalized;
 }
 
+function assertEqual(label, expected, actual) {
+  if (JSON.stringify(actual) !== JSON.stringify(expected)) throw new Error(`${label} changed`);
+}
+
 export function assertSnapshotPreserved(expectedValue, actualValue) {
   const expected = normalizeSnapshot(expectedValue);
   const actual = normalizeSnapshot(actualValue);
@@ -304,14 +308,60 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   return actual;
 }
 
+export function assertStagedSnapshotAllowed(expectedValue, actualValue, mutablePluginIdsValue) {
+  const expected = normalizeSnapshot(expectedValue);
+  const actual = normalizeSnapshot(actualValue);
+  const mutablePluginIds = normalizeIds(mutablePluginIdsValue, 'mutable staged plugin ids');
+  const mutable = new Set(mutablePluginIds);
+  const expectedExternal = new Set(expected.external_plugin_ids);
+  const expectedRequired = new Set(expected.required_plugin_contracts.map((item) => item.id));
+
+  for (const id of mutablePluginIds) {
+    if (!expectedExternal.has(id) || !expectedRequired.has(id)) {
+      throw new Error(`mutable staged plugin is not an existing operator-managed external plugin: ${id}`);
+    }
+  }
+
+  assertEqual('agent roster during staging', expected.agent_ids, actual.agent_ids);
+  assertEqual('agent runtime contract during staging', expected.agent_runtime, actual.agent_runtime);
+  assertEqual('agent tool authority policy during staging', expected.agent_tool_policies, actual.agent_tool_policies);
+  assertEqual('active plugin roster during staging', expected.active_plugin_ids, actual.active_plugin_ids);
+  assertEqual('external plugin roster during staging', expected.external_plugin_ids, actual.external_plugin_ids);
+  assertEqual(
+    'operator-managed plugin roster during staging',
+    expected.required_plugin_contracts.map((item) => item.id),
+    actual.required_plugin_contracts.map((item) => item.id),
+  );
+
+  const actualActiveContracts = new Map(actual.active_plugin_contracts.map((item) => [item.id, item]));
+  for (const expectedContract of expected.active_plugin_contracts) {
+    if (mutable.has(expectedContract.id)) continue;
+    const actualContract = actualActiveContracts.get(expectedContract.id);
+    if (JSON.stringify(actualContract) !== JSON.stringify(expectedContract)) {
+      throw new Error(`non-staged plugin contract changed during staging: ${expectedContract.id}`);
+    }
+  }
+
+  const actualRequiredContracts = new Map(actual.required_plugin_contracts.map((item) => [item.id, item]));
+  for (const expectedContract of expected.required_plugin_contracts) {
+    if (mutable.has(expectedContract.id)) continue;
+    const actualContract = actualRequiredContracts.get(expectedContract.id);
+    if (JSON.stringify(actualContract) !== JSON.stringify(expectedContract)) {
+      throw new Error(`operator-managed plugin contract changed during staging: ${expectedContract.id}`);
+    }
+  }
+
+  return actual;
+}
+
 function usage() {
-  console.error('Usage: specialized-agent-acceptance.mjs <snapshot|accept> <openclaw-bin> [expected-json]');
+  console.error('Usage: specialized-agent-acceptance.mjs <snapshot|accept|stage> <openclaw-bin> [expected-json] [mutable-plugin-id ...]');
   process.exit(2);
 }
 
 function main() {
-  const [mode, openclawBin, expectedJson] = process.argv.slice(2);
-  if (!openclawBin || (mode !== 'snapshot' && mode !== 'accept')) usage();
+  const [mode, openclawBin, expectedJson, ...mutablePluginIds] = process.argv.slice(2);
+  if (!openclawBin || !['snapshot', 'accept', 'stage'].includes(mode)) usage();
   try {
     const actual = collectSnapshot(openclawBin);
     if (mode === 'snapshot') {
@@ -320,6 +370,12 @@ function main() {
     }
     if (!expectedJson) usage();
     const expected = JSON.parse(expectedJson);
+    if (mode === 'stage') {
+      if (mutablePluginIds.length === 0) usage();
+      const staged = assertStagedSnapshotAllowed(expected, actual, mutablePluginIds);
+      process.stdout.write(`${JSON.stringify(staged)}\n`);
+      return;
+    }
     const preserved = assertSnapshotPreserved(expected, actual);
     process.stdout.write(`${JSON.stringify({ ok: true, ...preserved })}\n`);
   } catch (error) {
