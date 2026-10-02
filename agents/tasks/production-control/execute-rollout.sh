@@ -17,7 +17,7 @@ case "$SOURCE_DIR" in /*) ;; *) echo "Source checkout must be absolute" >&2; exi
 case "$STATE_DIR" in /*) ;; *) echo "Controller state directory must be absolute" >&2; exit 2;; esac
 [[ "$EXPECTED_OPENCLAW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "Invalid expected OpenClaw predecessor version" >&2; exit 2; }
 
-for cmd in node git mkdir chmod mktemp find awk date wc tail mv rm sha256sum df; do
+for cmd in node git mkdir chmod mktemp find awk date wc tail mv rm sha256sum df sleep; do
   command -v "$cmd" >/dev/null 2>&1 || { echo "Required command unavailable: $cmd" >&2; exit 2; }
 done
 
@@ -76,6 +76,11 @@ PREDEPLOY_MUTATION_STARTED=false
 TASK_DEPLOY_RESULT=""
 TASK_DEPLOY_STAGE=""
 TASK_MUTATION_STARTED=false
+UPDATE_RUN_ID=""
+UPDATE_RUN_STATUS=""
+UPDATE_RUN_RECONCILED=false
+UPDATE_RUN_UNSAFE=false
+UPDATE_COMMAND_EXIT=""
 
 write_result() {
   REQUEST_ID_ENV="$REQUEST_ID" OUTCOME_ENV="$OUTCOME" BLOCK_ENV="$BLOCK_FURTHER" \
@@ -85,6 +90,7 @@ write_result() {
   GATEWAY_ENV="$GATEWAY_READY" CODEX_ENV="$CODEX_VERSION" PREDEPLOY_RESULT_ENV="$PREDEPLOY_RESULT" \
   PREDEPLOY_STAGE_ENV="$PREDEPLOY_STAGE" PREDEPLOY_MUTATION_ENV="$PREDEPLOY_MUTATION_STARTED" TASK_RESULT_ENV="$TASK_DEPLOY_RESULT" \
   TASK_STAGE_ENV="$TASK_DEPLOY_STAGE" TASK_MUTATION_ENV="$TASK_MUTATION_STARTED" \
+  UPDATE_RUN_ID_ENV="$UPDATE_RUN_ID" UPDATE_RUN_STATUS_ENV="$UPDATE_RUN_STATUS" UPDATE_RUN_RECONCILED_ENV="$UPDATE_RUN_RECONCILED" UPDATE_COMMAND_EXIT_ENV="$UPDATE_COMMAND_EXIT" \
   node - "$TMP_RESULT" <<'NODE'
 const fs=require('fs');
 const bool=(name)=>process.env[name]==='true';
@@ -110,6 +116,10 @@ const out={
   task_deploy_result:process.env.TASK_RESULT_ENV||null,
   task_deploy_stage:process.env.TASK_STAGE_ENV||null,
   task_mutation_started:bool('TASK_MUTATION_ENV'),
+  update_run_id:process.env.UPDATE_RUN_ID_ENV||null,
+  update_run_status:process.env.UPDATE_RUN_STATUS_ENV||null,
+  update_run_reconciled:bool('UPDATE_RUN_RECONCILED_ENV'),
+  update_command_exit:process.env.UPDATE_COMMAND_EXIT_ENV===''?null:Number(process.env.UPDATE_COMMAND_EXIT_ENV),
   completed_at:new Date().toISOString(),
 };
 fs.writeFileSync(process.argv[2],JSON.stringify(out,null,2)+'\n',{mode:0o600});
@@ -141,6 +151,68 @@ gateway_health() {
   set -e
   rm -f "$file"
   [ "$code" -eq 0 ]
+}
+
+# The OpenClaw CLI may hand an admitted update to a detached managed-service
+# owner and return before that durable run finishes. Reconcile against the
+# public update ledger instead of treating the foreground process exit as the
+# update outcome.
+UPDATE_RUN_MAX_POLLS=120
+UPDATE_RUN_POLL_SECONDS=5
+reconcile_update_run() {
+  local update_result_file=$1
+  local explicit_run_id attempt=0 status_file status_exit fields parse_exit run_id phase status after_version restart_safe
+  explicit_run_id=$(node - "$update_result_file" <<'NODE'
+const fs=require('fs');let v={};try{v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));}catch{}
+const id=v?.runId??v?.run?.runId??v?.result?.runId??null;
+if(typeof id==='string')process.stdout.write(id);
+NODE
+  )
+  [ -n "$explicit_run_id" ] || return 3
+  while [ "$attempt" -lt "$UPDATE_RUN_MAX_POLLS" ]; do
+    status_file=$(mktemp "$EXEC_DIR/update-ledger-$REQUEST_ID.XXXXXX")
+    chmod 600 "$status_file"
+    if "$OPENCLAW_BIN" update status --json --timeout 10 >"$status_file" 2>>"$LOG"; then status_exit=0; else status_exit=$?; fi
+    if [ "$status_exit" -eq 0 ]; then
+      if fields=$(EXPLICIT_ENV="$explicit_run_id" TARGET_ENV="$TARGET_OPENCLAW_VERSION" EXPECTED_ENV="$EXPECTED_OPENCLAW_VERSION" node - "$status_file" <<'NODE'
+const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const explicit=process.env.EXPLICIT_ENV;const target=process.env.TARGET_ENV;const expected=process.env.EXPECTED_ENV;
+const candidates=[v?.activeRun,v?.lastRun].filter(x=>x&&typeof x==='object');
+const run=candidates.find((r)=>{
+  if(typeof r.runId!=='string'||r.runId!==explicit)return false;
+  if(r?.target?.version!==target)return false;
+  if(r?.before?.version&&r.before.version!==expected)return false;
+  return true;
+});
+if(!run)process.exit(3);
+const safe=run?.recovery?.serviceRestartSafe??run?.verification?.recovery?.serviceRestartSafe;
+const values=[run.runId,run.phase??'',run.status??'',run?.after?.version??'',safe===false?'false':safe===true?'true':''];
+process.stdout.write(values.join('\x1f'));
+NODE
+      ); then parse_exit=0; else parse_exit=$?; fi
+      if [ "$parse_exit" -eq 0 ]; then
+        IFS=$'\x1f' read -r run_id phase status after_version restart_safe <<<"$fields"
+        UPDATE_RUN_ID="$run_id"
+        if [ "$phase" = "finished" ]; then
+          UPDATE_RUN_STATUS="$status"
+          UPDATE_RUN_RECONCILED=true
+          rm -f "$status_file"
+          if [ "$restart_safe" = false ]; then
+            UPDATE_RUN_UNSAFE=true
+            return 4
+          fi
+          if [ "$status" = "succeeded" ] && [ "$after_version" = "$TARGET_OPENCLAW_VERSION" ]; then
+            return 0
+          fi
+          return 1
+        fi
+      fi
+    fi
+    rm -f "$status_file"
+    attempt=$((attempt+1))
+    if [ "$attempt" -lt "$UPDATE_RUN_MAX_POLLS" ]; then sleep "$UPDATE_RUN_POLL_SECONDS"; fi
+  done
+  return 2
 }
 
 MIN_FREE_KB=2097152
@@ -194,16 +266,16 @@ fi
 STATUS_JSON=$(mktemp "$EXEC_DIR/update-status-$REQUEST_ID.XXXXXX")
 chmod 600 "$STATUS_JSON"
 set +e
-"$OPENCLAW_BIN" gateway call update.status --json >"$STATUS_JSON" 2>>"$LOG"
+"$OPENCLAW_BIN" update status --json --timeout 10 >"$STATUS_JSON" 2>>"$LOG"
 STATUS_EXIT=$?
 set -e
 if [ "$STATUS_EXIT" -ne 0 ]; then rm -f "$STATUS_JSON"; REASON="OpenClaw update status probe failed"; finish; fi
-if ! EXPECTED_ENV="$EXPECTED_OPENCLAW_VERSION" node - "$STATUS_JSON" <<'NODE'
+if ! node - "$STATUS_JSON" <<'NODE'
 const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const ok=v?.effectiveChannel==='stable'&&v?.schedule?.channel==='stable'&&v?.schedule?.target?.kind==='package'&&v?.updateAvailable?.currentVersion===process.env.EXPECTED_ENV;
+const ok=v?.channel?.value==='stable'&&v?.update?.installKind==='package'&&!v?.activeRun;
 if(!ok)process.exit(2);
 NODE
-then rm -f "$STATUS_JSON"; REASON="Production update state does not match the qualified package/stable predecessor"; finish; fi
+then rm -f "$STATUS_JSON"; REASON="Production update state is not an idle stable package installation"; finish; fi
 rm -f "$STATUS_JSON"
 CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
 [ "$CORE_VERSION" = "$EXPECTED_OPENCLAW_VERSION" ] || { REASON="Shell OpenClaw version does not match the qualified predecessor"; finish; }
@@ -264,29 +336,50 @@ set +e
 "$OPENCLAW_BIN" update --tag "$TARGET_OPENCLAW_VERSION" --json >"$UPDATE_JSON" 2>>"$LOG"
 UPDATE_EXIT=$?
 set -e
+UPDATE_COMMAND_EXIT="$UPDATE_EXIT"
 UPDATE_UNSAFE=false
 if node - "$UPDATE_JSON" <<'NODE'
 const fs=require('fs');let v;try{v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));}catch{process.exit(2);}process.exit(v?.recovery?.serviceRestartSafe===false?0:1);
 NODE
 then UPDATE_UNSAFE=true; fi
-if [ "$UPDATE_EXIT" -ne 0 ]; then
-  rm -f "$UPDATE_JSON"
-  CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
-  if gateway_health; then GATEWAY_READY=true; else GATEWAY_READY=false; fi
-  STAGE="OPENCLAW_UPDATE"
-  if [ "$UPDATE_UNSAFE" = true ] || [ "$CORE_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || [ "$GATEWAY_READY" != true ]; then
-    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; REASON="OpenClaw update failed without a proven safe predecessor runtime"
-  else
-    OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; BLOCK_FURTHER=true; REASON="OpenClaw update failed after mutation; predecessor runtime appears healthy but reconciliation is required before further production changes"
-  fi
-  finish
-fi
-if ! TARGET_ENV="$TARGET_OPENCLAW_VERSION" node - "$UPDATE_JSON" <<'NODE'
+UPDATE_ACCEPTED=false
+if [ "$UPDATE_EXIT" -eq 0 ] && TARGET_ENV="$TARGET_OPENCLAW_VERSION" node - "$UPDATE_JSON" <<'NODE'
 const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 if(v?.status!=='ok'||(v?.after?.version&&v.after.version!==process.env.TARGET_ENV)||v?.recovery?.serviceRestartSafe===false||v?.postUpdate?.plugins?.status==='error')process.exit(2);
 NODE
-then rm -f "$UPDATE_JSON"; OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw updater returned an unaccepted post-update result"; finish; fi
+then
+  UPDATE_ACCEPTED=true
+else
+  if [ "$UPDATE_UNSAFE" = true ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw update reported that managed service restart is unsafe"; finish
+  fi
+  if reconcile_update_run "$UPDATE_JSON"; then RECONCILE_EXIT=0; else RECONCILE_EXIT=$?; fi
+  if [ "$RECONCILE_EXIT" -eq 0 ]; then
+    UPDATE_ACCEPTED=true
+  elif [ "$RECONCILE_EXIT" -eq 2 ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw update outcome did not become terminal in the durable run ledger"; finish
+  elif [ "$RECONCILE_EXIT" -eq 3 ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw updater did not identify the exact durable update run after mutation started"; finish
+  elif [ "$RECONCILE_EXIT" -eq 4 ] || [ "$UPDATE_RUN_UNSAFE" = true ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw durable update run reported that managed service restart is unsafe"; finish
+  fi
+fi
 rm -f "$UPDATE_JSON"
+if [ "$UPDATE_ACCEPTED" != true ]; then
+  CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
+  if gateway_health; then GATEWAY_READY=true; else GATEWAY_READY=false; fi
+  STAGE="OPENCLAW_UPDATE"; BLOCK_FURTHER=true
+  if [ "$CORE_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || [ "$GATEWAY_READY" != true ]; then
+    OUTCOME="RECOVERY_REQUIRED"; REASON="OpenClaw durable update run failed without a proven healthy predecessor runtime"
+  else
+    OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; REASON="OpenClaw durable update run failed; predecessor runtime remains healthy"
+  fi
+  finish
+fi
 
 CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
 if [ "$CORE_VERSION" != "$TARGET_OPENCLAW_VERSION" ]; then OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_ACCEPTANCE"; REASON="Installed OpenClaw version does not match the frozen target"; finish; fi

@@ -75,10 +75,7 @@ case "${1:-}" in
     echo "OpenClaw $(cat "$FAKE_STATE")"
     ;;
   gateway)
-    if [ "${2:-}" = call ] && [ "${3:-}" = update.status ]; then
-      if [ "${FAKE_BAD_STATUS:-0}" = 1 ]; then channel=beta; else channel=stable; fi
-      printf '{"updateAvailable":{"currentVersion":"%s","latestVersion":"2026.8.2","channel":"latest"},"effectiveChannel":"%s","schedule":{"channel":"%s","autoEnabled":false,"target":{"kind":"package","version":"2026.8.2"}}}\n' "$(cat "$FAKE_STATE")" "$channel" "$channel"
-    elif [ "${2:-}" = health ]; then
+    if [ "${2:-}" = health ]; then
       [ "${FAKE_HEALTH_FAIL:-0}" != 1 ] || exit 1
       echo '{"ok":true}'
     else
@@ -86,13 +83,61 @@ case "${1:-}" in
     fi
     ;;
   update)
-    if printf '%s\n' "$*" | grep -q -- '--dry-run'; then
+    if [ "${2:-}" = status ]; then
+      count=$(cat "$FAKE_STATUS_CALL_COUNTER" 2>/dev/null || echo 0)
+      count=$((count+1))
+      printf '%s\n' "$count" > "$FAKE_STATUS_CALL_COUNTER"
+      if [ "${FAKE_BAD_STATUS:-0}" = 1 ]; then channel=beta; else channel=stable; fi
+      if [ "$count" -eq 1 ] && [ "${FAKE_ACTIVE_RUN:-0}" = 1 ]; then
+        printf '{"channel":{"value":"%s"},"update":{"installKind":"package"},"activeRun":{"runId":"run-active","createdAtMs":9999999999999,"phase":"validating","status":"running","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"}},"lastRun":null}\n' "$channel"
+      elif [ "$count" -eq 1 ]; then
+        printf '{"channel":{"value":"%s"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-old","createdAtMs":1,"phase":"finished","status":"succeeded","target":{"version":"2026.8.1"},"before":{"version":"2026.8.0"},"after":{"version":"2026.8.1"}}}\n' "$channel"
+      elif [ "${FAKE_UPDATE_HANDOFF_SUCCESS:-0}" = 1 ]; then
+        if [ "$count" -eq 2 ]; then
+          echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":{"runId":"run-handoff","createdAtMs":9999999999999,"phase":"activating","status":"running","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"}},"lastRun":null}'
+        else
+          echo 2026.8.2 > "$FAKE_STATE"
+          echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-handoff","createdAtMs":9999999999999,"phase":"finished","status":"succeeded","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"after":{"version":"2026.8.2"},"verification":{"recovery":{"serviceRestartSafe":true}}}}'
+        fi
+      elif [ "${FAKE_UPDATE_HANDOFF_UNSAFE:-0}" = 1 ]; then
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-handoff-unsafe","createdAtMs":9999999999999,"phase":"finished","status":"succeeded","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"after":{"version":"2026.8.2"},"verification":{"recovery":{"serviceRestartSafe":false}}}}'
+      elif [ "${FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER:-0}" = 1 ]; then
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-handoff-unsafe-no-after","createdAtMs":9999999999999,"phase":"finished","status":"failed","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":false}}}'
+      elif [ "${FAKE_UPDATE_NO_RUN_ID:-0}" = 1 ]; then
+        echo 2026.8.2 > "$FAKE_STATE"
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-unrelated","createdAtMs":9999999999999,"phase":"finished","status":"succeeded","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"after":{"version":"2026.8.2"},"verification":{"recovery":{"serviceRestartSafe":true}}}}'
+      elif [ "${FAKE_UPDATE_FAIL:-0}" = 1 ]; then
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-failed","createdAtMs":9999999999999,"phase":"finished","status":"failed","reason":"fake-failure","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":true}}}'
+      else
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-old","createdAtMs":1,"phase":"finished","status":"succeeded","target":{"version":"2026.8.1"},"before":{"version":"2026.8.0"},"after":{"version":"2026.8.1"}}}'
+      fi
+    elif printf '%s\n' "$*" | grep -q -- '--dry-run'; then
       target=2026.8.2
       [ "${FAKE_DRY_TARGET_MISMATCH:-0}" != 1 ] || target=2026.8.9
       printf '{"dryRun":true,"root":"/fake","installKind":"package","mode":"npm","updateInstallKind":"package","switchToGit":false,"switchToPackage":false,"restart":true,"requestedChannel":null,"storedChannel":"stable","effectiveChannel":"stable","tag":"%s","currentVersion":"%s","targetVersion":"%s","downgradeRisk":false,"actions":[],"notes":[]}\n' "$target" "$(cat "$FAKE_STATE")" "$target"
     else
+      if [ "${FAKE_UPDATE_UNSAFE:-0}" = 1 ]; then
+        echo '{"runId":"run-unsafe","status":"error","mode":"npm","reason":"unsafe","before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":false},"steps":[],"durationMs":1}'
+        exit 1
+      fi
+      if [ "${FAKE_UPDATE_HANDOFF_SUCCESS:-0}" = 1 ]; then
+        echo '{"runId":"run-handoff","status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
+        exit 1
+      fi
+      if [ "${FAKE_UPDATE_HANDOFF_UNSAFE:-0}" = 1 ]; then
+        echo '{"runId":"run-handoff-unsafe","status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
+        exit 1
+      fi
+      if [ "${FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER:-0}" = 1 ]; then
+        echo '{"runId":"run-handoff-unsafe-no-after","status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
+        exit 1
+      fi
+      if [ "${FAKE_UPDATE_NO_RUN_ID:-0}" = 1 ]; then
+        echo '{"status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
+        exit 1
+      fi
       if [ "${FAKE_UPDATE_FAIL:-0}" = 1 ]; then
-        echo '{"status":"error","mode":"npm","reason":"fake-failure","before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":true},"steps":[],"durationMs":1}'
+        echo '{"runId":"run-failed","status":"error","mode":"npm","reason":"fake-failure","before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":true},"steps":[],"durationMs":1}'
         exit 1
       fi
       echo 2026.8.2 > "$FAKE_STATE"
@@ -134,9 +179,15 @@ printf 'Filesystem 1024-blocks Used Available Capacity Mounted on\n'
 printf '/dev/fake 8388608 1 %s 1%% /\n' "$avail"
 SH
 chmod 700 "$FAKEBIN/df"
+cat > "$FAKEBIN/sleep" <<'SH'
+#!/usr/bin/env bash
+exit 0
+SH
+chmod 700 "$FAKEBIN/sleep"
 
 export PATH="$FAKEBIN:$PATH"
 export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER
+export FAKE_STATUS_CALL_COUNTER="$TMP/status-call-counter"
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
 export FAKE_TASK_CALL_COUNTER="$TMP/task-call-counter"
 
@@ -154,7 +205,7 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
-  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_TASK_CALL_COUNTER"
+  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
   env HOME="$FAKE_HOME" "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
@@ -192,6 +243,14 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" mutation_started false
 ! grep -q '^backup create ' "$FAKE_TRACE"
 
+run_case 115 FAKE_ACTIVE_RUN=1
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" backup_created false
+! grep -q '^backup create ' "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
+
 run_case 104 FAKE_DRY_TARGET_MISMATCH=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
@@ -204,6 +263,50 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" mutation_started true
 assert_field "$CASE_RESULT" backup_created true
+assert_field "$CASE_RESULT" update_run_id '"run-failed"'
+assert_field "$CASE_RESULT" update_run_status '"failed"'
+assert_field "$CASE_RESULT" update_run_reconciled true
+
+run_case 113 FAKE_UPDATE_HANDOFF_SUCCESS=1
+[ "$CASE_EXIT" -eq 0 ]
+assert_field "$CASE_RESULT" outcome '"SUCCESS"'
+assert_field "$CASE_RESULT" update_run_id '"run-handoff"'
+assert_field "$CASE_RESULT" update_run_status '"succeeded"'
+assert_field "$CASE_RESULT" update_run_reconciled true
+assert_field "$CASE_RESULT" update_command_exit 1
+assert_field "$CASE_RESULT" core_version '"2026.8.2"'
+
+run_case 116 FAKE_UPDATE_NO_RUN_ID=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"UNKNOWN"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" update_run_id null
+assert_field "$CASE_RESULT" update_run_reconciled false
+assert_field "$CASE_RESULT" update_command_exit 1
+
+run_case 117 FAKE_UPDATE_HANDOFF_UNSAFE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" update_run_id '"run-handoff-unsafe"'
+assert_field "$CASE_RESULT" update_run_status '"succeeded"'
+assert_field "$CASE_RESULT" update_run_reconciled true
+assert_field "$CASE_RESULT" update_command_exit 1
+
+run_case 118 FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" update_run_id '"run-handoff-unsafe-no-after"'
+assert_field "$CASE_RESULT" update_run_status '"failed"'
+assert_field "$CASE_RESULT" update_run_reconciled true
+assert_field "$CASE_RESULT" update_command_exit 1
+assert_field "$CASE_RESULT" core_version '"2026.8.1"'
+
+run_case 114 FAKE_UPDATE_UNSAFE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" update_run_reconciled false
+assert_field "$CASE_RESULT" update_command_exit 1
 
 run_case 106 FAKE_CODEX_MISMATCH=1
 [ "$CASE_EXIT" -eq 1 ]
