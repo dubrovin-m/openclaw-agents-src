@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 
+INHERITED_OPC_ENV=$(env | awk -F= '$1 ~ /^OPC_/ {print $1}' | sort -u | paste -sd, -)
 TEST_MODE="${OPC_TEST_MODE:-0}"
 STATE_DIR="${OPC_STATE_DIR:-$HOME/.local/state/openclaw-production-control}"
 LIB_DIR="${OPC_LIB_DIR:-$HOME/.local/lib/openclaw-production-control}"
@@ -25,9 +26,7 @@ if [ "$TEST_MODE" = 1 ]; then
   case "$STATE_DIR" in /tmp/*) ;; *) fail "test mode state must be under /tmp" ;; esac
 else
   [ "$TEST_MODE" = 0 ] || fail "invalid OPC_TEST_MODE"
-  for name in OPC_STATE_DIR OPC_LIB_DIR OPC_DIAGNOSE OPC_INSTALLED_REVISION_FILE OPC_SYSTEMCTL; do
-    [ -z "${!name:-}" ] || fail "$name is test-only"
-  done
+  [ -z "$INHERITED_OPC_ENV" ] || fail "OPC_* environment overrides are test-only: $INHERITED_OPC_ENV"
   STATE_DIR="$HOME/.local/state/openclaw-production-control"
   LIB_DIR="$HOME/.local/lib/openclaw-production-control"
   STATE_FILE="$STATE_DIR/state.json"
