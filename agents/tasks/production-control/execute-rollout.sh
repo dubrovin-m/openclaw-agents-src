@@ -26,6 +26,7 @@ RUNTIME_HELPER="$SOURCE_DIR/shared/runtime-contract/runtime-contract.mjs"
 SPECIALIZED_ACCEPTANCE="$SOURCE_DIR/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 DEPLOY="$SOURCE_DIR/agents/tasks/deploy.sh"
 TASK_TOOLS="$SOURCE_DIR/agents/tasks/config/tasks-tools.json"
+MAIN_CONTACTS_TOOLS="$SOURCE_DIR/agents/tasks/config/main-contacts-tools.json"
 TASK_RELEASE="$SOURCE_DIR/agents/tasks/release.json"
 RETENTION_LIB="${BASH_SOURCE[0]%/*}/lib.mjs"
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Frozen runtime requirements or qualification helper are unavailable" >&2; exit 2; }
@@ -36,18 +37,21 @@ RETENTION_LIB="${BASH_SOURCE[0]%/*}/lib.mjs"
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Frozen rollout source checkout is dirty" >&2; exit 2; }
 SOURCE_REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot establish exact rollout source revision" >&2; exit 2; }
-TASK_STAGE_ALLOWANCE=$(node - "$TASK_TOOLS" "$TASK_RELEASE" <<'NODE'
+TASK_STAGE_ALLOWANCE=$(node - "$TASK_TOOLS" "$MAIN_CONTACTS_TOOLS" "$TASK_RELEASE" <<'NODE'
 const fs=require('fs');
-const tools=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const release=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
-if(!tools||typeof tools!=='object'||Array.isArray(tools))process.exit(2);
-if(release?.format!=='task-agent-release-v2'||release?.plugin?.name!=='openclaw-plugin-taskctl')process.exit(2);
+const readObject=(path,label)=>{const value=JSON.parse(fs.readFileSync(path,'utf8'));if(!value||typeof value!=='object'||Array.isArray(value))throw new Error(`${label} is invalid`);return value;};
+const taskTools=readObject(process.argv[2],'Task tools');
+const mainContactsToolsPath=process.argv[3];
+const release=readObject(process.argv[4],'Task release');
+if(release.format!=='task-agent-release-v2'||release?.plugin?.name!=='openclaw-plugin-taskctl')process.exit(2);
 const mutable=['taskctl'];
+const targetPolicies={tasks:taskTools};
 if(Object.prototype.hasOwnProperty.call(release,'shared_contacts')){
   if(!release.shared_contacts||typeof release.shared_contacts!=='object'||Array.isArray(release.shared_contacts)||typeof release.shared_contacts.release_path!=='string'||release.shared_contacts.release_path.trim()==='')process.exit(2);
   mutable.push('contacts');
+  targetPolicies.main=readObject(mainContactsToolsPath,'Main Contacts tools');
 }
-process.stdout.write(JSON.stringify({mutable_plugin_ids:mutable,target_agent_tool_policies:{tasks:tools}}));
+process.stdout.write(JSON.stringify({mutable_plugin_ids:mutable,target_agent_tool_policies:targetPolicies}));
 NODE
 ) || { echo "Frozen Task staging allowance is invalid" >&2; exit 2; }
 
