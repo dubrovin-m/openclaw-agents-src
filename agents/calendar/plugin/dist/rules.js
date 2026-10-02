@@ -9,6 +9,7 @@ const proposals = new Map();
 const asRecord = (value) => value !== null && typeof value === "object" && !Array.isArray(value) ? value : null;
 const normalizeText = (value) => value.trim().replace(/\s+/gu, " ");
 const hash = (value, length = 16) => createHash("sha256").update(JSON.stringify(value)).digest("hex").slice(0, length);
+const ruleDigest = (rule) => hash(rule, 32);
 function condition(value, path) {
     if (typeof value !== "string")
         throw new Error(`${path} must be a string`);
@@ -90,10 +91,10 @@ function sweepProposals(now = Date.now()) {
         proposals.delete(oldest);
     }
 }
-function findRule(config, kind, id) {
+function findRule(rules, kind, id) {
     return kind === "classification"
-        ? config.durableRules.classification.find((rule) => rule.id === id)
-        : config.durableRules.hygiene.find((rule) => rule.id === id);
+        ? rules.classification.find((rule) => rule.id === id)
+        : rules.hygiene.find((rule) => rule.id === id);
 }
 function expectedKeys(input) {
     if (input.action === "delete")
@@ -113,23 +114,23 @@ function normalizeProposal(config, input) {
     if (JSON.stringify(actualKeys) !== JSON.stringify(allowedKeys)) {
         throw new Error(`Rule proposal requires exactly: ${allowedKeys.join(", ")}`);
     }
-    const baseDigest = rulesDigest(config.durableRules);
     if (input.action === "delete") {
         const id = ruleId(input.rule_id, "rule_id");
-        const existing = findRule(config, input.kind, id);
+        const existing = findRule(config.durableRules, input.kind, id);
         if (!existing)
             throw new Error("Rule to delete does not exist in the effective configuration");
         return {
             action: input.action,
             kind: input.kind,
-            baseDigest,
+            targetDigest: ruleDigest(existing),
             ruleId: id,
             summary: `Удалить правило Calendar: ${id} — «${existing.condition}»`,
         };
     }
     const normalizedCondition = condition(input.condition, "condition");
     const replacementId = input.action === "replace" ? ruleId(input.rule_id, "rule_id") : undefined;
-    if (replacementId && !findRule(config, input.kind, replacementId)) {
+    const replacement = replacementId ? findRule(config.durableRules, input.kind, replacementId) : undefined;
+    if (replacementId && !replacement) {
         throw new Error("Rule to replace does not exist in the effective configuration");
     }
     if (input.kind === "classification") {
@@ -142,7 +143,7 @@ function normalizeProposal(config, input) {
         return {
             action: input.action,
             kind: input.kind,
-            baseDigest,
+            ...(replacement ? { targetDigest: ruleDigest(replacement) } : {}),
             rule,
             summary: `${input.action === "replace" ? "Изменить" : "Создать"} правило классификации: «${normalizedCondition}» → ${categoryId}`,
         };
@@ -163,7 +164,7 @@ function normalizeProposal(config, input) {
     return {
         action: input.action,
         kind: input.kind,
-        baseDigest,
+        ...(replacement ? { targetDigest: ruleDigest(replacement) } : {}),
         rule,
         summary: `${input.action === "replace" ? "Изменить" : "Создать"} исключение гигиены: «${normalizedCondition}» — лидер ${rule.requireLeader ? "обязателен" : "не обязателен"}, повестка ${rule.requireAgenda ? "обязательна" : "не обязательна"}`,
     };
@@ -196,8 +197,16 @@ export function deleteRuleProposal(proposalId) {
     proposals.delete(proposalId);
 }
 export function applyRuleProposal(rules, proposal) {
-    if (rulesDigest(rules) !== proposal.baseDigest) {
-        throw new Error("Calendar durable rules changed after this proposal; create a fresh proposal");
+    if (proposal.action !== "create") {
+        const targetId = proposal.action === "delete" ? proposal.ruleId : proposal.rule?.id;
+        if (!targetId || !proposal.targetDigest)
+            throw new Error("Calendar rule proposal is incomplete");
+        const current = findRule(rules, proposal.kind, targetId);
+        if (!current)
+            throw new Error(`Rule to ${proposal.action} no longer exists`);
+        if (ruleDigest(current) !== proposal.targetDigest) {
+            throw new Error("Calendar durable rule changed after this proposal; create a fresh proposal");
+        }
     }
     const next = {
         classification: rules.classification.map((rule) => ({ ...rule })),

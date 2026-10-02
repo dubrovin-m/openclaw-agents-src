@@ -42,7 +42,7 @@ The plugin validates that:
 - durable rule text is bounded so the native approval surface can display the exact proposal in full;
 - `calendar_rule_propose` changes no effective configuration;
 - `calendar_rule_commit` accepts only an opaque, short-lived `proposal_id`, is protected by native OpenClaw allow-once approval, and mutates only the Calendar plugin's `durableRules` configuration;
-- stale proposals fail closed when durable rules changed after proposal creation;
+- independent create proposals remain valid across unrelated durable-rule changes, while replace/delete proposals fail closed if their exact target rule changed after proposal creation;
 - the label-administration path can synchronize only configured analytical label definitions and accepts no model-supplied mutation payload;
 - all other model-visible tool calls for the `calendar` agent fail closed unless explicitly admitted.
 

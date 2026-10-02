@@ -32,7 +32,7 @@ type StoredRuleProposal = {
     proposalId: string;
     action: RuleProposalInput["action"];
     kind: RuleProposalInput["kind"];
-    baseDigest: string;
+    targetDigest?: string;
     rule?: DurableClassificationRule | DurableHygieneException;
     ruleId?: string;
     summary: string;
