@@ -97,6 +97,13 @@ function baselineSnapshot() {
   return collectSnapshot('/bin/openclaw', runnerFor());
 }
 
+function stagingAllowance(targetTasksTools = baseAgentEntries.tasks.tools) {
+  return {
+    mutable_plugin_ids: ['taskctl'],
+    target_agent_tool_policies: { tasks: targetTasksTools },
+  };
+}
+
 test('classifies the runtime acceptance helper inside controller protection boundaries', () => {
   assert.equal(isProtectedDeploymentPath(acceptancePath), true);
   assert.equal(isRolloutProtectedPath(acceptancePath), true);
@@ -346,19 +353,27 @@ test('preservation rejects loss or contract drift of a specialized external plug
   assert.throws(() => assertSnapshotPreserved(expected, changedTools), /required specialized plugin contract changed: taskctl/);
 });
 
-test('staging allows only the declared Task-owned plugin contract to change', () => {
+test('staging allows Task-owned plugin contract and exact frozen Task tool policy changes', () => {
   const expected = baselineSnapshot();
+  const targetTasksTools = {
+    ...baseAgentEntries.tasks.tools,
+    deny: ['write'],
+  };
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      ...baseAgentEntries,
+      tasks: { tools: targetTasksTools },
+    },
     plugins: {
       plugins: basePlugins.plugins.map((plugin) => plugin.id === 'taskctl'
         ? { ...plugin, version: '0.4.32', toolNames: ['task_get', 'task_list', 'task_update'] }
         : plugin),
     },
   }));
-  assert.deepEqual(assertStagedSnapshotAllowed(expected, actual, ['taskctl']), actual);
+  assert.deepEqual(assertStagedSnapshotAllowed(expected, actual, stagingAllowance(targetTasksTools)), actual);
 });
 
-test('staging rejects agent authority drift instead of normalizing it into the core baseline', () => {
+test('staging rejects Task authority drift that does not match the frozen target', () => {
   const expected = baselineSnapshot();
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
     agentEntries: {
@@ -367,14 +382,14 @@ test('staging rejects agent authority drift instead of normalizing it into the c
         ...baseAgentEntries.tasks,
         tools: {
           ...baseAgentEntries.tasks.tools,
-          deny: ['write'],
+          deny: [],
         },
       },
     },
   }));
   assert.throws(
-    () => assertStagedSnapshotAllowed(expected, actual, ['taskctl']),
-    /agent tool authority policy during staging changed/,
+    () => assertStagedSnapshotAllowed(expected, actual, stagingAllowance()),
+    /staged agent tool policy does not match frozen target: tasks/,
   );
 });
 
@@ -388,7 +403,7 @@ test('staging rejects non-Task plugin contract or plugin-roster drift', () => {
     },
   }));
   assert.throws(
-    () => assertStagedSnapshotAllowed(expected, changedCodex, ['taskctl']),
+    () => assertStagedSnapshotAllowed(expected, changedCodex, stagingAllowance()),
     /non-staged plugin contract changed during staging: codex/,
   );
 
@@ -400,7 +415,7 @@ test('staging rejects non-Task plugin contract or plugin-roster drift', () => {
     },
   }));
   assert.throws(
-    () => assertStagedSnapshotAllowed(expected, changedOrigin, ['taskctl']),
+    () => assertStagedSnapshotAllowed(expected, changedOrigin, stagingAllowance()),
     /external plugin roster during staging changed/,
   );
 });
