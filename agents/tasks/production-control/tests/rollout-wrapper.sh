@@ -16,7 +16,7 @@ FAKE_PREDEPLOY_PLUGIN_MARKER="$TMP/predeploy-plugin-staged"
 FAKE_PREDEPLOY_AUTHORITY_MARKER="$TMP/predeploy-authority-drift"
 TASK_RESULT_DIR="$TMP/task-results"
 FAKE_HOME="$TMP/home"
-mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
+mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/agents/tasks/config" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
 
 cat > "$SRC/runtime-contract.json" <<'JSON'
 {
@@ -32,6 +32,21 @@ cat > "$SRC/openclaw-qualification.json" <<'JSON'
 {
   "format": "openclaw-qualification-target-v1",
   "version": "2026.8.2"
+}
+JSON
+cat > "$SRC/agents/tasks/config/tasks-tools.json" <<'JSON'
+{
+  "profile": "full",
+  "allow": ["task_list"],
+  "deny": ["exec"],
+  "fs": {"workspaceOnly": true}
+}
+JSON
+cat > "$SRC/agents/tasks/release.json" <<'JSON'
+{
+  "format": "task-agent-release-v2",
+  "plugin": {"name": "openclaw-plugin-taskctl"},
+  "shared_contacts": {"release_path": "../../shared/contacts/release.json"}
 }
 JSON
 cp "$ROOT/shared/runtime-contract/runtime-contract.mjs" "$SRC/shared/runtime-contract/runtime-contract.mjs"
