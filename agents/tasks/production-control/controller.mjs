@@ -327,6 +327,16 @@ async function validateRolloutTarget(state, sha) {
   return { predecessorVersion, targetVersion };
 }
 
+export function recordDetachedStartHandoff(record, confirmed, timestamp = now()) {
+  if (confirmed) {
+    record.state = 'IN_PROGRESS';
+    record.started_at = timestamp;
+    delete record.start_handoff;
+    return;
+  }
+  record.start_handoff = 'UNCONFIRMED';
+}
+
 function startDetachedOperation(state, requestId, operation) {
   const isRollout = operation.type === 'rollout-openclaw';
   const checkoutDir = isRollout ? rolloutSourceDir : sourceDir;
@@ -357,13 +367,12 @@ function startDetachedOperation(state, requestId, operation) {
   if (isRollout) args.push(operation.predecessorVersion);
   try {
     execFileSync('systemd-run', args, { stdio: 'ignore', timeout: 15000 });
-    record.state = 'IN_PROGRESS';
-    record.started_at = now();
+    recordDetachedStartHandoff(record, true);
   } catch {
     // A systemd-run error or caller timeout does not prove the transient unit
     // was never accepted. Keep the request non-terminal so the next poll must
     // reconcile durable result evidence or the unit state before classifying it.
-    record.start_handoff = 'UNCONFIRMED';
+    recordDetachedStartHandoff(record, false);
   }
   writeState(state);
 }
