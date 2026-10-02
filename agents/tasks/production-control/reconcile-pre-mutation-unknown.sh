@@ -155,8 +155,8 @@ s.deployment_blocked=false;s.block_reason=null;s.last_diagnostic={...d,checked_a
 fs.writeFileSync(out,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 NODE
 chmod 600 "$CANDIDATE"
-mv "$CANDIDATE" "$STATE_FILE"
 STATE_MUTATED=true
+mv "$CANDIDATE" "$STATE_FILE"
 node "$DIAGNOSE" >"$DIAG_AFTER" || false
 if ! node - "$DIAG_AFTER" "$EXPECTED_PRODUCTION_SHA" "$EXPECTED_OPENCLAW_VERSION" <<'NODE'
 const fs=require('fs'),d=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),baseline=process.argv[3],version=process.argv[4];

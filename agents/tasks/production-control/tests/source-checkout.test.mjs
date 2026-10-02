@@ -3,9 +3,10 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFileSync } from 'node:child_process';
-import test from 'node:test';
+import test, { after } from 'node:test';
 
 const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-source-checkout-'));
+after(() => fs.rmSync(tmp, { recursive: true, force: true }));
 process.env.OPC_STATE_DIR = path.join(tmp, 'controller-state');
 fs.mkdirSync(process.env.OPC_STATE_DIR, { recursive: true });
 const { prepareGitSourceCheckout } = await import(`../controller.mjs?checkout-test=${Date.now()}`);

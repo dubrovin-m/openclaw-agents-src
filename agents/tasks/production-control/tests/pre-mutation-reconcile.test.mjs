@@ -63,8 +63,9 @@ function run(f, apply = false, extraEnv = {}) {
   return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION, ...extraEnv } });
 }
 
-test('pre-mutation reconciliation preflight is read-only and apply clears only the proven block', () => {
+test('pre-mutation reconciliation preflight is read-only and apply clears only the proven block', (t) => {
   const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
   const before = fs.readFileSync(f.stateFile, 'utf8');
   const dry = run(f, false);
   assert.equal(dry.status, 0, dry.stderr);
@@ -84,8 +85,9 @@ test('pre-mutation reconciliation preflight is read-only and apply clears only t
   assert.match(applied.stdout, /PRE_MUTATION_RECONCILIATION_PASS/);
 });
 
-test('pre-mutation reconciliation refuses evidence that reports mutation', () => {
+test('pre-mutation reconciliation refuses evidence that reports mutation', (t) => {
   const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
   const evidenceFile = path.join(f.stateDir, 'executions', `request-${REQUEST}.json`);
   const evidence = JSON.parse(fs.readFileSync(evidenceFile, 'utf8'));
   evidence.mutation_started = true;
@@ -98,8 +100,9 @@ test('pre-mutation reconciliation refuses evidence that reports mutation', () =>
 });
 
 
-test('pre-mutation reconciliation restores blocked state on SIGTERM after mutation', () => {
+test('pre-mutation reconciliation restores blocked state on SIGTERM after mutation', (t) => {
   const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
   const before = fs.readFileSync(f.stateFile, 'utf8');
   const counter = path.join(f.tmp, 'diagnose-count');
   fs.writeFileSync(f.diagnose, `import fs from 'node:fs';\nconst counter=process.env.FAKE_DIAG_COUNTER;\nconst n=(fs.existsSync(counter)?Number(fs.readFileSync(counter,'utf8')):0)+1;\nfs.writeFileSync(counter,String(n));\nif(n===2) process.kill(process.ppid,'SIGTERM');\nconst b=process.env.FAKE_BASELINE,v=process.env.FAKE_VERSION;process.stdout.write(JSON.stringify({ok:true,checks:{runtime:{ok:true,openclaw_version:v,expected_openclaw_version:v},provenance:{ok:true,production_baseline_sha:b,source_revision:b},release:{ok:true}}})+'\\n');\n`, { mode: 0o600 });
