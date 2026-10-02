@@ -34,6 +34,22 @@ const baseAgents = [
   },
 ];
 
+const baseAgentEntries = {
+  main: {
+    tools: {
+      alsoAllow: ['contacts'],
+    },
+  },
+  tasks: {
+    tools: {
+      profile: 'full',
+      allow: ['task_list', 'task_get'],
+      deny: ['write', 'exec'],
+      fs: { workspaceOnly: true },
+    },
+  },
+};
+
 const basePlugins = {
   plugins: [
     {
@@ -64,12 +80,13 @@ const basePlugins = {
   ],
 };
 
-function runnerFor({ agents = baseAgents, plugins = basePlugins } = {}) {
+function runnerFor({ agents = baseAgents, agentEntries = baseAgentEntries, plugins = basePlugins } = {}) {
   return (_bin, args) => {
     const command = args.join(' ');
     if (command === 'config validate --json') return { valid: true };
     if (command === 'plugins doctor --json') return { ok: true };
     if (command === 'agents list --json') return agents;
+    if (command === 'config get agents.entries --json') return agentEntries;
     if (command === 'plugins list --json') return plugins;
     throw new Error(`unexpected command ${command}`);
   };
@@ -120,7 +137,7 @@ test('tracks active non-bundled plugins and requires every active plugin loaded'
   );
 });
 
-test('collectSnapshot captures agent runtime and custom plugin contracts', () => {
+test('collectSnapshot captures agent runtime, tool authority, and custom plugin contracts', () => {
   const calls = [];
   const baseRunner = runnerFor();
   const runner = (bin, args) => {
@@ -147,6 +164,18 @@ test('collectSnapshot captures agent runtime and custom plugin contracts', () =>
         is_default: false,
       },
     ],
+    agent_tool_policies: [
+      { id: 'main', tools: { alsoAllow: ['contacts'] } },
+      {
+        id: 'tasks',
+        tools: {
+          allow: ['task_get', 'task_list'],
+          deny: ['exec', 'write'],
+          fs: { workspaceOnly: true },
+          profile: 'full',
+        },
+      },
+    ],
     active_plugin_ids: ['codex', 'taskctl', 'telegram'],
     external_plugin_ids: ['codex', 'taskctl'],
     active_plugin_contracts: [
@@ -162,6 +191,7 @@ test('collectSnapshot captures agent runtime and custom plugin contracts', () =>
     'config validate --json',
     'plugins doctor --json',
     'agents list --json',
+    'config get agents.entries --json',
     'plugins list --json',
   ]);
 });
@@ -169,11 +199,13 @@ test('collectSnapshot captures agent runtime and custom plugin contracts', () =>
 test('collectSnapshot accepts a healthy runtime without external plugins', () => {
   const snapshot = collectSnapshot('/bin/openclaw', runnerFor({
     agents: [{ id: 'engineer' }],
+    agentEntries: { engineer: { tools: { allow: ['read'] } } },
     plugins: { plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] },
   }));
   assert.deepEqual(snapshot, {
     agent_ids: ['engineer'],
     agent_runtime: [{ id: 'engineer' }],
+    agent_tool_policies: [{ id: 'engineer', tools: { allow: ['read'] } }],
     active_plugin_ids: ['telegram'],
     external_plugin_ids: [],
     active_plugin_contracts: [{ id: 'telegram', version: null, tool_names: [] }],
@@ -199,9 +231,20 @@ test('collectSnapshot fails closed on unhealthy deterministic probes', () => {
   );
 });
 
-test('preservation accepts plugin origin migration, additive plugins, and official plugin generation changes', () => {
+test('preservation accepts plugin origin migration, additive plugins, official plugin generation changes, and tool-list reordering', () => {
   const expected = baselineSnapshot();
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      main: { tools: { alsoAllow: ['contacts'] } },
+      tasks: {
+        tools: {
+          deny: ['exec', 'write'],
+          allow: ['task_get', 'task_list'],
+          fs: { workspaceOnly: true },
+          profile: 'full',
+        },
+      },
+    },
     plugins: {
       plugins: [
         {
@@ -243,9 +286,12 @@ test('preservation accepts plugin origin migration, additive plugins, and offici
   assert.deepEqual(assertSnapshotPreserved(expected, actual), actual);
 });
 
-test('preservation rejects agent roster and runtime contract drift', () => {
+test('preservation rejects agent roster, runtime contract, and tool authority drift', () => {
   const expected = baselineSnapshot();
-  const missingAgent = collectSnapshot('/bin/openclaw', runnerFor({ agents: [baseAgents[0]] }));
+  const missingAgent = collectSnapshot('/bin/openclaw', runnerFor({
+    agents: [baseAgents[0]],
+    agentEntries: { main: baseAgentEntries.main },
+  }));
   assert.throws(() => assertSnapshotPreserved(expected, missingAgent), /agent roster changed/);
 
   const changedRuntime = collectSnapshot('/bin/openclaw', runnerFor({
@@ -255,6 +301,20 @@ test('preservation rejects agent roster and runtime contract drift', () => {
     ],
   }));
   assert.throws(() => assertSnapshotPreserved(expected, changedRuntime), /agent runtime contract changed/);
+
+  const changedAuthority = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      ...baseAgentEntries,
+      tasks: {
+        ...baseAgentEntries.tasks,
+        tools: {
+          ...baseAgentEntries.tasks.tools,
+          deny: ['write'],
+        },
+      },
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedAuthority), /agent tool authority policy changed/);
 });
 
 test('preservation rejects loss or contract drift of a specialized external plugin', () => {
