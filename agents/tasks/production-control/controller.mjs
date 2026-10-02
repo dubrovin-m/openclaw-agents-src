@@ -92,12 +92,21 @@ export function assertInstalledControllerRevision(state) {
   if (installed !== expected) throw new Error('installed controller revision does not match bootstrapped revision');
 }
 
+export function writeJsonAtomic(file, value) {
+  const temp = `${file}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+    fs.chmodSync(file, 0o600);
+  } catch (error) {
+    try { fs.unlinkSync(temp); } catch {}
+    throw error;
+  }
+}
+
 function writeState(state) {
   ensureStateDir();
-  const temp = `${stateFile}.tmp.${process.pid}`;
-  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temp, stateFile);
-  fs.chmodSync(stateFile, 0o600);
+  writeJsonAtomic(stateFile, state);
 }
 
 function requestSource(record) {
@@ -351,10 +360,10 @@ function startDetachedOperation(state, requestId, operation) {
     record.state = 'IN_PROGRESS';
     record.started_at = now();
   } catch {
-    record.state = 'BLOCKED_PRE_MUTATION';
-    record.completed_at = now();
-    record.reason = 'failed-to-start-detached-unit';
-    advanceWatermarkForRecord(state, requestId, record);
+    // A systemd-run error or caller timeout does not prove the transient unit
+    // was never accepted. Keep the request non-terminal so the next poll must
+    // reconcile durable result evidence or the unit state before classifying it.
+    record.start_handoff = 'UNCONFIRMED';
   }
   writeState(state);
 }
