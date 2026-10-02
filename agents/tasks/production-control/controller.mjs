@@ -92,12 +92,21 @@ export function assertInstalledControllerRevision(state) {
   if (installed !== expected) throw new Error('installed controller revision does not match bootstrapped revision');
 }
 
+export function writeJsonAtomic(file, value) {
+  const temp = `${file}.tmp.${process.pid}`;
+  try {
+    fs.writeFileSync(temp, `${JSON.stringify(value, null, 2)}\n`, { mode: 0o600 });
+    fs.renameSync(temp, file);
+    fs.chmodSync(file, 0o600);
+  } catch (error) {
+    try { fs.unlinkSync(temp); } catch {}
+    throw error;
+  }
+}
+
 function writeState(state) {
   ensureStateDir();
-  const temp = `${stateFile}.tmp.${process.pid}`;
-  fs.writeFileSync(temp, `${JSON.stringify(state, null, 2)}\n`, { mode: 0o600 });
-  fs.renameSync(temp, stateFile);
-  fs.chmodSync(stateFile, 0o600);
+  writeJsonAtomic(stateFile, state);
 }
 
 function requestSource(record) {
@@ -318,6 +327,16 @@ async function validateRolloutTarget(state, sha) {
   return { predecessorVersion, targetVersion };
 }
 
+export function recordDetachedStartHandoff(record, confirmed, timestamp = now()) {
+  if (confirmed) {
+    record.state = 'IN_PROGRESS';
+    record.started_at = timestamp;
+    delete record.start_handoff;
+    return;
+  }
+  record.start_handoff = 'UNCONFIRMED';
+}
+
 function startDetachedOperation(state, requestId, operation) {
   const isRollout = operation.type === 'rollout-openclaw';
   const checkoutDir = isRollout ? rolloutSourceDir : sourceDir;
@@ -348,13 +367,12 @@ function startDetachedOperation(state, requestId, operation) {
   if (isRollout) args.push(operation.predecessorVersion);
   try {
     execFileSync('systemd-run', args, { stdio: 'ignore', timeout: 15000 });
-    record.state = 'IN_PROGRESS';
-    record.started_at = now();
+    recordDetachedStartHandoff(record, true);
   } catch {
-    record.state = 'BLOCKED_PRE_MUTATION';
-    record.completed_at = now();
-    record.reason = 'failed-to-start-detached-unit';
-    advanceWatermarkForRecord(state, requestId, record);
+    // A systemd-run error or caller timeout does not prove the transient unit
+    // was never accepted. Keep the request non-terminal so the next poll must
+    // reconcile durable result evidence or the unit state before classifying it.
+    recordDetachedStartHandoff(record, false);
   }
   writeState(state);
 }
