@@ -38,9 +38,11 @@ while [ "$#" -gt 0 ]; do
 done
 
 if [ -n "$TEST_ROOT" ]; then
-  case "$TEST_ROOT" in /tmp/*) ;; *) fail "--test-root must be under /tmp" ;; esac
   TEST_ROOT=$(realpath -e "$TEST_ROOT") || fail "unable to resolve --test-root"
-  case "$STATE_DIR" in "$TEST_ROOT"/*) ;; *) fail "test state must be under --test-root" ;; esac
+  case "$TEST_ROOT" in /tmp/*) ;; *) fail "resolved --test-root must be under /tmp" ;; esac
+  STATE_DIR=$(realpath -e "$STATE_DIR") || fail "unable to resolve test state directory"
+  case "$STATE_DIR" in "$TEST_ROOT"/*) ;; *) fail "resolved test state must be under --test-root" ;; esac
+  STATE_FILE="$STATE_DIR/state.json"
 else
   [ -z "$INHERITED_OPC_ENV" ] || fail "OPC_* environment overrides are test-only: $INHERITED_OPC_ENV"
   STATE_DIR="$HOME/.local/state/openclaw-production-control"
@@ -57,12 +59,13 @@ for value in "$EXPECTED_TARGET_SHA" "$EXPECTED_PRODUCTION_SHA" "$EXPECTED_CONTRO
 done
 [[ "$EXPECTED_OPENCLAW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid predecessor OpenClaw version"
 [[ "$EXPECTED_TARGET_OPENCLAW_VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || fail "invalid target OpenClaw version"
+[ -d "$STATE_DIR" ] || fail "controller state directory missing"
 [ -f "$STATE_FILE" ] || fail "controller state missing"
 [ -f "$REVISION_FILE" ] || fail "installed controller revision evidence missing"
 [ -f "$DIAGNOSE" ] || fail "diagnostic entrypoint missing"
-mkdir -p "$STATE_DIR/recovery"
-chmod 700 "$STATE_DIR" "$STATE_DIR/recovery"
-exec 9>"$STATE_DIR/poll.lock"
+POLL_LOCK="$STATE_DIR/poll.lock"
+[ -f "$POLL_LOCK" ] || fail "production-control lock file missing"
+exec 9<"$POLL_LOCK"
 flock -n 9 || fail "production-control lock is busy"
 
 is_active(){ "$SYSTEMCTL" --user is-active "$1" >/dev/null 2>&1; }
@@ -73,8 +76,10 @@ is_active nexus-sync.timer || fail "Nexus sync timer must be active"
 
 STATE_UID=$(stat -c '%u' "$STATE_FILE")
 STATE_MODE=$(stat -c '%a' "$STATE_FILE")
+STATE_DIR_MODE=$(stat -c '%a' "$STATE_DIR")
 [ "$STATE_UID" = "$(id -u)" ] || fail "controller state owner mismatch"
 [ "$STATE_MODE" = 600 ] || fail "controller state mode must be 600"
+[ "$STATE_DIR_MODE" = 700 ] || fail "controller state directory mode must be 700"
 INSTALLED_REVISION=$(tr -d '\r\n' < "$REVISION_FILE")
 [ "$INSTALLED_REVISION" = "$EXPECTED_CONTROLLER_SHA" ] || fail "installed controller revision mismatch"
 EVIDENCE_FILE="$STATE_DIR/executions/request-$REQUEST_ID.json"
@@ -82,11 +87,14 @@ EVIDENCE_FILE="$STATE_DIR/executions/request-$REQUEST_ID.json"
 [ "$(stat -c '%u' "$EVIDENCE_FILE")" = "$(id -u)" ] || fail "operation evidence owner mismatch"
 [ "$(stat -c '%a' "$EVIDENCE_FILE")" = 600 ] || fail "operation evidence mode must be 600"
 
-PREFLIGHT_JSON=$(mktemp "$STATE_DIR/pre-mutation-preflight-$REQUEST_ID.XXXXXX")
-DIAG_BEFORE=$(mktemp "$STATE_DIR/pre-mutation-diagnose-before-$REQUEST_ID.XXXXXX")
-DIAG_AFTER=$(mktemp "$STATE_DIR/pre-mutation-diagnose-after-$REQUEST_ID.XXXXXX")
+TMP_DIR=$(mktemp -d /tmp/openclaw-pre-mutation-reconcile.XXXXXX)
+chmod 700 "$TMP_DIR"
+PREFLIGHT_JSON="$TMP_DIR/preflight.json"
+DIAG_BEFORE="$TMP_DIR/diagnose.before.json"
+DIAG_AFTER="$TMP_DIR/diagnose.after.json"
+: >"$PREFLIGHT_JSON"; : >"$DIAG_BEFORE"; : >"$DIAG_AFTER"
 chmod 600 "$PREFLIGHT_JSON" "$DIAG_BEFORE" "$DIAG_AFTER"
-cleanup_tmp(){ rm -f "$PREFLIGHT_JSON" "$DIAG_BEFORE" "$DIAG_AFTER"; }
+cleanup_tmp(){ rm -rf "$TMP_DIR"; }
 trap cleanup_tmp EXIT
 
 node - "$STATE_FILE" "$EVIDENCE_FILE" "$REQUEST_ID" "$EXPECTED_TARGET_SHA" "$EXPECTED_PRODUCTION_SHA" "$EXPECTED_CONTROLLER_SHA" "$EXPECTED_PROTECTED_SHA" "$EXPECTED_OPENCLAW_VERSION" "$EXPECTED_TARGET_OPENCLAW_VERSION" >"$PREFLIGHT_JSON" <<'NODE'
@@ -127,6 +135,8 @@ if [ "$APPLY" != true ]; then
 fi
 
 STAMP=$(date -u +%Y-%m-%dT%H-%M-%S.%NZ)
+mkdir -p "$STATE_DIR/recovery"
+chmod 700 "$STATE_DIR/recovery"
 RECOVERY_DIR="$STATE_DIR/recovery/pre-mutation-request-$REQUEST_ID/$STAMP"
 mkdir -p "$RECOVERY_DIR"
 chmod 700 "$STATE_DIR/recovery/pre-mutation-request-$REQUEST_ID" "$RECOVERY_DIR"

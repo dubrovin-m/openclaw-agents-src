@@ -25,6 +25,7 @@ function fixture() {
   fs.mkdirSync(libDir, { recursive: true });
   fs.mkdirSync(binDir, { recursive: true });
   fs.chmodSync(stateDir, 0o700);
+  fs.writeFileSync(path.join(stateDir, 'poll.lock'), '', { mode: 0o600 });
   const revisionFile = path.join(libDir, 'installed-revision');
   fs.writeFileSync(revisionFile, `${CONTROLLER}\n`, { mode: 0o600 });
   const backup = path.join(stateDir, 'backup.tar.gz');
@@ -55,6 +56,20 @@ function fixture() {
   return { tmp, stateDir, libDir, systemctl, diagnose, stateFile };
 }
 
+function snapshotTree(root) {
+  const out = [];
+  function walk(dir, rel = '') {
+    for (const name of fs.readdirSync(dir).sort()) {
+      const full = path.join(dir, name), child = path.join(rel, name), st = fs.lstatSync(full);
+      if (st.isDirectory()) { out.push([child, 'd', st.mode & 0o777]); walk(full, child); }
+      else if (st.isFile()) out.push([child, 'f', st.mode & 0o777, crypto.createHash('sha256').update(fs.readFileSync(full)).digest('hex')]);
+      else out.push([child, 'o', st.mode & 0o777]);
+    }
+  }
+  walk(root);
+  return out;
+}
+
 function run(f, apply = false, extraEnv = {}) {
   const args = [SCRIPT, '--test-root', f.tmp, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
     '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
@@ -77,14 +92,29 @@ test('pre-mutation reconciliation rejects all OPC environment overrides outside 
   }
 });
 
+test('pre-mutation reconciliation rejects a test-root symlink that resolves outside /tmp', (t) => {
+  const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
+  const escape = path.join(f.tmp, 'escape');
+  fs.symlinkSync('/home/dubrovin', escape);
+  const args = [SCRIPT, '--test-root', escape, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
+    '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
+    '--expected-target-openclaw-version', TARGET_VERSION];
+  const result = spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: path.join(escape, '.local/state/openclaw-production-control') } });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /resolved --test-root must be under \/tmp/);
+});
+
 test('pre-mutation reconciliation preflight is read-only and apply clears only the proven block', (t) => {
   const f = fixture();
   t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
   const before = fs.readFileSync(f.stateFile, 'utf8');
+  const treeBefore = snapshotTree(f.stateDir);
   const dry = run(f, false);
   assert.equal(dry.status, 0, dry.stderr);
   assert.match(dry.stdout, /PRE_MUTATION_RECONCILIATION_PREFLIGHT_PASS/);
   assert.equal(fs.readFileSync(f.stateFile, 'utf8'), before);
+  assert.deepEqual(snapshotTree(f.stateDir), treeBefore);
   const applied = run(f, true);
   assert.equal(applied.status, 0, applied.stderr);
   const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
