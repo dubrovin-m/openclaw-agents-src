@@ -23,7 +23,7 @@ test('normalizes agent roster from object output', () => {
   ]);
 });
 
-test('tracks only active non-bundled plugins and requires them loaded', () => {
+test('tracks only active non-bundled plugins and requires every active plugin loaded', () => {
   const plugins = {
     plugins: [
       { id: 'taskctl', enabled: true, origin: 'global', status: 'loaded' },
@@ -38,7 +38,7 @@ test('tracks only active non-bundled plugins and requires them loaded', () => {
     [],
   );
   assert.throws(
-    () => normalizeExternalPluginRoster({ plugins: [{ id: 'taskctl', enabled: true, origin: 'global', status: 'error' }] }),
+    () => normalizeExternalPluginRoster({ plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'error' }] }),
     /is not loaded/,
   );
 });
@@ -51,11 +51,19 @@ test('collectSnapshot requires config and plugin health before inventory', () =>
     if (command === 'config validate --json') return { valid: true };
     if (command === 'plugins doctor --json') return { ok: true };
     if (command === 'agents list --json') return [{ id: 'tasks' }, { id: 'main' }];
-    if (command === 'plugins list --json') return { plugins: [{ id: 'taskctl', enabled: true, origin: 'global', status: 'loaded' }] };
+    if (command === 'plugins list --json') {
+      return {
+        plugins: [
+          { id: 'taskctl', enabled: true, origin: 'global', status: 'loaded' },
+          { id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' },
+        ],
+      };
+    }
     throw new Error(`unexpected command ${command}`);
   };
   assert.deepEqual(collectSnapshot('/bin/openclaw', runner), {
     agent_ids: ['main', 'tasks'],
+    active_plugin_ids: ['taskctl', 'telegram'],
     external_plugin_ids: ['taskctl'],
   });
   assert.deepEqual(calls, [
@@ -77,15 +85,9 @@ test('collectSnapshot accepts a healthy runtime without external plugins', () =>
   };
   assert.deepEqual(collectSnapshot('/bin/openclaw', runner), {
     agent_ids: ['engineer'],
+    active_plugin_ids: ['telegram'],
     external_plugin_ids: [],
   });
-  assert.deepEqual(
-    assertSnapshotPreserved(
-      { agent_ids: ['engineer'], external_plugin_ids: [] },
-      { agent_ids: ['engineer'], external_plugin_ids: [] },
-    ),
-    { agent_ids: ['engineer'], external_plugin_ids: [] },
-  );
 });
 
 test('collectSnapshot fails closed on unhealthy deterministic probes', () => {
@@ -106,15 +108,40 @@ test('collectSnapshot fails closed on unhealthy deterministic probes', () => {
   );
 });
 
-test('preservation rejects agent or external plugin identity drift', () => {
-  const expected = { agent_ids: ['main', 'tasks'], external_plugin_ids: ['taskctl'] };
-  assert.deepEqual(assertSnapshotPreserved(expected, expected), expected);
+test('preservation accepts plugin origin migration and new plugins', () => {
+  const expected = {
+    agent_ids: ['main', 'tasks'],
+    active_plugin_ids: ['taskctl', 'telegram'],
+    external_plugin_ids: ['taskctl'],
+  };
+  const actual = {
+    agent_ids: ['main', 'tasks'],
+    active_plugin_ids: ['contacts', 'taskctl', 'telegram'],
+    external_plugin_ids: ['contacts'],
+  };
+  assert.deepEqual(assertSnapshotPreserved(expected, actual), actual);
+});
+
+test('preservation rejects agent drift or loss of a previously active external plugin', () => {
+  const expected = {
+    agent_ids: ['main', 'tasks'],
+    active_plugin_ids: ['taskctl', 'telegram'],
+    external_plugin_ids: ['taskctl'],
+  };
   assert.throws(
-    () => assertSnapshotPreserved(expected, { agent_ids: ['main'], external_plugin_ids: ['taskctl'] }),
+    () => assertSnapshotPreserved(expected, {
+      agent_ids: ['main'],
+      active_plugin_ids: ['taskctl', 'telegram'],
+      external_plugin_ids: ['taskctl'],
+    }),
     /agent roster changed/,
   );
   assert.throws(
-    () => assertSnapshotPreserved(expected, { agent_ids: ['main', 'tasks'], external_plugin_ids: ['contacts', 'taskctl'] }),
-    /external plugin roster changed/,
+    () => assertSnapshotPreserved(expected, {
+      agent_ids: ['main', 'tasks'],
+      active_plugin_ids: ['telegram'],
+      external_plugin_ids: [],
+    }),
+    /no longer active/,
   );
 });
