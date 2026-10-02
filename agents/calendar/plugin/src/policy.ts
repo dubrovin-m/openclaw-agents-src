@@ -1,3 +1,4 @@
+import "node-fetch";
 import { parseCalendarConfig, type CalendarConfig } from "./core.js";
 import { getRuleProposal } from "./rules.js";
 
