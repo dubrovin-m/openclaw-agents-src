@@ -3,6 +3,7 @@ import test from 'node:test';
 
 import {
   assertSnapshotPreserved,
+  assertStagedSnapshotAllowed,
   collectSnapshot,
   normalizeAgentRoster,
   normalizeExternalPluginRoster,
@@ -343,4 +344,63 @@ test('preservation rejects loss or contract drift of a specialized external plug
     },
   }));
   assert.throws(() => assertSnapshotPreserved(expected, changedTools), /required specialized plugin contract changed: taskctl/);
+});
+
+test('staging allows only the declared Task-owned plugin contract to change', () => {
+  const expected = baselineSnapshot();
+  const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.map((plugin) => plugin.id === 'taskctl'
+        ? { ...plugin, version: '0.4.32', toolNames: ['task_get', 'task_list', 'task_update'] }
+        : plugin),
+    },
+  }));
+  assert.deepEqual(assertStagedSnapshotAllowed(expected, actual, ['taskctl']), actual);
+});
+
+test('staging rejects agent authority drift instead of normalizing it into the core baseline', () => {
+  const expected = baselineSnapshot();
+  const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      ...baseAgentEntries,
+      tasks: {
+        ...baseAgentEntries.tasks,
+        tools: {
+          ...baseAgentEntries.tasks.tools,
+          deny: ['write'],
+        },
+      },
+    },
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, actual, ['taskctl']),
+    /agent tool authority policy during staging changed/,
+  );
+});
+
+test('staging rejects non-Task plugin contract or plugin-roster drift', () => {
+  const expected = baselineSnapshot();
+  const changedCodex = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.map((plugin) => plugin.id === 'codex'
+        ? { ...plugin, version: '2026.9.8' }
+        : plugin),
+    },
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, changedCodex, ['taskctl']),
+    /non-staged plugin contract changed during staging: codex/,
+  );
+
+  const changedOrigin = collectSnapshot('/bin/openclaw', runnerFor({
+    plugins: {
+      plugins: basePlugins.plugins.map((plugin) => plugin.id === 'codex'
+        ? { ...plugin, origin: 'bundled' }
+        : plugin),
+    },
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, changedOrigin, ['taskctl']),
+    /external plugin roster during staging changed/,
+  );
 });
