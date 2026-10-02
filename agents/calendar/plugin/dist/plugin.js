@@ -1,5 +1,6 @@
 import { Type } from "typebox";
-import { defineToolPlugin } from "openclaw/plugin-sdk/tool-plugin";
+import { defineToolPlugin, } from "openclaw/plugin-sdk/tool-plugin";
+import { jsonResult, textResult } from "openclaw/plugin-sdk/tool-results";
 import { analyzeCalendar, parseCalendarConfig, reviewWindow } from "./core.js";
 import { calendarToolPolicy } from "./policy.js";
 import { createGoogleCalendarProvider } from "./provider.js";
@@ -100,6 +101,30 @@ const ruleProposalParameters = Type.Object({
 const ruleCommitParameters = Type.Object({
     proposal_id: Type.String({ pattern: "^proposal_[0-9a-f]{16}$" }),
 }, { additionalProperties: false });
+function wrapToolResult(result) {
+    return typeof result === "string" ? textResult(result, result) : jsonResult(result);
+}
+function directOnlyTool(definition) {
+    const { execute, ...metadata } = definition;
+    return {
+        ...metadata,
+        factory: ({ api, config }) => ({
+            name: metadata.name,
+            label: metadata.label ?? metadata.name,
+            description: metadata.description,
+            parameters: metadata.parameters,
+            catalogMode: "direct-only",
+            async execute(toolCallId, params, signal, onUpdate) {
+                return wrapToolResult(await execute(params, config, {
+                    api,
+                    signal,
+                    toolCallId,
+                    onUpdate,
+                }));
+            },
+        }),
+    };
+}
 function operationalConfig(value) {
     if (value === null || typeof value !== "object" || Array.isArray(value)) {
         throw new Error("Calendar configuration must be an object");
@@ -122,23 +147,23 @@ const entry = defineToolPlugin({
     description: "Calendar Agent operational configuration, deterministic analytics, and fail-closed tool policy.",
     configSchema: calendarConfigSchema,
     tools: (tool) => [
-        tool({
+        tool(directOnlyTool({
             name: "calendar_config_get",
             label: "Calendar configuration",
             description: "Read the effective validated operational Calendar taxonomy, durable rules, classification guidance, targets, provider labels, and provider-tool identities.",
             parameters: configGetParameters,
             optional: true,
             execute: async (_params, config) => operationalConfig(config).effective,
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_rule_propose",
             label: "Propose Calendar durable rule",
             description: "Normalize a create, replace, or delete proposal for one durable Calendar classification rule or meeting-hygiene exception without changing effective configuration.",
             parameters: ruleProposalParameters,
             optional: true,
             execute: async (params, config) => proposeRule(operationalConfig(config).effective, params),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_rule_commit",
             label: "Commit Calendar durable rule",
             description: "Persist exactly one previously normalized Calendar rule proposal after native explicit human approval; accepts only its opaque proposal_id.",
@@ -172,63 +197,63 @@ const entry = defineToolPlugin({
                     followUp: mutation.followUp,
                 };
             },
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_review_window",
             label: "Calendar review window",
             description: "Resolve the canonical Daily, Next-Workday, or Biweekly Calendar review window in Europe/Moscow.",
             parameters: reviewWindowParameters,
             optional: true,
             execute: async (params) => reviewWindow(params.kind, params.boundary),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_analyze",
             label: "Calendar deterministic analysis",
             description: "Calculate non-duplicated scheduled load, management/service/free time, classification coverage, and target allocation.",
             parameters: analyzeParameters,
             optional: true,
             execute: async (params, config) => analyzeCalendar(operationalConfig(config).baseValue, params.kind, params.boundary, params.events),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_provider_list_events",
             label: "Calendar events",
             description: "Read events from the designated Google Calendar within one bounded RFC3339 time window.",
             parameters: providerListParameters,
             optional: true,
             execute: async (params, config) => provider.listEvents(operationalConfig(config).baseValue, params),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_provider_get_event",
             label: "Calendar event",
             description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads.",
             parameters: providerEventParameters,
             optional: true,
             execute: async (params, config) => provider.getEvent(operationalConfig(config).baseValue, params),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_provider_get_labels",
             label: "Calendar labels",
             description: "Read custom event labels from the designated Google Calendar.",
             parameters: configGetParameters,
             optional: true,
             execute: async (_params, config) => provider.getLabels(operationalConfig(config).baseValue),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_provider_sync_labels",
             label: "Sync Calendar analytical labels",
             description: "Synchronize configured analytical label definitions after explicit human approval while preserving unrelated labels and Calendar properties.",
             parameters: configGetParameters,
             optional: true,
             execute: async (_params, config) => provider.syncLabels(operationalConfig(config).baseValue),
-        }),
-        tool({
+        })),
+        tool(directOnlyTool({
             name: "calendar_provider_set_label",
             label: "Set Calendar analytical label",
             description: "Assign one configured analytical event label to the deterministic event reference returned by Calendar reads after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
             parameters: providerSetLabelParameters,
             optional: true,
             execute: async (params, config) => provider.setLabel(operationalConfig(config).baseValue, params),
-        }),
+        })),
     ],
 });
 const registerTools = entry.register;
