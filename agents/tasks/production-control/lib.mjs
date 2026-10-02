@@ -1,3 +1,6 @@
+import fs from 'node:fs';
+import path from 'node:path';
+
 export const CONTROL_VERSION = 1;
 export const REQUIRED_WORKFLOW = 'task-agent-ci.yml';
 export const ROLLOUT_REQUIRED_WORKFLOWS = ['task-agent-ci.yml', 'task-production-control-ci.yml', 'engineer-agent-ci.yml'];
@@ -62,6 +65,7 @@ export const STAGED_VALIDATION_ONLY_PATHS = [
 const SHA_RE = /^[0-9a-f]{40}$/u;
 const REPOSITORY_RE = /^[A-Za-z0-9_.-]{1,100}\/[A-Za-z0-9_.-]{1,100}$/u;
 const LOGIN_RE = /^[A-Za-z0-9-]{1,39}$/u;
+const REQUEST_RECOVERY_DIR_RE = /^request-[1-9][0-9]*$/u;
 const OPERATION_OUTCOMES = new Set([
   'SUCCESS',
   'ROLLED_BACK',
@@ -70,6 +74,49 @@ const OPERATION_OUTCOMES = new Set([
   'RECOVERY_REQUIRED',
   'UNKNOWN',
 ]);
+
+function assertPrivateRegularFile(file) {
+  const stat = fs.lstatSync(file);
+  if (!stat.isFile() || stat.isSymbolicLink()) throw new Error(`recovery backup is not a regular file: ${file}`);
+  if ((stat.mode & 0o077) !== 0) throw new Error(`recovery backup is group/world accessible: ${file}`);
+  if (typeof process.getuid === 'function' && stat.uid !== process.getuid()) throw new Error(`recovery backup owner mismatch: ${file}`);
+}
+
+export function pruneSupersededRolloutBackups(recoveryParent, currentBackup) {
+  if (!path.isAbsolute(recoveryParent) || !path.isAbsolute(currentBackup)) throw new Error('recovery retention paths must be absolute');
+  const root = fs.realpathSync(recoveryParent);
+  const current = fs.realpathSync(currentBackup);
+  const currentDir = path.dirname(current);
+  if (path.dirname(currentDir) !== root || !REQUEST_RECOVERY_DIR_RE.test(path.basename(currentDir)) || !current.endsWith('.tar.gz')) {
+    throw new Error('current recovery backup is outside a rollout request directory');
+  }
+  assertPrivateRegularFile(current);
+
+  const candidates = [];
+  for (const entry of fs.readdirSync(root, { withFileTypes: true })) {
+    if (!REQUEST_RECOVERY_DIR_RE.test(entry.name)) continue;
+    const requestDir = path.join(root, entry.name);
+    const dirStat = fs.lstatSync(requestDir);
+    if (!entry.isDirectory() || dirStat.isSymbolicLink()) throw new Error(`rollout recovery path is not a real directory: ${requestDir}`);
+    for (const name of fs.readdirSync(requestDir)) {
+      if (!name.endsWith('.tar.gz')) continue;
+      const candidate = path.join(requestDir, name);
+      assertPrivateRegularFile(candidate);
+      const real = fs.realpathSync(candidate);
+      if (path.dirname(real) !== requestDir || !real.startsWith(`${root}${path.sep}`)) throw new Error(`rollout recovery backup escaped its request directory: ${candidate}`);
+      candidates.push(real);
+    }
+  }
+  if (!candidates.includes(current)) throw new Error('current recovery backup was not found in rollout recovery inventory');
+
+  const removed = [];
+  for (const candidate of candidates) {
+    if (candidate === current) continue;
+    fs.unlinkSync(candidate);
+    removed.push(candidate);
+  }
+  return { retained: current, removed };
+}
 
 export function validateOperationalBinding(candidate) {
   if (!candidate || typeof candidate !== 'object') throw new Error('production-control binding missing');

@@ -25,9 +25,11 @@ RUNTIME_CONTRACT="$SOURCE_DIR/runtime-contract.json"
 RUNTIME_HELPER="$SOURCE_DIR/shared/runtime-contract/runtime-contract.mjs"
 SPECIALIZED_ACCEPTANCE="$SOURCE_DIR/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 DEPLOY="$SOURCE_DIR/agents/tasks/deploy.sh"
+RETENTION_LIB="${BASH_SOURCE[0]%/*}/lib.mjs"
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Frozen runtime requirements or qualification helper are unavailable" >&2; exit 2; }
 [ -f "$SPECIALIZED_ACCEPTANCE" ] || { echo "Frozen specialized-agent acceptance probe is unavailable" >&2; exit 2; }
 [ -x "$DEPLOY" ] || { echo "Frozen Task deploy entrypoint is unavailable or not executable" >&2; exit 2; }
+[ -f "$RETENTION_LIB" ] || { echo "Installed production-control retention library is unavailable" >&2; exit 2; }
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Frozen rollout source checkout is dirty" >&2; exit 2; }
 SOURCE_REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot establish exact rollout source revision" >&2; exit 2; }
@@ -334,6 +336,20 @@ chmod go-rwx "$BACKUP_ARCHIVE" 2>/dev/null || true
 BACKUP_SHA256=$(sha256sum "$BACKUP_ARCHIVE" | awk '{print $1}')
 [[ "$BACKUP_SHA256" =~ ^[0-9a-f]{64}$ ]] || { REASON="Verified pre-update OpenClaw backup checksum is invalid"; finish; }
 BACKUP_CREATED=true
+
+if ! RETENTION_RESULT=$(node - "$RETENTION_LIB" "$RECOVERY_PARENT" "$BACKUP_ARCHIVE" <<'NODE'
+const { pathToFileURL }=require('node:url');
+(async()=>{
+  const mod=await import(pathToFileURL(process.argv[2]).href);
+  const result=mod.pruneSupersededRolloutBackups(process.argv[3],process.argv[4]);
+  process.stdout.write(JSON.stringify(result));
+})().catch((error)=>{console.error(error?.message||String(error));process.exit(1);});
+NODE
+); then
+  REASON="Superseded rollout recovery backup pruning failed"
+  finish
+fi
+printf 'recovery retention %s\n' "$RETENTION_RESULT" >>"$LOG"
 
 if ! disk_headroom_ok; then
   REASON="Insufficient free disk space for OpenClaw mutation after backup; at least 2 GiB is required"
