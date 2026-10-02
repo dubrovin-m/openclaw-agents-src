@@ -76,12 +76,24 @@ case "${1:-}" in
     echo "OpenClaw $(cat "$FAKE_STATE")"
     ;;
   config)
-    [ "${2:-}" = validate ] || exit 2
-    if [ "${FAKE_CONFIG_INVALID:-0}" = 1 ]; then
-      echo '{"valid":false,"issues":[{"path":"agents.entries","message":"fake invalid config"}]}'
-    else
-      echo '{"valid":true,"issues":[]}'
-    fi
+    case "${2:-}" in
+      validate)
+        if [ "${FAKE_CONFIG_INVALID:-0}" = 1 ]; then
+          echo '{"valid":false,"issues":[{"path":"agents.entries","message":"fake invalid config"}]}'
+        else
+          echo '{"valid":true,"issues":[]}'
+        fi
+        ;;
+      get)
+        [ "${3:-}" = agents.entries ] || exit 2
+        if [ "${FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        else
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":["exec"],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        fi
+        ;;
+      *) exit 2 ;;
+    esac
     ;;
   agents)
     [ "${2:-}" = list ] || exit 2
@@ -359,6 +371,15 @@ assert_field "$CASE_RESULT" update_run_reconciled false
 assert_field "$CASE_RESULT" update_command_exit 1
 
 run_case 120 FAKE_AGENT_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 122 FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE=1
 [ "$CASE_EXIT" -eq 2 ]
 assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
 assert_field "$CASE_RESULT" block_further_deployments true
