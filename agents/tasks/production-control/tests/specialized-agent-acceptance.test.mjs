@@ -7,6 +7,19 @@ import {
   normalizeAgentRoster,
   normalizeExternalPluginRoster,
 } from '../specialized-agent-acceptance.mjs';
+import {
+  isProtectedDeploymentPath,
+  isRolloutProtectedPath,
+  isStagedValidationOnlyPath,
+} from '../lib.mjs';
+
+const acceptancePath = 'agents/tasks/production-control/specialized-agent-acceptance.mjs';
+
+test('classifies the runtime acceptance helper inside controller protection boundaries', () => {
+  assert.equal(isProtectedDeploymentPath(acceptancePath), true);
+  assert.equal(isRolloutProtectedPath(acceptancePath), true);
+  assert.equal(isStagedValidationOnlyPath(acceptancePath), true);
+});
 
 test('normalizes agent roster from current array output', () => {
   assert.deepEqual(normalizeAgentRoster([{ id: 'tasks' }, { id: 'main' }, { id: 'engineer' }]), [
