@@ -32,16 +32,24 @@ export function normalizeAgentRoster(value) {
   return sortedUniqueIds(items, 'agent list');
 }
 
-export function normalizeExternalPluginRoster(value) {
+function normalizePluginInventory(value) {
   const items = Array.isArray(value) ? value : requireObject(value, 'plugin list').plugins;
   if (!Array.isArray(items)) throw new Error('plugin list is unavailable');
-  const activeExternal = items.filter((plugin) => plugin?.enabled === true && plugin?.origin !== 'bundled');
-  for (const plugin of activeExternal) {
+  const active = items.filter((plugin) => plugin?.enabled === true);
+  for (const plugin of active) {
     if (plugin?.status !== 'loaded') {
-      throw new Error(`active external plugin ${plugin?.id ?? '<unknown>'} is not loaded`);
+      throw new Error(`active plugin ${plugin?.id ?? '<unknown>'} is not loaded`);
     }
   }
-  return sortedUniqueIds(activeExternal, 'active external plugin list', { allowEmpty: true });
+  const external = active.filter((plugin) => plugin?.origin !== 'bundled');
+  return {
+    active_plugin_ids: sortedUniqueIds(active, 'active plugin list', { allowEmpty: true }),
+    external_plugin_ids: sortedUniqueIds(external, 'active external plugin list', { allowEmpty: true }),
+  };
+}
+
+export function normalizeExternalPluginRoster(value) {
+  return normalizePluginInventory(value).external_plugin_ids;
 }
 
 function runJson(openclawBin, args) {
@@ -70,10 +78,10 @@ export function collectSnapshot(openclawBin, runner = runJson) {
   if (doctor.ok !== true) throw new Error('OpenClaw plugin doctor is not healthy');
 
   const agentIds = normalizeAgentRoster(runner(openclawBin, ['agents', 'list', '--json']));
-  const externalPluginIds = normalizeExternalPluginRoster(runner(openclawBin, ['plugins', 'list', '--json']));
+  const plugins = normalizePluginInventory(runner(openclawBin, ['plugins', 'list', '--json']));
   return {
     agent_ids: agentIds,
-    external_plugin_ids: externalPluginIds,
+    ...plugins,
   };
 }
 
@@ -87,10 +95,16 @@ export function normalizeSnapshot(value) {
     if (new Set(sorted).size !== sorted.length) throw new Error(`${label} contains duplicate ids`);
     return sorted;
   };
-  return {
+  const normalized = {
     agent_ids: normalizeIds(snapshot.agent_ids, 'snapshot agent ids'),
+    active_plugin_ids: normalizeIds(snapshot.active_plugin_ids, 'snapshot active plugin ids', { allowEmpty: true }),
     external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids', { allowEmpty: true }),
   };
+  const active = new Set(normalized.active_plugin_ids);
+  if (normalized.external_plugin_ids.some((id) => !active.has(id))) {
+    throw new Error('snapshot external plugin ids are not active');
+  }
+  return normalized;
 }
 
 export function assertSnapshotPreserved(expectedValue, actualValue) {
@@ -99,8 +113,10 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   if (JSON.stringify(actual.agent_ids) !== JSON.stringify(expected.agent_ids)) {
     throw new Error(`agent roster changed: expected ${expected.agent_ids.join(',')} got ${actual.agent_ids.join(',')}`);
   }
-  if (JSON.stringify(actual.external_plugin_ids) !== JSON.stringify(expected.external_plugin_ids)) {
-    throw new Error(`active external plugin roster changed: expected ${expected.external_plugin_ids.join(',')} got ${actual.external_plugin_ids.join(',')}`);
+  const active = new Set(actual.active_plugin_ids);
+  const missing = expected.external_plugin_ids.filter((id) => !active.has(id));
+  if (missing.length > 0) {
+    throw new Error(`previously active external plugins are no longer active: ${missing.join(',')}`);
   }
   return actual;
 }
