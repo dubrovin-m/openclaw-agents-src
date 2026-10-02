@@ -153,6 +153,7 @@ const entry = defineToolPlugin({
       description: "Read the effective validated operational Calendar taxonomy, durable rules, classification guidance, targets, provider labels, and provider-tool identities.",
       parameters: configGetParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (_params, config) => operationalConfig(config).effective,
     }),
     tool({
@@ -161,6 +162,7 @@ const entry = defineToolPlugin({
       description: "Normalize a create, replace, or delete proposal for one durable Calendar classification rule or meeting-hygiene exception without changing effective configuration.",
       parameters: ruleProposalParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, config) => proposeRule(operationalConfig(config).effective, params as RuleProposalInput),
     }),
     tool({
@@ -169,6 +171,7 @@ const entry = defineToolPlugin({
       description: "Persist exactly one previously normalized Calendar rule proposal after native explicit human approval; accepts only its opaque proposal_id.",
       parameters: ruleCommitParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, _config, context) => {
         const proposal = getRuleProposal(params.proposal_id);
         if (!proposal) throw new Error("Calendar rule proposal is unknown or expired; create a fresh proposal");
@@ -202,6 +205,7 @@ const entry = defineToolPlugin({
       description: "Resolve the canonical Daily, Next-Workday, or Biweekly Calendar review window in Europe/Moscow.",
       parameters: reviewWindowParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params) => reviewWindow(params.kind, params.boundary),
     }),
     tool({
@@ -210,6 +214,7 @@ const entry = defineToolPlugin({
       description: "Calculate non-duplicated scheduled load, management/service/free time, classification coverage, and target allocation.",
       parameters: analyzeParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, config) => analyzeCalendar(operationalConfig(config).baseValue, params.kind, params.boundary, params.events),
     }),
     tool({
@@ -218,6 +223,7 @@ const entry = defineToolPlugin({
       description: "Read events from the designated Google Calendar within one bounded RFC3339 time window.",
       parameters: providerListParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, config) => provider.listEvents(operationalConfig(config).baseValue, params),
     }),
     tool({
@@ -226,6 +232,7 @@ const entry = defineToolPlugin({
       description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads.",
       parameters: providerEventParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, config) => provider.getEvent(operationalConfig(config).baseValue, params),
     }),
     tool({
@@ -234,6 +241,7 @@ const entry = defineToolPlugin({
       description: "Read custom event labels from the designated Google Calendar.",
       parameters: configGetParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (_params, config) => provider.getLabels(operationalConfig(config).baseValue),
     }),
     tool({
@@ -242,6 +250,7 @@ const entry = defineToolPlugin({
       description: "Synchronize configured analytical label definitions after explicit human approval while preserving unrelated labels and Calendar properties.",
       parameters: configGetParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (_params, config) => provider.syncLabels(operationalConfig(config).baseValue),
     }),
     tool({
@@ -250,6 +259,7 @@ const entry = defineToolPlugin({
       description: "Assign one configured analytical event label to the deterministic event reference returned by Calendar reads after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
       parameters: providerSetLabelParameters,
       optional: true,
+      catalogMode: "direct-only",
       execute: async (params, config) => provider.setLabel(operationalConfig(config).baseValue, params),
     }),
   ],
