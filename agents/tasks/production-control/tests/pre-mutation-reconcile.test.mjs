@@ -155,4 +155,5 @@ test('pre-mutation reconciliation restores blocked state on SIGTERM after mutati
   const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
   assert.equal(state.deployment_blocked, true);
   assert.equal(state.requests[String(REQUEST)].state, 'UNKNOWN');
+  assert.equal(fs.readdirSync(f.stateDir).filter((name) => name.startsWith('state.json.pre-mutation.')).length, 0);
 });
