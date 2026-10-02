@@ -49,7 +49,7 @@ Protected paths are explicit executable or authority-sensitive files, not the en
 
 ## Concurrency and detached execution
 
-The registered polling entrypoint owns the single routine kernel `flock` concurrency guard. There is no second semantic-ingress lock. Accepted deployments and rollouts still execute in detached bounded systemd units so interactive disconnect cannot interrupt the operation.
+The registered polling entrypoint owns the single routine kernel `flock` concurrency guard. There is no second semantic-ingress lock. Accepted deployments and rollouts still execute in detached bounded systemd units so interactive disconnect cannot interrupt the operation. A `systemd-run` caller error or timeout is not treated as proof that the detached unit never started: the request remains non-terminal until the next poll reconciles durable result evidence or the unit state.
 
 ## Private evidence boundary
 
