@@ -6,6 +6,7 @@ const CONTROL_RUNTIME_PATHS = [
   'agents/tasks/production-control/controller.mjs',
   'agents/tasks/production-control/lib.mjs',
   'agents/tasks/production-control/diagnose.mjs',
+  'agents/tasks/production-control/specialized-agent-acceptance.mjs',
   'agents/tasks/production-control/execute-deploy.sh',
   'agents/tasks/production-control/execute-rollout.sh',
   'agents/tasks/production-control/poll.sh',
