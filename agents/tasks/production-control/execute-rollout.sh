@@ -187,11 +187,11 @@ const run=candidates.find((r)=>{
 if(!run)process.exit(3);
 const safe=run?.recovery?.serviceRestartSafe??run?.verification?.recovery?.serviceRestartSafe;
 const values=[run.runId,run.phase??'',run.status??'',run?.after?.version??'',safe===false?'false':safe===true?'true':''];
-process.stdout.write(values.join('\t'));
+process.stdout.write(values.join('\x1f'));
 NODE
       ); then parse_exit=0; else parse_exit=$?; fi
       if [ "$parse_exit" -eq 0 ]; then
-        IFS=$'\t' read -r run_id phase status after_version restart_safe <<<"$fields"
+        IFS=$'\x1f' read -r run_id phase status after_version restart_safe <<<"$fields"
         UPDATE_RUN_ID="$run_id"
         if [ "$phase" = "finished" ]; then
           UPDATE_RUN_STATUS="$status"
