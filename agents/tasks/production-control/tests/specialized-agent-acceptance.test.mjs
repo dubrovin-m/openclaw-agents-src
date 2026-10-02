@@ -33,6 +33,10 @@ test('tracks only active non-bundled plugins and requires them loaded', () => {
     ],
   };
   assert.deepEqual(normalizeExternalPluginRoster(plugins), ['calendar-analytics', 'taskctl']);
+  assert.deepEqual(
+    normalizeExternalPluginRoster({ plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] }),
+    [],
+  );
   assert.throws(
     () => normalizeExternalPluginRoster({ plugins: [{ id: 'taskctl', enabled: true, origin: 'global', status: 'error' }] }),
     /is not loaded/,
@@ -60,6 +64,28 @@ test('collectSnapshot requires config and plugin health before inventory', () =>
     'agents list --json',
     'plugins list --json',
   ]);
+});
+
+test('collectSnapshot accepts a healthy runtime without external plugins', () => {
+  const runner = (_bin, args) => {
+    const command = args.join(' ');
+    if (command === 'config validate --json') return { valid: true };
+    if (command === 'plugins doctor --json') return { ok: true };
+    if (command === 'agents list --json') return [{ id: 'engineer' }];
+    if (command === 'plugins list --json') return { plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] };
+    throw new Error(`unexpected command ${command}`);
+  };
+  assert.deepEqual(collectSnapshot('/bin/openclaw', runner), {
+    agent_ids: ['engineer'],
+    external_plugin_ids: [],
+  });
+  assert.deepEqual(
+    assertSnapshotPreserved(
+      { agent_ids: ['engineer'], external_plugin_ids: [] },
+      { agent_ids: ['engineer'], external_plugin_ids: [] },
+    ),
+    { agent_ids: ['engineer'], external_plugin_ids: [] },
+  );
 });
 
 test('collectSnapshot fails closed on unhealthy deterministic probes', () => {
