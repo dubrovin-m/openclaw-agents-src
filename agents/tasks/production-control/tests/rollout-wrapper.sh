@@ -42,6 +42,11 @@ cat > "$SRC/agents/tasks/config/tasks-tools.json" <<'JSON'
   "fs": {"workspaceOnly": true}
 }
 JSON
+cat > "$SRC/agents/tasks/config/main-contacts-tools.json" <<'JSON'
+{
+  "alsoAllow": ["contacts"]
+}
+JSON
 cat > "$SRC/agents/tasks/release.json" <<'JSON'
 {
   "format": "task-agent-release-v2",
