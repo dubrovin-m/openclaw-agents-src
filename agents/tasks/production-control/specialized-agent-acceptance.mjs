@@ -11,8 +11,8 @@ function requireObject(value, label) {
   return value;
 }
 
-function sortedUniqueIds(items, label) {
-  if (!Array.isArray(items) || items.length === 0) {
+function sortedUniqueIds(items, label, { allowEmpty = false } = {}) {
+  if (!Array.isArray(items) || (!allowEmpty && items.length === 0)) {
     throw new Error(`${label} is empty or unavailable`);
   }
   const ids = items.map((item, index) => {
@@ -41,7 +41,7 @@ export function normalizeExternalPluginRoster(value) {
       throw new Error(`active external plugin ${plugin?.id ?? '<unknown>'} is not loaded`);
     }
   }
-  return sortedUniqueIds(activeExternal, 'active external plugin list');
+  return sortedUniqueIds(activeExternal, 'active external plugin list', { allowEmpty: true });
 }
 
 function runJson(openclawBin, args) {
@@ -79,8 +79,8 @@ export function collectSnapshot(openclawBin, runner = runJson) {
 
 export function normalizeSnapshot(value) {
   const snapshot = requireObject(value, 'specialized acceptance snapshot');
-  const normalizeIds = (items, label) => {
-    if (!Array.isArray(items) || items.length === 0 || items.some((id) => typeof id !== 'string' || id.trim() === '')) {
+  const normalizeIds = (items, label, { allowEmpty = false } = {}) => {
+    if (!Array.isArray(items) || (!allowEmpty && items.length === 0) || items.some((id) => typeof id !== 'string' || id.trim() === '')) {
       throw new Error(`${label} is invalid`);
     }
     const sorted = [...items].sort();
@@ -89,7 +89,7 @@ export function normalizeSnapshot(value) {
   };
   return {
     agent_ids: normalizeIds(snapshot.agent_ids, 'snapshot agent ids'),
-    external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids'),
+    external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids', { allowEmpty: true }),
   };
 }
 
