@@ -112,18 +112,70 @@ describe("Calendar durable rules", () => {
     expect(removed.hygiene).toEqual([]);
   });
 
-  it("fails closed when effective rules changed after proposal", () => {
-    const proposal = proposeRule(config(), {
+  it("applies independent create proposals even when another rule was committed first", () => {
+    const first = proposeRule(config(), {
       action: "create",
-      kind: "classification",
-      condition: "Purpose is strategic review",
-      category_id: "strategy",
+      kind: "hygiene_exception",
+      condition: "Внешняя встреча с партнёром",
+      require_leader: false,
+      require_agenda: false,
     });
-    const changed: DurableRules = {
-      classification: [],
+    const second = proposeRule(config(), {
+      action: "create",
+      kind: "hygiene_exception",
+      condition: "Встреча продолжительностью ровно 30 минут",
+      require_leader: true,
+      require_agenda: false,
+    });
+
+    const afterFirst = applyRuleProposal(config().durableRules, getRuleProposal(first.proposal_id)!);
+    const afterSecond = applyRuleProposal(afterFirst, getRuleProposal(second.proposal_id)!);
+
+    expect(afterSecond.hygiene.map((rule) => ({
+      condition: rule.condition,
+      requireLeader: rule.requireLeader,
+      requireAgenda: rule.requireAgenda,
+    }))).toEqual([
+      {
+        condition: "Внешняя встреча с партнёром",
+        requireLeader: false,
+        requireAgenda: false,
+      },
+      {
+        condition: "Встреча продолжительностью ровно 30 минут",
+        requireLeader: true,
+        requireAgenda: false,
+      },
+    ]);
+  });
+
+  it("allows unrelated changes but fails closed when the targeted rule changed", () => {
+    const initial: DurableRules = {
+      classification: [{ id: "class_existing", condition: "Old condition", categoryId: "strategy" }],
+      hygiene: [],
+    };
+    const replace = proposeRule(config(initial), {
+      action: "replace",
+      kind: "classification",
+      rule_id: "class_existing",
+      condition: "New condition",
+      category_id: "delivery",
+    });
+    const unrelatedChange: DurableRules = {
+      classification: initial.classification,
       hygiene: [{ id: "hyg_other", condition: "Other", requireLeader: false, requireAgenda: true }],
     };
-    expect(() => applyRuleProposal(changed, getRuleProposal(proposal.proposal_id)!))
+    const replaced = applyRuleProposal(unrelatedChange, getRuleProposal(replace.proposal_id)!);
+    expect(replaced.classification).toEqual([
+      { id: "class_existing", condition: "New condition", categoryId: "delivery" },
+    ]);
+    expect(replaced.hygiene).toEqual(unrelatedChange.hygiene);
+
+    const targetedChange: DurableRules = {
+      classification: [{ id: "class_existing", condition: "Changed elsewhere", categoryId: "strategy" }],
+      hygiene: [],
+    };
+    expect(() => applyRuleProposal(targetedChange, getRuleProposal(replace.proposal_id)!))
       .toThrow(/changed after this proposal/u);
   });
 
