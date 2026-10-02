@@ -88,13 +88,17 @@ EVIDENCE_FILE="$STATE_DIR/executions/request-$REQUEST_ID.json"
 [ "$(stat -c '%a' "$EVIDENCE_FILE")" = 600 ] || fail "operation evidence mode must be 600"
 
 TMP_DIR=$(mktemp -d /tmp/openclaw-pre-mutation-reconcile.XXXXXX)
+CANDIDATE=""
 chmod 700 "$TMP_DIR"
 PREFLIGHT_JSON="$TMP_DIR/preflight.json"
 DIAG_BEFORE="$TMP_DIR/diagnose.before.json"
 DIAG_AFTER="$TMP_DIR/diagnose.after.json"
 : >"$PREFLIGHT_JSON"; : >"$DIAG_BEFORE"; : >"$DIAG_AFTER"
 chmod 600 "$PREFLIGHT_JSON" "$DIAG_BEFORE" "$DIAG_AFTER"
-cleanup_tmp(){ rm -rf "$TMP_DIR"; }
+cleanup_tmp(){
+  rm -rf "$TMP_DIR"
+  [ -z "${CANDIDATE:-}" ] || rm -f -- "$CANDIDATE"
+}
 trap cleanup_tmp EXIT
 
 node - "$STATE_FILE" "$EVIDENCE_FILE" "$REQUEST_ID" "$EXPECTED_TARGET_SHA" "$EXPECTED_PRODUCTION_SHA" "$EXPECTED_CONTROLLER_SHA" "$EXPECTED_PROTECTED_SHA" "$EXPECTED_OPENCLAW_VERSION" "$EXPECTED_TARGET_OPENCLAW_VERSION" >"$PREFLIGHT_JSON" <<'NODE'
