@@ -92,15 +92,14 @@ test('pre-mutation reconciliation rejects all OPC environment overrides outside 
   }
 });
 
-test('pre-mutation reconciliation rejects a test-root symlink that resolves outside /tmp', (t) => {
+test('pre-mutation reconciliation rejects a test-root traversal that resolves outside /tmp', (t) => {
   const f = fixture();
   t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
-  const escape = path.join(f.tmp, 'escape');
-  fs.symlinkSync('/home/dubrovin', escape);
+  const escape = path.join(f.tmp, '..', '..');
   const args = [SCRIPT, '--test-root', escape, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
     '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
     '--expected-target-openclaw-version', TARGET_VERSION];
-  const result = spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: path.join(escape, '.local/state/openclaw-production-control') } });
+  const result = spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir } });
   assert.equal(result.status, 2);
   assert.match(result.stderr, /resolved --test-root must be under \/tmp/);
 });
