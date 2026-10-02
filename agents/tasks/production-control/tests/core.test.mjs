@@ -1,6 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { resolveProtectedPathBaseline } from '../controller.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { recordDetachedStartHandoff, resolveProtectedPathBaseline, writeJsonAtomic } from '../controller.mjs';
 import {
   isProtectedDeploymentPath,
   isRolloutProtectedPath,
@@ -38,6 +41,29 @@ test('protected-path baseline is independent and legacy state falls back only wh
   assert.equal(resolveProtectedPathBaseline({ controller_revision: controller, protected_path_baseline_sha: protectedBaseline }), protectedBaseline);
   assert.equal(resolveProtectedPathBaseline({ controller_revision: controller }), controller);
   assert.throws(() => resolveProtectedPathBaseline({ controller_revision: controller, protected_path_baseline_sha: null }), /protected-path baseline/u);
+});
+
+test('unconfirmed detached start handoff remains non-terminal for later reconciliation', () => {
+  const record = { state: 'STARTING' };
+  recordDetachedStartHandoff(record, false, '2026-10-02T12:00:00.000Z');
+  assert.deepEqual(record, { state: 'STARTING', start_handoff: 'UNCONFIRMED' });
+  recordDetachedStartHandoff(record, true, '2026-10-02T12:00:01.000Z');
+  assert.equal(record.state, 'IN_PROGRESS');
+  assert.equal(record.started_at, '2026-10-02T12:00:01.000Z');
+  assert.equal(Object.hasOwn(record, 'start_handoff'), false);
+});
+
+test('failed atomic JSON replacement removes its temporary file', () => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-production-control-'));
+  try {
+    const target = path.join(root, 'state.json');
+    fs.mkdirSync(target);
+    const temporary = `${target}.tmp.${process.pid}`;
+    assert.throws(() => writeJsonAtomic(target, { ok: true }));
+    assert.equal(fs.existsSync(temporary), false);
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test('requires distinct validated control and implementation bindings', () => {
