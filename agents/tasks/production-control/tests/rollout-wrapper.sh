@@ -12,6 +12,7 @@ FAKEBIN="$TMP/bin"
 FAKE_STATE="$TMP/openclaw-version"
 FAKE_TRACE="$TMP/trace"
 FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
+FAKE_PREDEPLOY_PLUGIN_MARKER="$TMP/predeploy-plugin-staged"
 TASK_RESULT_DIR="$TMP/task-results"
 FAKE_HOME="$TMP/home"
 mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
@@ -49,6 +50,9 @@ if [ "$count" -eq 1 ]; then
   OUTCOME=${FAKE_PREDEPLOY_OUTCOME:-PASS}
   STAGE=${FAKE_PREDEPLOY_STAGE:-COMPLETE}
   MUTATION=${FAKE_PREDEPLOY_MUTATION:-true}
+  if [ "${FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE:-0}" = 1 ] && [ "$OUTCOME" = PASS ]; then
+    : > "$FAKE_PREDEPLOY_PLUGIN_MARKER"
+  fi
 else
   OUTCOME=${FAKE_TASK_OUTCOME:-PASS}
   STAGE=${FAKE_TASK_STAGE:-NOOP}
@@ -196,10 +200,14 @@ case "${1:-}" in
         fi
         ;;
       list)
+        taskctl_version=0.4.31
+        if [ "${FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE:-0}" = 1 ] && [ -e "$FAKE_PREDEPLOY_PLUGIN_MARKER" ]; then
+          taskctl_version=0.4.32
+        fi
         if [ "${FAKE_PLUGIN_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
-          echo '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"}]}'
+          printf '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded","version":"%s"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"}]}\n' "$taskctl_version"
         else
-          echo '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"},{"id":"investment-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"telegram","enabled":true,"origin":"bundled","status":"loaded"}]}'
+          printf '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded","version":"%s"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"},{"id":"investment-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"telegram","enabled":true,"origin":"bundled","status":"loaded"}]}\n' "$taskctl_version"
         fi
         ;;
       inspect)
@@ -234,7 +242,7 @@ SH
 chmod 700 "$FAKEBIN/sleep"
 
 export PATH="$FAKEBIN:$PATH"
-export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER
+export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER FAKE_PREDEPLOY_PLUGIN_MARKER
 export FAKE_STATUS_CALL_COUNTER="$TMP/status-call-counter"
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
 export FAKE_TASK_CALL_COUNTER="$TMP/task-call-counter"
@@ -253,7 +261,7 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
-  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
+  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_PREDEPLOY_PLUGIN_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
   env HOME="$FAKE_HOME" "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
@@ -282,6 +290,13 @@ assert_field "$CASE_RESULT" specialized_external_plugin_ids '["calendar-analytic
 assert_field "$CASE_RESULT" task_predeploy_result '"PASS"'
 assert_field "$CASE_RESULT" task_predeploy_mutation_started true
 assert_field "$CASE_RESULT" task_deploy_result '"PASS"'
+
+run_case 123 FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE=1
+[ "$CASE_EXIT" -eq 0 ]
+assert_field "$CASE_RESULT" outcome '"SUCCESS"'
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance true
+assert_field "$CASE_RESULT" specialized_final_acceptance true
 
 run_case 102 FAKE_BACKUP_FAIL=1
 [ "$CASE_EXIT" -eq 1 ]
