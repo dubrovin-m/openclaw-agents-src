@@ -23,8 +23,10 @@ done
 
 RUNTIME_CONTRACT="$SOURCE_DIR/runtime-contract.json"
 RUNTIME_HELPER="$SOURCE_DIR/shared/runtime-contract/runtime-contract.mjs"
+SPECIALIZED_ACCEPTANCE="$SOURCE_DIR/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 DEPLOY="$SOURCE_DIR/agents/tasks/deploy.sh"
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Frozen runtime requirements or qualification helper are unavailable" >&2; exit 2; }
+[ -f "$SPECIALIZED_ACCEPTANCE" ] || { echo "Frozen specialized-agent acceptance probe is unavailable" >&2; exit 2; }
 [ -x "$DEPLOY" ] || { echo "Frozen Task deploy entrypoint is unavailable or not executable" >&2; exit 2; }
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Frozen rollout source checkout is dirty" >&2; exit 2; }
 SOURCE_REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
@@ -70,6 +72,10 @@ BACKUP_SHA256=""
 CORE_VERSION="$EXPECTED_OPENCLAW_VERSION"
 GATEWAY_READY=false
 CODEX_VERSION=""
+SPECIALIZED_BASELINE=""
+SPECIALIZED_PRECHECK=false
+SPECIALIZED_CORE_ACCEPTANCE=false
+SPECIALIZED_FINAL_ACCEPTANCE=false
 PREDEPLOY_RESULT=""
 PREDEPLOY_STAGE=""
 PREDEPLOY_MUTATION_STARTED=false
@@ -87,13 +93,16 @@ write_result() {
   STAGE_ENV="$STAGE" REASON_ENV="$REASON" SOURCE_REVISION_ENV="$SOURCE_REVISION" \
   PREDECESSOR_ENV="$EXPECTED_OPENCLAW_VERSION" TARGET_ENV="$TARGET_OPENCLAW_VERSION" \
   MUTATION_ENV="$MUTATION_STARTED" BACKUP_ENV="$BACKUP_CREATED" BACKUP_ARCHIVE_ENV="$BACKUP_ARCHIVE" BACKUP_SHA256_ENV="$BACKUP_SHA256" CORE_ENV="$CORE_VERSION" \
-  GATEWAY_ENV="$GATEWAY_READY" CODEX_ENV="$CODEX_VERSION" PREDEPLOY_RESULT_ENV="$PREDEPLOY_RESULT" \
-  PREDEPLOY_STAGE_ENV="$PREDEPLOY_STAGE" PREDEPLOY_MUTATION_ENV="$PREDEPLOY_MUTATION_STARTED" TASK_RESULT_ENV="$TASK_DEPLOY_RESULT" \
+  GATEWAY_ENV="$GATEWAY_READY" CODEX_ENV="$CODEX_VERSION" SPECIALIZED_BASELINE_ENV="$SPECIALIZED_BASELINE" \
+  SPECIALIZED_PRECHECK_ENV="$SPECIALIZED_PRECHECK" SPECIALIZED_CORE_ENV="$SPECIALIZED_CORE_ACCEPTANCE" SPECIALIZED_FINAL_ENV="$SPECIALIZED_FINAL_ACCEPTANCE" \
+  PREDEPLOY_RESULT_ENV="$PREDEPLOY_RESULT" PREDEPLOY_STAGE_ENV="$PREDEPLOY_STAGE" PREDEPLOY_MUTATION_ENV="$PREDEPLOY_MUTATION_STARTED" TASK_RESULT_ENV="$TASK_DEPLOY_RESULT" \
   TASK_STAGE_ENV="$TASK_DEPLOY_STAGE" TASK_MUTATION_ENV="$TASK_MUTATION_STARTED" \
   UPDATE_RUN_ID_ENV="$UPDATE_RUN_ID" UPDATE_RUN_STATUS_ENV="$UPDATE_RUN_STATUS" UPDATE_RUN_RECONCILED_ENV="$UPDATE_RUN_RECONCILED" UPDATE_COMMAND_EXIT_ENV="$UPDATE_COMMAND_EXIT" \
   node - "$TMP_RESULT" <<'NODE'
 const fs=require('fs');
 const bool=(name)=>process.env[name]==='true';
+let specialized=null;
+if(process.env.SPECIALIZED_BASELINE_ENV){try{specialized=JSON.parse(process.env.SPECIALIZED_BASELINE_ENV);}catch{}}
 const out={
   request_id:Number(process.env.REQUEST_ID_ENV),
   outcome:process.env.OUTCOME_ENV,
@@ -110,6 +119,11 @@ const out={
   core_version:process.env.CORE_ENV||null,
   gateway_ready:bool('GATEWAY_ENV'),
   codex_version:process.env.CODEX_ENV||null,
+  specialized_runtime_precheck:bool('SPECIALIZED_PRECHECK_ENV'),
+  specialized_core_acceptance:bool('SPECIALIZED_CORE_ENV'),
+  specialized_final_acceptance:bool('SPECIALIZED_FINAL_ENV'),
+  specialized_agent_ids:Array.isArray(specialized?.agent_ids)?specialized.agent_ids:null,
+  specialized_external_plugin_ids:Array.isArray(specialized?.external_plugin_ids)?specialized.external_plugin_ids:null,
   task_predeploy_result:process.env.PREDEPLOY_RESULT_ENV||null,
   task_predeploy_stage:process.env.PREDEPLOY_STAGE_ENV||null,
   task_predeploy_mutation_started:bool('PREDEPLOY_MUTATION_ENV'),
@@ -151,6 +165,10 @@ gateway_health() {
   set -e
   rm -f "$file"
   [ "$code" -eq 0 ]
+}
+
+specialized_runtime_accepts() {
+  node "$SPECIALIZED_ACCEPTANCE" accept "$OPENCLAW_BIN" "$SPECIALIZED_BASELINE" >>"$LOG" 2>&1
 }
 
 # The OpenClaw CLI may hand an admitted update to a detached managed-service
@@ -295,6 +313,12 @@ NODE
 then rm -f "$DRY_JSON"; REASON="Exact-target OpenClaw dry-run did not prove the frozen rollout plan"; finish; fi
 rm -f "$DRY_JSON"
 
+if ! SPECIALIZED_BASELINE=$(node "$SPECIALIZED_ACCEPTANCE" snapshot "$OPENCLAW_BIN" 2>>"$LOG"); then
+  REASON="Current specialized-agent runtime did not pass deterministic pre-upgrade acceptance"
+  finish
+fi
+SPECIALIZED_PRECHECK=true
+
 BACKUP_JSON=$(mktemp "$EXEC_DIR/backup-$REQUEST_ID.XXXXXX")
 chmod 600 "$BACKUP_JSON"
 set +e
@@ -385,6 +409,11 @@ CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
 if [ "$CORE_VERSION" != "$TARGET_OPENCLAW_VERSION" ]; then OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_ACCEPTANCE"; REASON="Installed OpenClaw version does not match the frozen target"; finish; fi
 if gateway_health; then GATEWAY_READY=true; else GATEWAY_READY=false; fi
 if [ "$GATEWAY_READY" != true ]; then OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_ACCEPTANCE"; REASON="Gateway health RPC did not recover after the OpenClaw update"; finish; fi
+if specialized_runtime_accepts; then
+  SPECIALIZED_CORE_ACCEPTANCE=true
+else
+  OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="SPECIALIZED_CORE_ACCEPTANCE"; REASON="Specialized-agent runtime health or identity changed after the OpenClaw update"; finish
+fi
 
 CODEX_EXPECTED=$(node -e 'const v=process.argv[1],m=/^([0-9]+\.[0-9]+\.[0-9]+)-[0-9]+$/u.exec(v);process.stdout.write(m?m[1]:v);' "$TARGET_OPENCLAW_VERSION")
 CODEX_JSON=$(mktemp "$EXEC_DIR/codex-$REQUEST_ID.XXXXXX")
@@ -425,6 +454,11 @@ const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'
 NODE
 )
 rm -f "$FINAL_CODEX_JSON"
+if specialized_runtime_accepts; then
+  SPECIALIZED_FINAL_ACCEPTANCE=true
+else
+  OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="FINAL_ACCEPTANCE"; REASON="Final specialized-agent runtime acceptance failed after Task deployment"; finish
+fi
 
 OUTCOME="SUCCESS"
 BLOCK_FURTHER=false
