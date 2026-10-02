@@ -135,8 +135,16 @@ cp -p "$DIAG_BEFORE" "$RECOVERY_DIR/diagnose.before.json"
 STATE_MUTATED=false
 restore_state(){
   [ "$STATE_MUTATED" = true ] || return 0
-  cp "$RECOVERY_DIR/state.before.json" "$STATE_FILE" || return 1
-  chmod 600 "$STATE_FILE" || return 1
+  local restore_tmp
+  restore_tmp=$(mktemp "$STATE_DIR/state.json.restore.$REQUEST_ID.XXXXXX") || return 1
+  if ! install -m 600 "$RECOVERY_DIR/state.before.json" "$restore_tmp"; then
+    rm -f "$restore_tmp"
+    return 1
+  fi
+  if ! mv "$restore_tmp" "$STATE_FILE"; then
+    rm -f "$restore_tmp"
+    return 1
+  fi
   STATE_MUTATED=false
 }
 restore_on_error(){
@@ -179,7 +187,8 @@ const fs=require('fs'),d=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),bas
 if(d?.ok!==true||d?.checks?.provenance?.production_baseline_sha!==baseline||d?.checks?.provenance?.source_revision!==baseline||d?.checks?.runtime?.openclaw_version!==version||d?.checks?.release?.ok!==true)process.exit(2);
 NODE
 then
-  cp "$RECOVERY_DIR/state.before.json" "$STATE_FILE"; chmod 600 "$STATE_FILE"; STATE_MUTATED=false; fail "post-reconciliation diagnostics failed; state restored"
+  restore_state || { echo "PRE_MUTATION_RECONCILIATION_RECOVERY_INCOMPLETE" >&2; exit 3; }
+  fail "post-reconciliation diagnostics failed; state restored"
 fi
 cp -p "$DIAG_AFTER" "$RECOVERY_DIR/diagnose.after.json"
 RESULT_FILE="$RECOVERY_DIR/reconciliation-result.json"
