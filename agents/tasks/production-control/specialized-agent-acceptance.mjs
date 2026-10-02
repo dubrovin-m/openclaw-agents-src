@@ -62,6 +62,47 @@ function normalizeAgentRuntime(value) {
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function normalizeStringSet(value, label) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim() === '')) {
+    throw new Error(`${label} is invalid`);
+  }
+  const sorted = [...value].sort();
+  if (new Set(sorted).size !== sorted.length) throw new Error(`${label} contains duplicates`);
+  return sorted;
+}
+
+function normalizeToolPolicyValue(value, path = 'tools') {
+  if (Array.isArray(value)) return value.map((item, index) => normalizeToolPolicyValue(item, `${path}[${index}]`));
+  if (value && typeof value === 'object') {
+    const out = {};
+    for (const key of Object.keys(value).sort()) {
+      const child = value[key];
+      if (['allow', 'deny', 'alsoAllow'].includes(key) && Array.isArray(child)) {
+        out[key] = normalizeStringSet(child, `${path}.${key}`);
+      } else {
+        out[key] = normalizeToolPolicyValue(child, `${path}.${key}`);
+      }
+    }
+    return out;
+  }
+  return value;
+}
+
+function normalizeAgentToolPolicies(value, agentIds) {
+  const entries = requireObject(value, 'agent entries');
+  const entryIds = Object.keys(entries).sort();
+  if (JSON.stringify(entryIds) !== JSON.stringify(agentIds)) {
+    throw new Error('agent entries do not match agent roster');
+  }
+  return entryIds.map((id) => {
+    const entry = requireObject(entries[id], `agent entries.${id}`);
+    return {
+      id,
+      tools: entry.tools === undefined ? null : normalizeToolPolicyValue(entry.tools),
+    };
+  });
+}
+
 function normalizeToolNames(plugin) {
   const source = Array.isArray(plugin?.toolNames)
     ? plugin.toolNames
@@ -137,10 +178,13 @@ export function collectSnapshot(openclawBin, runner = runJson) {
   if (doctor.ok !== true) throw new Error('OpenClaw plugin doctor is not healthy');
 
   const agents = runner(openclawBin, ['agents', 'list', '--json']);
+  const agentIds = normalizeAgentRoster(agents);
+  const agentEntries = runner(openclawBin, ['config', 'get', 'agents.entries', '--json']);
   const plugins = normalizePluginInventory(runner(openclawBin, ['plugins', 'list', '--json']));
   return {
-    agent_ids: normalizeAgentRoster(agents),
+    agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntime(agents),
+    agent_tool_policies: normalizeAgentToolPolicies(agentEntries, agentIds),
     ...plugins,
   };
 }
@@ -187,12 +231,30 @@ function normalizeAgentRuntimeSnapshot(items, agentIds) {
   return normalized;
 }
 
+function normalizeAgentToolPolicySnapshot(items, agentIds) {
+  if (!Array.isArray(items)) throw new Error('snapshot agent tool policies are invalid');
+  const normalized = items.map((item, index) => {
+    if (!item || typeof item !== 'object' || typeof item.id !== 'string' || item.id.trim() === '') {
+      throw new Error(`snapshot agent tool policies[${index}] has no valid id`);
+    }
+    return {
+      id: item.id,
+      tools: item.tools === null || item.tools === undefined ? null : normalizeToolPolicyValue(item.tools),
+    };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+  if (JSON.stringify(normalized.map((item) => item.id)) !== JSON.stringify(agentIds)) {
+    throw new Error('snapshot agent tool policies do not match agent roster');
+  }
+  return normalized;
+}
+
 export function normalizeSnapshot(value) {
   const snapshot = requireObject(value, 'specialized acceptance snapshot');
   const agentIds = normalizeIds(snapshot.agent_ids, 'snapshot agent ids');
   const normalized = {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntimeSnapshot(snapshot.agent_runtime, agentIds),
+    agent_tool_policies: normalizeAgentToolPolicySnapshot(snapshot.agent_tool_policies, agentIds),
     active_plugin_ids: normalizeIds(snapshot.active_plugin_ids, 'snapshot active plugin ids', { allowEmpty: true }),
     external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids', { allowEmpty: true }),
     active_plugin_contracts: normalizeContracts(snapshot.active_plugin_contracts, 'snapshot active plugin contracts'),
@@ -220,6 +282,9 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   }
   if (JSON.stringify(actual.agent_runtime) !== JSON.stringify(expected.agent_runtime)) {
     throw new Error('agent runtime contract changed');
+  }
+  if (JSON.stringify(actual.agent_tool_policies) !== JSON.stringify(expected.agent_tool_policies)) {
+    throw new Error('agent tool authority policy changed');
   }
   const active = new Set(actual.active_plugin_ids);
   const missing = expected.external_plugin_ids.filter((id) => !active.has(id));
