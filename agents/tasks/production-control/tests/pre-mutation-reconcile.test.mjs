@@ -60,8 +60,19 @@ function run(f, apply = false, extraEnv = {}) {
     '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
     '--expected-target-openclaw-version', TARGET_VERSION];
   if (apply) args.push('--apply');
-  return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION, ...extraEnv } });
+  return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_TEST_MODE: '1', OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION, ...extraEnv } });
 }
+
+test('pre-mutation reconciliation rejects diagnostic overrides outside explicit test mode', (t) => {
+  const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
+  const args = [SCRIPT, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
+    '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
+    '--expected-target-openclaw-version', TARGET_VERSION, '--apply'];
+  const result = spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_DIAGNOSE: f.diagnose } });
+  assert.equal(result.status, 2);
+  assert.match(result.stderr, /OPC_DIAGNOSE is test-only/);
+});
 
 test('pre-mutation reconciliation preflight is read-only and apply clears only the proven block', (t) => {
   const f = fixture();

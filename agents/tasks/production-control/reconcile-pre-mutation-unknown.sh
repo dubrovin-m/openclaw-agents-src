@@ -2,6 +2,7 @@
 set -euo pipefail
 umask 077
 
+TEST_MODE="${OPC_TEST_MODE:-0}"
 STATE_DIR="${OPC_STATE_DIR:-$HOME/.local/state/openclaw-production-control}"
 LIB_DIR="${OPC_LIB_DIR:-$HOME/.local/lib/openclaw-production-control}"
 STATE_FILE="$STATE_DIR/state.json"
@@ -19,6 +20,21 @@ APPLY=false
 
 fail(){ echo "PRE_MUTATION_RECONCILIATION_REFUSED: $*" >&2; exit 2; }
 required_value(){ [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || fail "$1 requires a value"; }
+
+if [ "$TEST_MODE" = 1 ]; then
+  case "$STATE_DIR" in /tmp/*) ;; *) fail "test mode state must be under /tmp" ;; esac
+else
+  [ "$TEST_MODE" = 0 ] || fail "invalid OPC_TEST_MODE"
+  for name in OPC_STATE_DIR OPC_LIB_DIR OPC_DIAGNOSE OPC_INSTALLED_REVISION_FILE OPC_SYSTEMCTL; do
+    [ -z "${!name:-}" ] || fail "$name is test-only"
+  done
+  STATE_DIR="$HOME/.local/state/openclaw-production-control"
+  LIB_DIR="$HOME/.local/lib/openclaw-production-control"
+  STATE_FILE="$STATE_DIR/state.json"
+  DIAGNOSE="$LIB_DIR/diagnose.mjs"
+  REVISION_FILE="$LIB_DIR/installed-revision"
+  SYSTEMCTL=systemctl
+fi
 
 while [ "$#" -gt 0 ]; do
   case "$1" in
