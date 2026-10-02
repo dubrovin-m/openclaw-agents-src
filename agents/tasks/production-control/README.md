@@ -85,6 +85,12 @@ Bootstrap validates both repository relationships through GitHub, records the cu
 
 OpenClaw rollout requires at least 2 GiB of free space on the runtime/home, temporary-work, and controller-state filesystems before preparation proceeds, and re-checks the same headroom after creating the verified backup and before the first update mutation. Insufficient headroom is a pre-mutation refusal; the controller does not delete unrelated temporary data to make room.
 
+## Recovery retention
+
+Each rollout creates and verifies the new pre-update OpenClaw backup before any older rollout backup is removed. Once the new archive has a valid checksum, the rollout runner retains that current archive and prunes only older private `recovery/request-*/…tar.gz` rollout archives before the first production mutation. Unrelated recovery evidence and non-rollout paths are not pruned.
+
+Retention validation is fail-closed: an unexpected path, ownership/permission problem, or pruning error stops the rollout before the OpenClaw update begins. The compact execution result, checksum, request history, and other controller evidence remain retained even when a superseded archive is removed.
+
 ## Failure semantics
 
 Production mutation remains fail-closed. Unknown or unproven post-mutation outcomes block later production mutation until explicit reconciliation. There is no automatic production retry. Recovery and break-glass paths must preserve exact source/recovery provenance and remain separately approved when required.
