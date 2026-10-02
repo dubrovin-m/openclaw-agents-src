@@ -78,6 +78,22 @@ function run(f, apply = false, extraEnv = {}) {
   return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION, ...extraEnv } });
 }
 
+test('production reconciliation requires the exact clean runner revision', (t) => {
+  const f = fixture();
+  t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));
+  const baseArgs = [SCRIPT, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
+    '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
+    '--expected-target-openclaw-version', TARGET_VERSION];
+  const env = Object.fromEntries(Object.entries(process.env).filter(([name]) => !name.startsWith('OPC_')));
+  env.HOME = f.tmp;
+  const missing = spawnSync('bash', baseArgs, { encoding: 'utf8', env });
+  assert.equal(missing.status, 2);
+  assert.match(missing.stderr, /invalid or missing --expected-runner-sha/);
+  const mismatch = spawnSync('bash', [...baseArgs, '--expected-runner-sha', 'e'.repeat(40)], { encoding: 'utf8', env });
+  assert.equal(mismatch.status, 2);
+  assert.match(mismatch.stderr, /reconciliation runner revision mismatch/);
+});
+
 test('pre-mutation reconciliation rejects all OPC environment overrides outside explicit test mode', (t) => {
   const f = fixture();
   t.after(() => fs.rmSync(f.tmp, { recursive: true, force: true }));

@@ -17,6 +17,7 @@ EXPECTED_CONTROLLER_SHA=""
 EXPECTED_PROTECTED_SHA=""
 EXPECTED_OPENCLAW_VERSION=""
 EXPECTED_TARGET_OPENCLAW_VERSION=""
+EXPECTED_RUNNER_SHA=""
 APPLY=false
 
 fail(){ echo "PRE_MUTATION_RECONCILIATION_REFUSED: $*" >&2; exit 2; }
@@ -32,6 +33,7 @@ while [ "$#" -gt 0 ]; do
     --expected-protected-sha) required_value "$@"; EXPECTED_PROTECTED_SHA=$2; shift 2 ;;
     --expected-openclaw-version) required_value "$@"; EXPECTED_OPENCLAW_VERSION=$2; shift 2 ;;
     --expected-target-openclaw-version) required_value "$@"; EXPECTED_TARGET_OPENCLAW_VERSION=$2; shift 2 ;;
+    --expected-runner-sha) required_value "$@"; EXPECTED_RUNNER_SHA=$2; shift 2 ;;
     --apply) APPLY=true; shift ;;
     *) fail "unknown argument $1" ;;
   esac
@@ -51,6 +53,12 @@ else
   DIAGNOSE="$LIB_DIR/diagnose.mjs"
   REVISION_FILE="$LIB_DIR/installed-revision"
   SYSTEMCTL=systemctl
+  [[ "$EXPECTED_RUNNER_SHA" =~ ^[0-9a-f]{40}$ ]] || fail "invalid or missing --expected-runner-sha"
+  SCRIPT_DIR=$(cd "$(dirname "$0")" && pwd)
+  REPO_ROOT=$(git -C "$SCRIPT_DIR" rev-parse --show-toplevel 2>/dev/null || true)
+  [ -n "$REPO_ROOT" ] || fail "reconciliation runner repository unavailable"
+  [ "$(git -C "$REPO_ROOT" rev-parse HEAD)" = "$EXPECTED_RUNNER_SHA" ] || fail "reconciliation runner revision mismatch"
+  [ -z "$(git -C "$REPO_ROOT" status --porcelain --untracked-files=all)" ] || fail "reconciliation runner checkout is dirty"
 fi
 
 [[ "$REQUEST_ID" =~ ^[1-9][0-9]*$ ]] || fail "invalid request id"

@@ -10,6 +10,7 @@ The reconciler accepts only one exact request identity and explicit expected con
 - the request is an owner-authorized GitHub `rollout-openclaw` record with no active operation;
 - durable evidence is the known pre-mutation `TASK_PREDEPLOY` failure shape, with `mutation_started=false`, no Task deployment result, and a verified owner-private backup archive;
 - installed controller revision matches the expected controller SHA;
+- the reconciliation runner is executed from the explicitly expected clean reviewed repository revision;
 - Gateway and Nexus sync are active;
 - full private diagnostics prove the current production baseline, OpenClaw predecessor version, Task release, plugin state, database, config, and provenance are healthy.
 
@@ -26,6 +27,7 @@ bash agents/tasks/production-control/reconcile-pre-mutation-unknown.sh \
   --expected-protected-sha <protected-path-baseline> \
   --expected-openclaw-version <predecessor-version> \
   --expected-target-openclaw-version <target-version> \
+  --expected-runner-sha <exact-reviewed-runner-sha> \
   --apply
 ```
 
