@@ -101,6 +101,8 @@ case "${1:-}" in
         fi
       elif [ "${FAKE_UPDATE_HANDOFF_UNSAFE:-0}" = 1 ]; then
         echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-handoff-unsafe","createdAtMs":9999999999999,"phase":"finished","status":"succeeded","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"after":{"version":"2026.8.2"},"verification":{"recovery":{"serviceRestartSafe":false}}}}'
+      elif [ "${FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER:-0}" = 1 ]; then
+        echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-handoff-unsafe-no-after","createdAtMs":9999999999999,"phase":"finished","status":"failed","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"recovery":{"serviceRestartSafe":false}}}'
       elif [ "${FAKE_UPDATE_NO_RUN_ID:-0}" = 1 ]; then
         echo 2026.8.2 > "$FAKE_STATE"
         echo '{"channel":{"value":"stable"},"update":{"installKind":"package"},"activeRun":null,"lastRun":{"runId":"run-unrelated","createdAtMs":9999999999999,"phase":"finished","status":"succeeded","target":{"version":"2026.8.2"},"before":{"version":"2026.8.1"},"after":{"version":"2026.8.2"},"verification":{"recovery":{"serviceRestartSafe":true}}}}'
@@ -124,6 +126,10 @@ case "${1:-}" in
       fi
       if [ "${FAKE_UPDATE_HANDOFF_UNSAFE:-0}" = 1 ]; then
         echo '{"runId":"run-handoff-unsafe","status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
+        exit 1
+      fi
+      if [ "${FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER:-0}" = 1 ]; then
+        echo '{"runId":"run-handoff-unsafe-no-after","status":"skipped","mode":"npm","reason":"managed-service-handoff-started","before":{"version":"2026.8.1"},"steps":[],"durationMs":1}'
         exit 1
       fi
       if [ "${FAKE_UPDATE_NO_RUN_ID:-0}" = 1 ]; then
@@ -285,6 +291,16 @@ assert_field "$CASE_RESULT" update_run_id '"run-handoff-unsafe"'
 assert_field "$CASE_RESULT" update_run_status '"succeeded"'
 assert_field "$CASE_RESULT" update_run_reconciled true
 assert_field "$CASE_RESULT" update_command_exit 1
+
+run_case 118 FAKE_UPDATE_HANDOFF_UNSAFE_NO_AFTER=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" update_run_id '"run-handoff-unsafe-no-after"'
+assert_field "$CASE_RESULT" update_run_status '"failed"'
+assert_field "$CASE_RESULT" update_run_reconciled true
+assert_field "$CASE_RESULT" update_command_exit 1
+assert_field "$CASE_RESULT" core_version '"2026.8.1"'
 
 run_case 114 FAKE_UPDATE_UNSAFE=1
 [ "$CASE_EXIT" -eq 2 ]
