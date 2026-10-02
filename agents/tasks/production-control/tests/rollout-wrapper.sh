@@ -14,7 +14,7 @@ FAKE_TRACE="$TMP/trace"
 FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
 TASK_RESULT_DIR="$TMP/task-results"
 FAKE_HOME="$TMP/home"
-mkdir -p "$FAKE_HOME" "$SRC/agents/tasks" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
+mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
 
 cat > "$SRC/runtime-contract.json" <<'JSON'
 {
@@ -33,6 +33,7 @@ cat > "$SRC/openclaw-qualification.json" <<'JSON'
 }
 JSON
 cp "$ROOT/shared/runtime-contract/runtime-contract.mjs" "$SRC/shared/runtime-contract/runtime-contract.mjs"
+cp "$ROOT/agents/tasks/production-control/specialized-agent-acceptance.mjs" "$SRC/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 cat > "$SRC/agents/tasks/deploy.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -73,6 +74,22 @@ printf '%s\n' "$*" >> "$FAKE_TRACE"
 case "${1:-}" in
   --version)
     echo "OpenClaw $(cat "$FAKE_STATE")"
+    ;;
+  config)
+    [ "${2:-}" = validate ] || exit 2
+    if [ "${FAKE_CONFIG_INVALID:-0}" = 1 ]; then
+      echo '{"valid":false,"issues":[{"path":"agents.entries","message":"fake invalid config"}]}'
+    else
+      echo '{"valid":true,"issues":[]}'
+    fi
+    ;;
+  agents)
+    [ "${2:-}" = list ] || exit 2
+    if [ "${FAKE_AGENT_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+      echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"}]'
+    else
+      echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"},{"id":"investments"}]'
+    fi
     ;;
   gateway)
     if [ "${2:-}" = health ]; then
@@ -158,10 +175,29 @@ case "${1:-}" in
     echo '{"ok":true}'
     ;;
   plugins)
-    [ "${2:-}" = inspect ] && [ "${3:-}" = codex ] || exit 2
-    version=2026.8.2
-    [ "${FAKE_CODEX_MISMATCH:-0}" != 1 ] || version=2026.8.1
-    printf '{"plugin":{"id":"codex","status":"loaded","version":"%s"},"compatibility":[],"install":{"version":"%s"}}\n' "$version" "$version"
+    case "${2:-}" in
+      doctor)
+        if [ "${FAKE_PLUGIN_DOCTOR_FAIL:-0}" = 1 ]; then
+          echo '{"ok":false,"warnings":[],"errors":["fake plugin failure"]}'
+        else
+          echo '{"ok":true,"warnings":[],"errors":[]}'
+        fi
+        ;;
+      list)
+        if [ "${FAKE_PLUGIN_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"}]}'
+        else
+          echo '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"},{"id":"investment-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"telegram","enabled":true,"origin":"bundled","status":"loaded"}]}'
+        fi
+        ;;
+      inspect)
+        [ "${3:-}" = codex ] || exit 2
+        version=2026.8.2
+        [ "${FAKE_CODEX_MISMATCH:-0}" != 1 ] || version=2026.8.1
+        printf '{"plugin":{"id":"codex","status":"loaded","version":"%s"},"compatibility":[],"install":{"version":"%s"}}\n' "$version" "$version"
+        ;;
+      *) exit 2 ;;
+    esac
     ;;
   *) exit 2 ;;
 esac
@@ -226,6 +262,11 @@ const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'
 NODE
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
 assert_field "$CASE_RESULT" codex_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance true
+assert_field "$CASE_RESULT" specialized_final_acceptance true
+assert_field "$CASE_RESULT" specialized_agent_ids '["calendar","engineer","investments","main","tasks"]'
+assert_field "$CASE_RESULT" specialized_external_plugin_ids '["calendar-analytics","codex","contacts","investment-analytics","taskctl"]'
 assert_field "$CASE_RESULT" task_predeploy_result '"PASS"'
 assert_field "$CASE_RESULT" task_predeploy_mutation_started true
 assert_field "$CASE_RESULT" task_deploy_result '"PASS"'
@@ -257,6 +298,14 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" mutation_started false
 ! grep -q '^backup create ' "$FAKE_TRACE"
 
+run_case 119 FAKE_PLUGIN_DOCTOR_FAIL=1
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" specialized_runtime_precheck false
+! grep -q '^backup create ' "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
+
 run_case 105 FAKE_UPDATE_FAIL=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
@@ -275,6 +324,7 @@ assert_field "$CASE_RESULT" update_run_status '"succeeded"'
 assert_field "$CASE_RESULT" update_run_reconciled true
 assert_field "$CASE_RESULT" update_command_exit 1
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_final_acceptance true
 
 run_case 116 FAKE_UPDATE_NO_RUN_ID=1
 [ "$CASE_EXIT" -eq 2 ]
@@ -308,11 +358,30 @@ assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
 assert_field "$CASE_RESULT" update_run_reconciled false
 assert_field "$CASE_RESULT" update_command_exit 1
 
+run_case 120 FAKE_AGENT_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 121 FAKE_PLUGIN_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
 run_case 106 FAKE_CODEX_MISMATCH=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_core_acceptance true
 
 run_case 107 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=PRECHECK FAKE_TASK_MUTATION=false
 [ "$CASE_EXIT" -eq 1 ]
