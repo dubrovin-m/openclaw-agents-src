@@ -55,12 +55,12 @@ function fixture() {
   return { tmp, stateDir, libDir, systemctl, diagnose, stateFile };
 }
 
-function run(f, apply = false) {
+function run(f, apply = false, extraEnv = {}) {
   const args = [SCRIPT, '--request-id', String(REQUEST), '--expected-target-sha', TARGET, '--expected-production-sha', BASELINE,
     '--expected-controller-sha', CONTROLLER, '--expected-protected-sha', PROTECTED, '--expected-openclaw-version', PREDECESSOR_VERSION,
     '--expected-target-openclaw-version', TARGET_VERSION];
   if (apply) args.push('--apply');
-  return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION } });
+  return spawnSync('bash', args, { encoding: 'utf8', env: { ...process.env, OPC_STATE_DIR: f.stateDir, OPC_LIB_DIR: f.libDir, OPC_DIAGNOSE: f.diagnose, OPC_INSTALLED_REVISION_FILE: path.join(f.libDir, 'installed-revision'), OPC_SYSTEMCTL: f.systemctl, FAKE_BASELINE: BASELINE, FAKE_VERSION: PREDECESSOR_VERSION, ...extraEnv } });
 }
 
 test('pre-mutation reconciliation preflight is read-only and apply clears only the proven block', () => {
@@ -92,6 +92,20 @@ test('pre-mutation reconciliation refuses evidence that reports mutation', () =>
   fs.writeFileSync(evidenceFile, `${JSON.stringify(evidence, null, 2)}\n`, { mode: 0o600 });
   const result = run(f, true);
   assert.notEqual(result.status, 0);
+  const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
+  assert.equal(state.deployment_blocked, true);
+  assert.equal(state.requests[String(REQUEST)].state, 'UNKNOWN');
+});
+
+
+test('pre-mutation reconciliation restores blocked state on SIGTERM after mutation', () => {
+  const f = fixture();
+  const before = fs.readFileSync(f.stateFile, 'utf8');
+  const counter = path.join(f.tmp, 'diagnose-count');
+  fs.writeFileSync(f.diagnose, `import fs from 'node:fs';\nconst counter=process.env.FAKE_DIAG_COUNTER;\nconst n=(fs.existsSync(counter)?Number(fs.readFileSync(counter,'utf8')):0)+1;\nfs.writeFileSync(counter,String(n));\nif(n===2) process.kill(process.ppid,'SIGTERM');\nconst b=process.env.FAKE_BASELINE,v=process.env.FAKE_VERSION;process.stdout.write(JSON.stringify({ok:true,checks:{runtime:{ok:true,openclaw_version:v,expected_openclaw_version:v},provenance:{ok:true,production_baseline_sha:b,source_revision:b},release:{ok:true}}})+'\\n');\n`, { mode: 0o600 });
+  const result = run(f, true, { FAKE_DIAG_COUNTER: counter });
+  assert.equal(result.status, 143, result.stderr);
+  assert.equal(fs.readFileSync(f.stateFile, 'utf8'), before);
   const state = JSON.parse(fs.readFileSync(f.stateFile, 'utf8'));
   assert.equal(state.deployment_blocked, true);
   assert.equal(state.requests[String(REQUEST)].state, 'UNKNOWN');

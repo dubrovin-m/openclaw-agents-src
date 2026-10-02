@@ -117,15 +117,33 @@ cp -p "$STATE_FILE" "$RECOVERY_DIR/state.before.json"
 cp -p "$EVIDENCE_FILE" "$RECOVERY_DIR/operation-evidence.json"
 cp -p "$DIAG_BEFORE" "$RECOVERY_DIR/diagnose.before.json"
 STATE_MUTATED=false
+restore_state(){
+  [ "$STATE_MUTATED" = true ] || return 0
+  cp "$RECOVERY_DIR/state.before.json" "$STATE_FILE" || return 1
+  chmod 600 "$STATE_FILE" || return 1
+  STATE_MUTATED=false
+}
 restore_on_error(){
   rc=$?
-  if [ "$rc" -ne 0 ] && [ "$STATE_MUTATED" = true ]; then
-    cp "$RECOVERY_DIR/state.before.json" "$STATE_FILE"
-    chmod 600 "$STATE_FILE"
+  trap - ERR INT TERM
+  if [ "$rc" -ne 0 ] && ! restore_state; then
+    echo "PRE_MUTATION_RECONCILIATION_RECOVERY_INCOMPLETE" >&2
+    exit 3
+  fi
+  exit "$rc"
+}
+restore_on_signal(){
+  rc=$1
+  trap - ERR INT TERM
+  if ! restore_state; then
+    echo "PRE_MUTATION_RECONCILIATION_RECOVERY_INCOMPLETE" >&2
+    exit 3
   fi
   exit "$rc"
 }
 trap 'restore_on_error' ERR
+trap 'restore_on_signal 130' INT
+trap 'restore_on_signal 143' TERM
 CANDIDATE="$STATE_DIR/state.json.pre-mutation.$REQUEST_ID.$$"
 node - "$STATE_FILE" "$DIAG_BEFORE" "$CANDIDATE" "$REQUEST_ID" "$EXPECTED_PRODUCTION_SHA" <<'NODE'
 const fs=require('fs');
@@ -156,6 +174,6 @@ fs.writeFileSync(out,JSON.stringify({ok:true,request_id:id,reconciled_state:r.st
 NODE
 chmod 600 "$RESULT_FILE"
 STATE_MUTATED=false
-trap - ERR
+trap - ERR INT TERM
 echo "PRE_MUTATION_RECONCILIATION_PASS request=$REQUEST_ID baseline=$EXPECTED_PRODUCTION_SHA"
 echo "RESULT_FILE=$RESULT_FILE"
