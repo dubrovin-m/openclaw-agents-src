@@ -13,6 +13,7 @@ FAKE_STATE="$TMP/openclaw-version"
 FAKE_TRACE="$TMP/trace"
 FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
 FAKE_PREDEPLOY_PLUGIN_MARKER="$TMP/predeploy-plugin-staged"
+FAKE_PREDEPLOY_AUTHORITY_MARKER="$TMP/predeploy-authority-drift"
 TASK_RESULT_DIR="$TMP/task-results"
 FAKE_HOME="$TMP/home"
 mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
@@ -53,6 +54,9 @@ if [ "$count" -eq 1 ]; then
   if [ "${FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE:-0}" = 1 ] && [ "$OUTCOME" = PASS ]; then
     : > "$FAKE_PREDEPLOY_PLUGIN_MARKER"
   fi
+  if [ "${FAKE_PREDEPLOY_AGENT_TOOL_DRIFT:-0}" = 1 ] && [ "$OUTCOME" = PASS ]; then
+    : > "$FAKE_PREDEPLOY_AUTHORITY_MARKER"
+  fi
 else
   OUTCOME=${FAKE_TASK_OUTCOME:-PASS}
   STAGE=${FAKE_TASK_STAGE:-NOOP}
@@ -90,7 +94,9 @@ case "${1:-}" in
         ;;
       get)
         [ "${3:-}" = agents.entries ] || exit 2
-        if [ "${FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+        if [ -e "$FAKE_PREDEPLOY_AUTHORITY_MARKER" ]; then
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        elif [ "${FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
           echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
         else
           echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":["exec"],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
@@ -242,7 +248,7 @@ SH
 chmod 700 "$FAKEBIN/sleep"
 
 export PATH="$FAKEBIN:$PATH"
-export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER FAKE_PREDEPLOY_PLUGIN_MARKER
+export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER FAKE_PREDEPLOY_PLUGIN_MARKER FAKE_PREDEPLOY_AUTHORITY_MARKER
 export FAKE_STATUS_CALL_COUNTER="$TMP/status-call-counter"
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
 export FAKE_TASK_CALL_COUNTER="$TMP/task-call-counter"
@@ -261,7 +267,7 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
-  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_PREDEPLOY_PLUGIN_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
+  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_PREDEPLOY_PLUGIN_MARKER" "$FAKE_PREDEPLOY_AUTHORITY_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
   env HOME="$FAKE_HOME" "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
@@ -297,6 +303,16 @@ assert_field "$CASE_RESULT" outcome '"SUCCESS"'
 assert_field "$CASE_RESULT" specialized_runtime_precheck true
 assert_field "$CASE_RESULT" specialized_core_acceptance true
 assert_field "$CASE_RESULT" specialized_final_acceptance true
+
+run_case 124 FAKE_PREDEPLOY_AGENT_TOOL_DRIFT=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"TASK_PREDEPLOY_ACCEPTANCE"'
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 run_case 102 FAKE_BACKUP_FAIL=1
 [ "$CASE_EXIT" -eq 1 ]
