@@ -365,8 +365,8 @@ if [ "$CORE_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || ! gateway_health; then
   GATEWAY_READY=false; OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging did not preserve a healthy predecessor OpenClaw runtime"; finish
 fi
 GATEWAY_READY=true
-if ! STAGED_SPECIALIZED_BASELINE=$(node "$SPECIALIZED_ACCEPTANCE" snapshot "$OPENCLAW_BIN" 2>>"$LOG"); then
-  BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging did not preserve specialized-agent deterministic acceptance"
+if ! STAGED_SPECIALIZED_BASELINE=$(node "$SPECIALIZED_ACCEPTANCE" stage "$OPENCLAW_BIN" "$SPECIALIZED_BASELINE" taskctl 2>>"$LOG"); then
+  BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging changed specialized-agent state outside the allowed taskctl contract"
   if [ "$MUTATION_STARTED" = true ]; then OUTCOME="RECOVERY_REQUIRED"; else OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; fi
   finish
 fi
