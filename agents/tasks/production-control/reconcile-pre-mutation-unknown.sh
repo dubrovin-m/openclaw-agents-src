@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 
 INHERITED_OPC_ENV=$(env | awk -F= '$1 ~ /^OPC_/ {print $1}' | sort -u | paste -sd, -)
-TEST_MODE="${OPC_TEST_MODE:-0}"
+TEST_ROOT=""
 STATE_DIR="${OPC_STATE_DIR:-$HOME/.local/state/openclaw-production-control}"
 LIB_DIR="${OPC_LIB_DIR:-$HOME/.local/lib/openclaw-production-control}"
 STATE_FILE="$STATE_DIR/state.json"
@@ -22,21 +22,9 @@ APPLY=false
 fail(){ echo "PRE_MUTATION_RECONCILIATION_REFUSED: $*" >&2; exit 2; }
 required_value(){ [ "$#" -ge 2 ] && [ -n "$2" ] && [[ "$2" != --* ]] || fail "$1 requires a value"; }
 
-if [ "$TEST_MODE" = 1 ]; then
-  case "$STATE_DIR" in /tmp/*) ;; *) fail "test mode state must be under /tmp" ;; esac
-else
-  [ "$TEST_MODE" = 0 ] || fail "invalid OPC_TEST_MODE"
-  [ -z "$INHERITED_OPC_ENV" ] || fail "OPC_* environment overrides are test-only: $INHERITED_OPC_ENV"
-  STATE_DIR="$HOME/.local/state/openclaw-production-control"
-  LIB_DIR="$HOME/.local/lib/openclaw-production-control"
-  STATE_FILE="$STATE_DIR/state.json"
-  DIAGNOSE="$LIB_DIR/diagnose.mjs"
-  REVISION_FILE="$LIB_DIR/installed-revision"
-  SYSTEMCTL=systemctl
-fi
-
 while [ "$#" -gt 0 ]; do
   case "$1" in
+    --test-root) required_value "$@"; TEST_ROOT=$2; shift 2 ;;
     --request-id) required_value "$@"; REQUEST_ID=$2; shift 2 ;;
     --expected-target-sha) required_value "$@"; EXPECTED_TARGET_SHA=$2; shift 2 ;;
     --expected-production-sha) required_value "$@"; EXPECTED_PRODUCTION_SHA=$2; shift 2 ;;
@@ -48,6 +36,20 @@ while [ "$#" -gt 0 ]; do
     *) fail "unknown argument $1" ;;
   esac
 done
+
+if [ -n "$TEST_ROOT" ]; then
+  case "$TEST_ROOT" in /tmp/*) ;; *) fail "--test-root must be under /tmp" ;; esac
+  TEST_ROOT=$(realpath -e "$TEST_ROOT") || fail "unable to resolve --test-root"
+  case "$STATE_DIR" in "$TEST_ROOT"/*) ;; *) fail "test state must be under --test-root" ;; esac
+else
+  [ -z "$INHERITED_OPC_ENV" ] || fail "OPC_* environment overrides are test-only: $INHERITED_OPC_ENV"
+  STATE_DIR="$HOME/.local/state/openclaw-production-control"
+  LIB_DIR="$HOME/.local/lib/openclaw-production-control"
+  STATE_FILE="$STATE_DIR/state.json"
+  DIAGNOSE="$LIB_DIR/diagnose.mjs"
+  REVISION_FILE="$LIB_DIR/installed-revision"
+  SYSTEMCTL=systemctl
+fi
 
 [[ "$REQUEST_ID" =~ ^[1-9][0-9]*$ ]] || fail "invalid request id"
 for value in "$EXPECTED_TARGET_SHA" "$EXPECTED_PRODUCTION_SHA" "$EXPECTED_CONTROLLER_SHA" "$EXPECTED_PROTECTED_SHA"; do
