@@ -79,6 +79,7 @@ TASK_MUTATION_STARTED=false
 UPDATE_RUN_ID=""
 UPDATE_RUN_STATUS=""
 UPDATE_RUN_RECONCILED=false
+UPDATE_RUN_UNSAFE=false
 UPDATE_COMMAND_EXIT=""
 
 write_result() {
@@ -159,7 +160,7 @@ gateway_health() {
 UPDATE_RUN_MAX_POLLS=120
 UPDATE_RUN_POLL_SECONDS=5
 reconcile_update_run() {
-  local previous_run_id=$1 update_result_file=$2 started_ms=$3
+  local update_result_file=$1
   local explicit_run_id attempt=0 status_file status_exit fields parse_exit run_id phase status after_version restart_safe
   explicit_run_id=$(node - "$update_result_file" <<'NODE'
 const fs=require('fs');let v={};try{v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));}catch{}
@@ -167,22 +168,20 @@ const id=v?.runId??v?.run?.runId??v?.result?.runId??null;
 if(typeof id==='string')process.stdout.write(id);
 NODE
   )
+  [ -n "$explicit_run_id" ] || return 3
   while [ "$attempt" -lt "$UPDATE_RUN_MAX_POLLS" ]; do
     status_file=$(mktemp "$EXEC_DIR/update-ledger-$REQUEST_ID.XXXXXX")
     chmod 600 "$status_file"
     if "$OPENCLAW_BIN" update status --json --timeout 10 >"$status_file" 2>>"$LOG"; then status_exit=0; else status_exit=$?; fi
     if [ "$status_exit" -eq 0 ]; then
-      if fields=$(PREVIOUS_ENV="$previous_run_id" EXPLICIT_ENV="$explicit_run_id" TARGET_ENV="$TARGET_OPENCLAW_VERSION" EXPECTED_ENV="$EXPECTED_OPENCLAW_VERSION" STARTED_ENV="$started_ms" node - "$status_file" <<'NODE'
+      if fields=$(EXPLICIT_ENV="$explicit_run_id" TARGET_ENV="$TARGET_OPENCLAW_VERSION" EXPECTED_ENV="$EXPECTED_OPENCLAW_VERSION" node - "$status_file" <<'NODE'
 const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
-const previous=process.env.PREVIOUS_ENV||'';const explicit=process.env.EXPLICIT_ENV||'';
-const target=process.env.TARGET_ENV;const expected=process.env.EXPECTED_ENV;const started=Number(process.env.STARTED_ENV||0);
+const explicit=process.env.EXPLICIT_ENV;const target=process.env.TARGET_ENV;const expected=process.env.EXPECTED_ENV;
 const candidates=[v?.activeRun,v?.lastRun].filter(x=>x&&typeof x==='object');
 const run=candidates.find((r)=>{
-  if(typeof r.runId!=='string'||!r.runId)return false;
-  if(explicit ? r.runId!==explicit : r.runId===previous)return false;
+  if(typeof r.runId!=='string'||r.runId!==explicit)return false;
   if(r?.target?.version!==target)return false;
   if(r?.before?.version&&r.before.version!==expected)return false;
-  if(started&&Number.isSafeInteger(r.createdAtMs)&&r.createdAtMs<started-5000)return false;
   return true;
 });
 if(!run)process.exit(3);
@@ -198,7 +197,11 @@ NODE
           UPDATE_RUN_STATUS="$status"
           UPDATE_RUN_RECONCILED=true
           rm -f "$status_file"
-          if [ "$status" = "succeeded" ] && [ "$after_version" = "$TARGET_OPENCLAW_VERSION" ] && [ "$restart_safe" != false ]; then
+          if [ "$restart_safe" = false ]; then
+            UPDATE_RUN_UNSAFE=true
+            return 4
+          fi
+          if [ "$status" = "succeeded" ] && [ "$after_version" = "$TARGET_OPENCLAW_VERSION" ]; then
             return 0
           fi
           return 1
@@ -273,10 +276,6 @@ const ok=v?.channel?.value==='stable'&&v?.update?.installKind==='package'&&!v?.a
 if(!ok)process.exit(2);
 NODE
 then rm -f "$STATUS_JSON"; REASON="Production update state is not an idle stable package installation"; finish; fi
-STATUS_BASELINE_RUN_ID=$(node - "$STATUS_JSON" <<'NODE'
-const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));if(typeof v?.lastRun?.runId==='string')process.stdout.write(v.lastRun.runId);
-NODE
-)
 rm -f "$STATUS_JSON"
 CORE_VERSION=$(read_openclaw_version 2>/dev/null || true)
 [ "$CORE_VERSION" = "$EXPECTED_OPENCLAW_VERSION" ] || { REASON="Shell OpenClaw version does not match the qualified predecessor"; finish; }
@@ -333,7 +332,6 @@ fi
 UPDATE_JSON=$(mktemp "$EXEC_DIR/update-$REQUEST_ID.XXXXXX")
 chmod 600 "$UPDATE_JSON"
 MUTATION_STARTED=true
-UPDATE_STARTED_MS=$(node -e 'process.stdout.write(String(Date.now()))')
 set +e
 "$OPENCLAW_BIN" update --tag "$TARGET_OPENCLAW_VERSION" --json >"$UPDATE_JSON" 2>>"$LOG"
 UPDATE_EXIT=$?
@@ -356,12 +354,18 @@ else
     rm -f "$UPDATE_JSON"
     OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw update reported that managed service restart is unsafe"; finish
   fi
-  if reconcile_update_run "$STATUS_BASELINE_RUN_ID" "$UPDATE_JSON" "$UPDATE_STARTED_MS"; then RECONCILE_EXIT=0; else RECONCILE_EXIT=$?; fi
+  if reconcile_update_run "$UPDATE_JSON"; then RECONCILE_EXIT=0; else RECONCILE_EXIT=$?; fi
   if [ "$RECONCILE_EXIT" -eq 0 ]; then
     UPDATE_ACCEPTED=true
   elif [ "$RECONCILE_EXIT" -eq 2 ]; then
     rm -f "$UPDATE_JSON"
     OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw update outcome did not become terminal in the durable run ledger"; finish
+  elif [ "$RECONCILE_EXIT" -eq 3 ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="UNKNOWN"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw updater did not identify the exact durable update run after mutation started"; finish
+  elif [ "$RECONCILE_EXIT" -eq 4 ] || [ "$UPDATE_RUN_UNSAFE" = true ]; then
+    rm -f "$UPDATE_JSON"
+    OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="OPENCLAW_UPDATE"; REASON="OpenClaw durable update run reported that managed service restart is unsafe"; finish
   fi
 fi
 rm -f "$UPDATE_JSON"
