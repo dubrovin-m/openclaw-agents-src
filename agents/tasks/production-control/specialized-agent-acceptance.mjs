@@ -308,10 +308,30 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   return actual;
 }
 
-export function assertStagedSnapshotAllowed(expectedValue, actualValue, mutablePluginIdsValue) {
+function normalizeStagingAllowance(value, expected) {
+  const allowance = requireObject(value, 'staging allowance');
+  const keys = Object.keys(allowance).sort();
+  if (JSON.stringify(keys) !== JSON.stringify(['mutable_plugin_ids', 'target_agent_tool_policies'])) {
+    throw new Error('staging allowance has unexpected fields');
+  }
+  const mutablePluginIds = normalizeIds(allowance.mutable_plugin_ids, 'mutable staged plugin ids');
+  const targetPolicies = requireObject(allowance.target_agent_tool_policies, 'target staged agent tool policies');
+  const expectedAgents = new Set(expected.agent_ids);
+  const normalizedTargetPolicies = new Map();
+  for (const id of Object.keys(targetPolicies).sort()) {
+    if (typeof id !== 'string' || id.trim() === '' || !expectedAgents.has(id)) {
+      throw new Error(`target staged agent tool policy references unknown agent: ${id}`);
+    }
+    const tools = targetPolicies[id];
+    normalizedTargetPolicies.set(id, tools === null ? null : normalizeAgentToolPolicyValue(tools, `staging allowance.${id}.tools`));
+  }
+  return { mutablePluginIds, targetPolicies: normalizedTargetPolicies };
+}
+
+export function assertStagedSnapshotAllowed(expectedValue, actualValue, stagingAllowanceValue) {
   const expected = normalizeSnapshot(expectedValue);
   const actual = normalizeSnapshot(actualValue);
-  const mutablePluginIds = normalizeIds(mutablePluginIdsValue, 'mutable staged plugin ids');
+  const { mutablePluginIds, targetPolicies } = normalizeStagingAllowance(stagingAllowanceValue, expected);
   const mutable = new Set(mutablePluginIds);
   const expectedExternal = new Set(expected.external_plugin_ids);
   const expectedRequired = new Set(expected.required_plugin_contracts.map((item) => item.id));
@@ -324,7 +344,17 @@ export function assertStagedSnapshotAllowed(expectedValue, actualValue, mutableP
 
   assertEqual('agent roster during staging', expected.agent_ids, actual.agent_ids);
   assertEqual('agent runtime contract during staging', expected.agent_runtime, actual.agent_runtime);
-  assertEqual('agent tool authority policy during staging', expected.agent_tool_policies, actual.agent_tool_policies);
+  const actualPolicies = new Map(actual.agent_tool_policies.map((item) => [item.id, item]));
+  for (const expectedPolicy of expected.agent_tool_policies) {
+    const actualPolicy = actualPolicies.get(expectedPolicy.id);
+    if (targetPolicies.has(expectedPolicy.id)) {
+      if (JSON.stringify(actualPolicy?.tools) !== JSON.stringify(targetPolicies.get(expectedPolicy.id))) {
+        throw new Error(`staged agent tool policy does not match frozen target: ${expectedPolicy.id}`);
+      }
+    } else if (JSON.stringify(actualPolicy) !== JSON.stringify(expectedPolicy)) {
+      throw new Error(`non-staged agent tool authority policy changed during staging: ${expectedPolicy.id}`);
+    }
+  }
   assertEqual('active plugin roster during staging', expected.active_plugin_ids, actual.active_plugin_ids);
   assertEqual('external plugin roster during staging', expected.external_plugin_ids, actual.external_plugin_ids);
   assertEqual(
@@ -355,27 +385,30 @@ export function assertStagedSnapshotAllowed(expectedValue, actualValue, mutableP
 }
 
 function usage() {
-  console.error('Usage: specialized-agent-acceptance.mjs <snapshot|accept|stage> <openclaw-bin> [expected-json] [mutable-plugin-id ...]');
+  console.error('Usage: specialized-agent-acceptance.mjs <snapshot|accept|stage> <openclaw-bin> [expected-json] [staging-allowance-json]');
   process.exit(2);
 }
 
 function main() {
-  const [mode, openclawBin, expectedJson, ...mutablePluginIds] = process.argv.slice(2);
-  if (!openclawBin || !['snapshot', 'accept', 'stage'].includes(mode)) usage();
+  const [mode, openclawBin, expectedJson, stagingAllowanceJson, ...extra] = process.argv.slice(2);
+  if (!openclawBin || !['snapshot', 'accept', 'stage'].includes(mode) || extra.length !== 0) usage();
   try {
     const actual = collectSnapshot(openclawBin);
     if (mode === 'snapshot') {
+      if (expectedJson !== undefined || stagingAllowanceJson !== undefined) usage();
       process.stdout.write(`${JSON.stringify(actual)}\n`);
       return;
     }
     if (!expectedJson) usage();
     const expected = JSON.parse(expectedJson);
     if (mode === 'stage') {
-      if (mutablePluginIds.length === 0) usage();
-      const staged = assertStagedSnapshotAllowed(expected, actual, mutablePluginIds);
+      if (!stagingAllowanceJson) usage();
+      const allowance = JSON.parse(stagingAllowanceJson);
+      const staged = assertStagedSnapshotAllowed(expected, actual, allowance);
       process.stdout.write(`${JSON.stringify(staged)}\n`);
       return;
     }
+    if (stagingAllowanceJson !== undefined) usage();
     const preserved = assertSnapshotPreserved(expected, actual);
     process.stdout.write(`${JSON.stringify({ ok: true, ...preserved })}\n`);
   } catch (error) {
