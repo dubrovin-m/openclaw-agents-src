@@ -25,14 +25,31 @@ RUNTIME_CONTRACT="$SOURCE_DIR/runtime-contract.json"
 RUNTIME_HELPER="$SOURCE_DIR/shared/runtime-contract/runtime-contract.mjs"
 SPECIALIZED_ACCEPTANCE="$SOURCE_DIR/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 DEPLOY="$SOURCE_DIR/agents/tasks/deploy.sh"
+TASK_TOOLS="$SOURCE_DIR/agents/tasks/config/tasks-tools.json"
+TASK_RELEASE="$SOURCE_DIR/agents/tasks/release.json"
 RETENTION_LIB="${BASH_SOURCE[0]%/*}/lib.mjs"
 [ -f "$RUNTIME_CONTRACT" ] && [ -f "$RUNTIME_HELPER" ] || { echo "Frozen runtime requirements or qualification helper are unavailable" >&2; exit 2; }
 [ -f "$SPECIALIZED_ACCEPTANCE" ] || { echo "Frozen specialized-agent acceptance probe is unavailable" >&2; exit 2; }
 [ -x "$DEPLOY" ] || { echo "Frozen Task deploy entrypoint is unavailable or not executable" >&2; exit 2; }
+[ -f "$TASK_TOOLS" ] && [ -f "$TASK_RELEASE" ] || { echo "Frozen Task staging policy or release metadata is unavailable" >&2; exit 2; }
 [ -f "$RETENTION_LIB" ] || { echo "Installed production-control retention library is unavailable" >&2; exit 2; }
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Frozen rollout source checkout is dirty" >&2; exit 2; }
 SOURCE_REVISION=$(git -C "$SOURCE_DIR" rev-parse HEAD)
 [[ "$SOURCE_REVISION" =~ ^[0-9a-f]{40}$ ]] || { echo "Cannot establish exact rollout source revision" >&2; exit 2; }
+TASK_STAGE_ALLOWANCE=$(node - "$TASK_TOOLS" "$TASK_RELEASE" <<'NODE'
+const fs=require('fs');
+const tools=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const release=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+if(!tools||typeof tools!=='object'||Array.isArray(tools))process.exit(2);
+if(release?.format!=='task-agent-release-v2'||release?.plugin?.name!=='openclaw-plugin-taskctl')process.exit(2);
+const mutable=['taskctl'];
+if(Object.prototype.hasOwnProperty.call(release,'shared_contacts')){
+  if(!release.shared_contacts||typeof release.shared_contacts!=='object'||Array.isArray(release.shared_contacts)||typeof release.shared_contacts.release_path!=='string'||release.shared_contacts.release_path.trim()==='')process.exit(2);
+  mutable.push('contacts');
+}
+process.stdout.write(JSON.stringify({mutable_plugin_ids:mutable,target_agent_tool_policies:{tasks:tools}}));
+NODE
+) || { echo "Frozen Task staging allowance is invalid" >&2; exit 2; }
 
 TARGET_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CONTRACT") || { echo "Invalid frozen OpenClaw qualification target" >&2; exit 2; }
 
@@ -365,8 +382,8 @@ if [ "$CORE_VERSION" != "$EXPECTED_OPENCLAW_VERSION" ] || ! gateway_health; then
   GATEWAY_READY=false; OUTCOME="RECOVERY_REQUIRED"; BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging did not preserve a healthy predecessor OpenClaw runtime"; finish
 fi
 GATEWAY_READY=true
-if ! STAGED_SPECIALIZED_BASELINE=$(node "$SPECIALIZED_ACCEPTANCE" stage "$OPENCLAW_BIN" "$SPECIALIZED_BASELINE" taskctl 2>>"$LOG"); then
-  BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging changed specialized-agent state outside the allowed taskctl contract"
+if ! STAGED_SPECIALIZED_BASELINE=$(node "$SPECIALIZED_ACCEPTANCE" stage "$OPENCLAW_BIN" "$SPECIALIZED_BASELINE" "$TASK_STAGE_ALLOWANCE" 2>>"$LOG"); then
+  BLOCK_FURTHER=true; STAGE="TASK_PREDEPLOY_ACCEPTANCE"; REASON="Pre-update Task staging changed specialized-agent state outside the frozen Task staging allowance"
   if [ "$MUTATION_STARTED" = true ]; then OUTCOME="RECOVERY_REQUIRED"; else OUTCOME="BLOCKED_REQUIRES_JUDGMENT"; fi
   finish
 fi
