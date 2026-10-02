@@ -1,7 +1,6 @@
 {
   "profile": "full",
   "codeMode": false,
-  "toolSearch": false,
   "allow": [
     "calendar_config_get",
     "calendar_review_window",
