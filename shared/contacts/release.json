@@ -3,7 +3,7 @@
   "implementation_version": "0.1.6",
   "sqlite_schema": 3,
   "from": {
-    "source_revision": "2a0eb5c627168e1ea5f110dfea04649152ebe50b",
+    "source_revision": "0b7406055d8c47fd524374acc4e1c3aad89b8e1d",
     "implementation_version": "0.1.6",
     "sqlite_schema": 3,
     "plugin_version": "0.1.6",

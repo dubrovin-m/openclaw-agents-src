@@ -15,7 +15,7 @@
     "sha256": "580c9870826d792bec8a34d2a8d919d9c44b0cbbad267df95d2c4f763fe66ac2"
   },
   "from": {
-    "source_revision": "2a0eb5c627168e1ea5f110dfea04649152ebe50b",
+    "source_revision": "0b7406055d8c47fd524374acc4e1c3aad89b8e1d",
     "sqlite_schemas": [
       9
     ],
@@ -45,7 +45,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "2d61f80197bba63164812943ebc688528beadb0e320c9ea9a3953109867c983c",
+    "release_sha256": "c2afbe9b1ca184586a9de673a46fe889492287bd3c3bbcdceecd5af964240152",
     "implementation_version": "0.1.6",
     "sqlite_schema": 3,
     "predecessor_mode": "exact"
