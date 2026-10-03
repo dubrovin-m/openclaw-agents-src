@@ -40,7 +40,7 @@ jobs:
           if [[ "${BASE_SHA:-}" =~ ^[0-9a-f]{40}$ ]] && [ "$BASE_SHA" != "0000000000000000000000000000000000000000" ] && git cat-file -e "$BASE_SHA^{commit}" 2>/dev/null; then
             relevant=false
             changed_files=$(git diff --name-only "$BASE_SHA" "$HEAD_SHA")
-            if grep -Eq '^(runtime-contract\.json$|shared/runtime-contract/|agents/engineer/|\.github/workflows/engineer-agent-ci\.yml$)' <<<"$changed_files"; then
+            if grep -Eq '^(runtime-contract\.json$|openclaw-qualification\.json$|shared/runtime-contract/|agents/engineer/|\.github/workflows/engineer-agent-ci\.yml$)' <<<"$changed_files"; then
               relevant=true
             fi
           fi
@@ -59,11 +59,17 @@ jobs:
           import re
           with open('runtime-contract.json', encoding='utf-8') as handle:
               contract = json.load(handle)
-          version = str(contract.get('node', {}).get('ci_version', ''))
-          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', version):
+          with open('openclaw-qualification.json', encoding='utf-8') as handle:
+              qualification = json.load(handle)
+          node_version = str(contract.get('node', {}).get('ci_version', ''))
+          openclaw_version = str(qualification.get('version', ''))
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', node_version):
               raise SystemExit('invalid node.ci_version in runtime-contract.json')
+          if not re.fullmatch(r'[0-9]+\.[0-9]+\.[0-9]+', openclaw_version):
+              raise SystemExit('invalid version in openclaw-qualification.json')
           with open(os.environ['GITHUB_OUTPUT'], 'a', encoding='utf-8') as output:
-              output.write(f'node_version={version}\n')
+              output.write(f'node_version={node_version}\n')
+              output.write(f'openclaw_version={openclaw_version}\n')
           PY
 
       - name: Set up Node.js
@@ -87,3 +93,29 @@ jobs:
           set -euo pipefail
           bash -n agents/engineer/validate.sh
           bash agents/engineer/validate.sh
+
+      - name: Validate Engineer config against qualified OpenClaw
+        if: steps.scope.outputs.relevant == 'true'
+        shell: bash
+        env:
+          OPENCLAW_QUALIFICATION_VERSION: ${{ steps.runtime.outputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          tmp=$(mktemp -d)
+          trap 'rm -rf "$tmp"' EXIT
+          npm install --prefix "$tmp" --no-package-lock --no-save "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
+          node - "$tmp/openclaw.json" <<'NODE'
+          const fs = require('node:fs');
+          const agent = JSON.parse(fs.readFileSync('agents/engineer/config/engineer-agent.fragment.json', 'utf8'));
+          const tools = JSON.parse(fs.readFileSync('agents/engineer/config/engineer-tools.json', 'utf8'));
+          const { id, ...entry } = agent;
+          if (id !== 'engineer') throw new Error('unexpected Engineer agent id');
+          entry.tools = tools;
+          fs.writeFileSync(process.argv[2], JSON.stringify({ agents: { entries: { [id]: entry } } }));
+          NODE
+          OPENCLAW_CONFIG_PATH="$tmp/openclaw.json" "$tmp/node_modules/.bin/openclaw" config validate --json > "$tmp/validation.json"
+          node - "$tmp/validation.json" <<'NODE'
+          const fs = require('node:fs');
+          const result = JSON.parse(fs.readFileSync(process.argv[2], 'utf8'));
+          if (result?.valid !== true || (Array.isArray(result?.warnings) && result.warnings.length !== 0)) process.exit(2);
+          NODE

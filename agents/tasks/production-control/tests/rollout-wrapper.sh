@@ -12,9 +12,11 @@ FAKEBIN="$TMP/bin"
 FAKE_STATE="$TMP/openclaw-version"
 FAKE_TRACE="$TMP/trace"
 FAKE_DF_BACKUP_MARKER="$TMP/backup-created"
+FAKE_PREDEPLOY_PLUGIN_MARKER="$TMP/predeploy-plugin-staged"
+FAKE_PREDEPLOY_AUTHORITY_MARKER="$TMP/predeploy-authority-drift"
 TASK_RESULT_DIR="$TMP/task-results"
 FAKE_HOME="$TMP/home"
-mkdir -p "$FAKE_HOME" "$SRC/agents/tasks" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
+mkdir -p "$FAKE_HOME" "$SRC/agents/tasks/production-control" "$SRC/agents/tasks/config" "$SRC/shared/runtime-contract" "$STATE" "$FAKEBIN" "$TASK_RESULT_DIR"
 
 cat > "$SRC/runtime-contract.json" <<'JSON'
 {
@@ -32,7 +34,28 @@ cat > "$SRC/openclaw-qualification.json" <<'JSON'
   "version": "2026.8.2"
 }
 JSON
+cat > "$SRC/agents/tasks/config/tasks-tools.json" <<'JSON'
+{
+  "profile": "full",
+  "allow": ["task_list"],
+  "deny": ["exec"],
+  "fs": {"workspaceOnly": true}
+}
+JSON
+cat > "$SRC/agents/tasks/config/main-contacts-tools.json" <<'JSON'
+{
+  "alsoAllow": ["contacts"]
+}
+JSON
+cat > "$SRC/agents/tasks/release.json" <<'JSON'
+{
+  "format": "task-agent-release-v2",
+  "plugin": {"name": "openclaw-plugin-taskctl"},
+  "shared_contacts": {"release_path": "../../shared/contacts/release.json"}
+}
+JSON
 cp "$ROOT/shared/runtime-contract/runtime-contract.mjs" "$SRC/shared/runtime-contract/runtime-contract.mjs"
+cp "$ROOT/agents/tasks/production-control/specialized-agent-acceptance.mjs" "$SRC/agents/tasks/production-control/specialized-agent-acceptance.mjs"
 cat > "$SRC/agents/tasks/deploy.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
@@ -48,6 +71,12 @@ if [ "$count" -eq 1 ]; then
   OUTCOME=${FAKE_PREDEPLOY_OUTCOME:-PASS}
   STAGE=${FAKE_PREDEPLOY_STAGE:-COMPLETE}
   MUTATION=${FAKE_PREDEPLOY_MUTATION:-true}
+  if [ "${FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE:-0}" = 1 ] && [ "$OUTCOME" = PASS ]; then
+    : > "$FAKE_PREDEPLOY_PLUGIN_MARKER"
+  fi
+  if [ "${FAKE_PREDEPLOY_AGENT_TOOL_DRIFT:-0}" = 1 ] && [ "$OUTCOME" = PASS ]; then
+    : > "$FAKE_PREDEPLOY_AUTHORITY_MARKER"
+  fi
 else
   OUTCOME=${FAKE_TASK_OUTCOME:-PASS}
   STAGE=${FAKE_TASK_STAGE:-NOOP}
@@ -73,6 +102,47 @@ printf '%s\n' "$*" >> "$FAKE_TRACE"
 case "${1:-}" in
   --version)
     echo "OpenClaw $(cat "$FAKE_STATE")"
+    ;;
+  config)
+    case "${2:-}" in
+      validate)
+        if [ "${FAKE_CONFIG_INVALID:-0}" = 1 ]; then
+          echo '{"valid":false,"issues":[{"path":"agents.entries","message":"fake invalid config"}]}'
+        else
+          echo '{"valid":true,"issues":[]}'
+        fi
+        ;;
+      get)
+        [ "${3:-}" = agents.entries ] || exit 2
+        if [ -e "$FAKE_PREDEPLOY_AUTHORITY_MARKER" ]; then
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        elif [ "${FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        else
+          echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":["exec"],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'
+        fi
+        ;;
+      *) exit 2 ;;
+    esac
+    ;;
+  agents)
+    case "${2:-}" in
+      list)
+        if [ "${FAKE_AGENT_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"}]'
+        else
+          echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"},{"id":"investments"}]'
+        fi
+        ;;
+      bindings)
+        if [ "${FAKE_BINDING_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '[{"agentId":"main","match":{"channel":"telegram","accountId":"main"}},{"agentId":"tasks","match":{"channel":"telegram","accountId":"tasks-v2"}},{"agentId":"engineer","match":{"channel":"telegram","accountId":"engineer"}},{"agentId":"calendar","match":{"channel":"telegram","accountId":"calendar"}},{"agentId":"investments","match":{"channel":"telegram","accountId":"investments"}}]'
+        else
+          echo '[{"agentId":"main","match":{"channel":"telegram","accountId":"main"}},{"agentId":"tasks","match":{"channel":"telegram","accountId":"tasks"}},{"agentId":"engineer","match":{"channel":"telegram","accountId":"engineer"}},{"agentId":"calendar","match":{"channel":"telegram","accountId":"calendar"}},{"agentId":"investments","match":{"channel":"telegram","accountId":"investments"}}]'
+        fi
+        ;;
+      *) exit 2 ;;
+    esac
     ;;
   gateway)
     if [ "${2:-}" = health ]; then
@@ -158,10 +228,33 @@ case "${1:-}" in
     echo '{"ok":true}'
     ;;
   plugins)
-    [ "${2:-}" = inspect ] && [ "${3:-}" = codex ] || exit 2
-    version=2026.8.2
-    [ "${FAKE_CODEX_MISMATCH:-0}" != 1 ] || version=2026.8.1
-    printf '{"plugin":{"id":"codex","status":"loaded","version":"%s"},"compatibility":[],"install":{"version":"%s"}}\n' "$version" "$version"
+    case "${2:-}" in
+      doctor)
+        if [ "${FAKE_PLUGIN_DOCTOR_FAIL:-0}" = 1 ]; then
+          echo '{"ok":false,"warnings":[],"errors":["fake plugin failure"]}'
+        else
+          echo '{"ok":true,"warnings":[],"errors":[]}'
+        fi
+        ;;
+      list)
+        taskctl_version=0.4.31
+        if [ "${FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE:-0}" = 1 ] && [ -e "$FAKE_PREDEPLOY_PLUGIN_MARKER" ]; then
+          taskctl_version=0.4.32
+        fi
+        if [ "${FAKE_PLUGIN_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          printf '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded","version":"%s"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"}]}\n' "$taskctl_version"
+        else
+          printf '{"plugins":[{"id":"taskctl","enabled":true,"origin":"global","status":"loaded","version":"%s"},{"id":"calendar-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"codex","enabled":true,"origin":"global","status":"loaded"},{"id":"contacts","enabled":true,"origin":"global","status":"loaded"},{"id":"investment-analytics","enabled":true,"origin":"global","status":"loaded"},{"id":"telegram","enabled":true,"origin":"bundled","status":"loaded"}]}\n' "$taskctl_version"
+        fi
+        ;;
+      inspect)
+        [ "${3:-}" = codex ] || exit 2
+        version=2026.8.2
+        [ "${FAKE_CODEX_MISMATCH:-0}" != 1 ] || version=2026.8.1
+        printf '{"plugin":{"id":"codex","status":"loaded","version":"%s"},"compatibility":[],"install":{"version":"%s"}}\n' "$version" "$version"
+        ;;
+      *) exit 2 ;;
+    esac
     ;;
   *) exit 2 ;;
 esac
@@ -186,7 +279,7 @@ SH
 chmod 700 "$FAKEBIN/sleep"
 
 export PATH="$FAKEBIN:$PATH"
-export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER
+export FAKE_STATE FAKE_TRACE FAKE_DF_BACKUP_MARKER FAKE_PREDEPLOY_PLUGIN_MARKER FAKE_PREDEPLOY_AUTHORITY_MARKER
 export FAKE_STATUS_CALL_COUNTER="$TMP/status-call-counter"
 export FAKE_TASK_RESULT_DIR="$TASK_RESULT_DIR"
 export FAKE_TASK_CALL_COUNTER="$TMP/task-call-counter"
@@ -205,7 +298,7 @@ run_case() {
   shift
   echo 2026.8.1 > "$FAKE_STATE"
   : > "$FAKE_TRACE"
-  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
+  rm -f "$FAKE_DF_BACKUP_MARKER" "$FAKE_PREDEPLOY_PLUGIN_MARKER" "$FAKE_PREDEPLOY_AUTHORITY_MARKER" "$FAKE_TASK_CALL_COUNTER" "$FAKE_STATUS_CALL_COUNTER"
   rm -rf "$STATE/executions" "$STATE/recovery/request-$id"
   set +e
   env HOME="$FAKE_HOME" "$@" bash "$WRAPPER" "$id" "$SRC" "$STATE" 2026.8.1 >/dev/null
@@ -226,9 +319,31 @@ const fs=require('fs');const v=JSON.parse(fs.readFileSync(process.argv[2],'utf8'
 NODE
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
 assert_field "$CASE_RESULT" codex_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance true
+assert_field "$CASE_RESULT" specialized_final_acceptance true
+assert_field "$CASE_RESULT" specialized_agent_ids '["calendar","engineer","investments","main","tasks"]'
+assert_field "$CASE_RESULT" specialized_external_plugin_ids '["calendar-analytics","codex","contacts","investment-analytics","taskctl"]'
 assert_field "$CASE_RESULT" task_predeploy_result '"PASS"'
 assert_field "$CASE_RESULT" task_predeploy_mutation_started true
 assert_field "$CASE_RESULT" task_deploy_result '"PASS"'
+
+run_case 123 FAKE_PREDEPLOY_PLUGIN_VERSION_CHANGE=1
+[ "$CASE_EXIT" -eq 0 ]
+assert_field "$CASE_RESULT" outcome '"SUCCESS"'
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance true
+assert_field "$CASE_RESULT" specialized_final_acceptance true
+
+run_case 124 FAKE_PREDEPLOY_AGENT_TOOL_DRIFT=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"TASK_PREDEPLOY_ACCEPTANCE"'
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
 
 run_case 102 FAKE_BACKUP_FAIL=1
 [ "$CASE_EXIT" -eq 1 ]
@@ -257,6 +372,14 @@ assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" mutation_started false
 ! grep -q '^backup create ' "$FAKE_TRACE"
 
+run_case 119 FAKE_PLUGIN_DOCTOR_FAIL=1
+[ "$CASE_EXIT" -eq 1 ]
+assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
+assert_field "$CASE_RESULT" mutation_started false
+assert_field "$CASE_RESULT" specialized_runtime_precheck false
+! grep -q '^backup create ' "$FAKE_TRACE"
+! grep -q '^update --tag 2026.8.2 --json$' "$FAKE_TRACE"
+
 run_case 105 FAKE_UPDATE_FAIL=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
@@ -275,6 +398,7 @@ assert_field "$CASE_RESULT" update_run_status '"succeeded"'
 assert_field "$CASE_RESULT" update_run_reconciled true
 assert_field "$CASE_RESULT" update_command_exit 1
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_final_acceptance true
 
 run_case 116 FAKE_UPDATE_NO_RUN_ID=1
 [ "$CASE_EXIT" -eq 2 ]
@@ -308,11 +432,48 @@ assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
 assert_field "$CASE_RESULT" update_run_reconciled false
 assert_field "$CASE_RESULT" update_command_exit 1
 
+run_case 120 FAKE_AGENT_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 125 FAKE_BINDING_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 122 FAKE_AGENT_TOOL_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 121 FAKE_PLUGIN_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
 run_case 106 FAKE_CODEX_MISMATCH=1
 [ "$CASE_EXIT" -eq 1 ]
 assert_field "$CASE_RESULT" outcome '"BLOCKED_REQUIRES_JUDGMENT"'
 assert_field "$CASE_RESULT" block_further_deployments true
 assert_field "$CASE_RESULT" core_version '"2026.8.2"'
+assert_field "$CASE_RESULT" specialized_core_acceptance true
 
 run_case 107 FAKE_TASK_OUTCOME=BLOCKED FAKE_TASK_STAGE=PRECHECK FAKE_TASK_MUTATION=false
 [ "$CASE_EXIT" -eq 1 ]
