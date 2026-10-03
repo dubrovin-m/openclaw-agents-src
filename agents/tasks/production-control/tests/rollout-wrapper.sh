@@ -126,12 +126,23 @@ case "${1:-}" in
     esac
     ;;
   agents)
-    [ "${2:-}" = list ] || exit 2
-    if [ "${FAKE_AGENT_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
-      echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"}]'
-    else
-      echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"},{"id":"investments"}]'
-    fi
+    case "${2:-}" in
+      list)
+        if [ "${FAKE_AGENT_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"}]'
+        else
+          echo '[{"id":"main"},{"id":"tasks"},{"id":"engineer"},{"id":"calendar"},{"id":"investments"}]'
+        fi
+        ;;
+      bindings)
+        if [ "${FAKE_BINDING_DRIFT_AFTER_UPDATE:-0}" = 1 ] && [ "$(cat "$FAKE_STATE")" = 2026.8.2 ]; then
+          echo '[{"agentId":"main","match":{"channel":"telegram","accountId":"main"}},{"agentId":"tasks","match":{"channel":"telegram","accountId":"tasks-v2"}},{"agentId":"engineer","match":{"channel":"telegram","accountId":"engineer"}},{"agentId":"calendar","match":{"channel":"telegram","accountId":"calendar"}},{"agentId":"investments","match":{"channel":"telegram","accountId":"investments"}}]'
+        else
+          echo '[{"agentId":"main","match":{"channel":"telegram","accountId":"main"}},{"agentId":"tasks","match":{"channel":"telegram","accountId":"tasks"}},{"agentId":"engineer","match":{"channel":"telegram","accountId":"engineer"}},{"agentId":"calendar","match":{"channel":"telegram","accountId":"calendar"}},{"agentId":"investments","match":{"channel":"telegram","accountId":"investments"}}]'
+        fi
+        ;;
+      *) exit 2 ;;
+    esac
     ;;
   gateway)
     if [ "${2:-}" = health ]; then
@@ -422,6 +433,15 @@ assert_field "$CASE_RESULT" update_run_reconciled false
 assert_field "$CASE_RESULT" update_command_exit 1
 
 run_case 120 FAKE_AGENT_DRIFT_AFTER_UPDATE=1
+[ "$CASE_EXIT" -eq 2 ]
+assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
+assert_field "$CASE_RESULT" block_further_deployments true
+assert_field "$CASE_RESULT" mutation_started true
+assert_field "$CASE_RESULT" specialized_runtime_precheck true
+assert_field "$CASE_RESULT" specialized_core_acceptance false
+assert_field "$CASE_RESULT" stage '"SPECIALIZED_CORE_ACCEPTANCE"'
+
+run_case 125 FAKE_BINDING_DRIFT_AFTER_UPDATE=1
 [ "$CASE_EXIT" -eq 2 ]
 assert_field "$CASE_RESULT" outcome '"RECOVERY_REQUIRED"'
 assert_field "$CASE_RESULT" block_further_deployments true

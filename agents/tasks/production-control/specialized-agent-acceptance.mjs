@@ -62,6 +62,25 @@ function normalizeAgentRuntime(value) {
   }).sort((a, b) => a.id.localeCompare(b.id));
 }
 
+function normalizeRoutingBindings(value, agentIds, label = 'routing bindings') {
+  if (!Array.isArray(value)) throw new Error(`${label} is unavailable`);
+  const knownAgents = new Set(agentIds);
+  const normalized = value.map((item, index) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      throw new Error(`${label}[${index}] is invalid`);
+    }
+    const agentId = typeof item.agentId === 'string' ? item.agentId : item.agent_id;
+    if (typeof agentId !== 'string' || agentId.trim() === '' || !knownAgents.has(agentId)) {
+      throw new Error(`${label}[${index}] references unknown agent`);
+    }
+    const match = requireObject(item.match, `${label}[${index}].match`);
+    return { agent_id: agentId, match: canonicalize(match) };
+  }).sort((a, b) => JSON.stringify(a).localeCompare(JSON.stringify(b)));
+  const keys = normalized.map((item) => JSON.stringify(item));
+  if (new Set(keys).size !== keys.length) throw new Error(`${label} contains duplicates`);
+  return normalized;
+}
+
 function normalizeStringSet(value, label) {
   if (!Array.isArray(value) || value.some((item) => typeof item !== 'string' || item.trim() === '')) {
     throw new Error(`${label} is invalid`);
@@ -179,11 +198,13 @@ export function collectSnapshot(openclawBin, runner = runJson) {
 
   const agents = runner(openclawBin, ['agents', 'list', '--json']);
   const agentIds = normalizeAgentRoster(agents);
+  const routingBindings = runner(openclawBin, ['agents', 'bindings', '--json']);
   const agentEntries = runner(openclawBin, ['config', 'get', 'agents.entries', '--json']);
   const plugins = normalizePluginInventory(runner(openclawBin, ['plugins', 'list', '--json']));
   return {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntime(agents),
+    routing_bindings: normalizeRoutingBindings(routingBindings, agentIds),
     agent_tool_policies: normalizeAgentToolPolicies(agentEntries, agentIds),
     ...plugins,
   };
@@ -254,6 +275,7 @@ export function normalizeSnapshot(value) {
   const normalized = {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntimeSnapshot(snapshot.agent_runtime, agentIds),
+    routing_bindings: normalizeRoutingBindings(snapshot.routing_bindings, agentIds, 'snapshot routing bindings'),
     agent_tool_policies: normalizeAgentToolPolicySnapshot(snapshot.agent_tool_policies, agentIds),
     active_plugin_ids: normalizeIds(snapshot.active_plugin_ids, 'snapshot active plugin ids', { allowEmpty: true }),
     external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids', { allowEmpty: true }),
@@ -286,6 +308,9 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   }
   if (JSON.stringify(actual.agent_runtime) !== JSON.stringify(expected.agent_runtime)) {
     throw new Error('agent runtime contract changed');
+  }
+  if (JSON.stringify(actual.routing_bindings) !== JSON.stringify(expected.routing_bindings)) {
+    throw new Error('agent routing bindings changed');
   }
   if (JSON.stringify(actual.agent_tool_policies) !== JSON.stringify(expected.agent_tool_policies)) {
     throw new Error('agent tool authority policy changed');
@@ -344,6 +369,7 @@ export function assertStagedSnapshotAllowed(expectedValue, actualValue, stagingA
 
   assertEqual('agent roster during staging', expected.agent_ids, actual.agent_ids);
   assertEqual('agent runtime contract during staging', expected.agent_runtime, actual.agent_runtime);
+  assertEqual('agent routing bindings during staging', expected.routing_bindings, actual.routing_bindings);
   const actualPolicies = new Map(actual.agent_tool_policies.map((item) => [item.id, item]));
   for (const expectedPolicy of expected.agent_tool_policies) {
     const actualPolicy = actualPolicies.get(expectedPolicy.id);

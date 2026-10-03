@@ -35,6 +35,11 @@ const baseAgents = [
   },
 ];
 
+const baseBindings = [
+  { agentId: 'main', match: { channel: 'telegram', accountId: 'main' } },
+  { agentId: 'tasks', match: { channel: 'telegram', accountId: 'tasks' } },
+];
+
 const baseAgentEntries = {
   main: {
     tools: {
@@ -81,12 +86,14 @@ const basePlugins = {
   ],
 };
 
-function runnerFor({ agents = baseAgents, agentEntries = baseAgentEntries, plugins = basePlugins } = {}) {
+function runnerFor({ agents = baseAgents, bindings, agentEntries = baseAgentEntries, plugins = basePlugins } = {}) {
+  const runtimeBindings = bindings ?? baseBindings.filter((binding) => agents.some((agent) => agent.id === binding.agentId));
   return (_bin, args) => {
     const command = args.join(' ');
     if (command === 'config validate --json') return { valid: true };
     if (command === 'plugins doctor --json') return { ok: true };
     if (command === 'agents list --json') return agents;
+    if (command === 'agents bindings --json') return runtimeBindings;
     if (command === 'config get agents.entries --json') return agentEntries;
     if (command === 'plugins list --json') return plugins;
     throw new Error(`unexpected command ${command}`);
@@ -172,6 +179,10 @@ test('collectSnapshot captures agent runtime, tool authority, and custom plugin 
         is_default: false,
       },
     ],
+    routing_bindings: [
+      { agent_id: 'main', match: { accountId: 'main', channel: 'telegram' } },
+      { agent_id: 'tasks', match: { accountId: 'tasks', channel: 'telegram' } },
+    ],
     agent_tool_policies: [
       { id: 'main', tools: { alsoAllow: ['contacts'] } },
       {
@@ -199,6 +210,7 @@ test('collectSnapshot captures agent runtime, tool authority, and custom plugin 
     'config validate --json',
     'plugins doctor --json',
     'agents list --json',
+    'agents bindings --json',
     'config get agents.entries --json',
     'plugins list --json',
   ]);
@@ -213,6 +225,7 @@ test('collectSnapshot accepts a healthy runtime without external plugins', () =>
   assert.deepEqual(snapshot, {
     agent_ids: ['engineer'],
     agent_runtime: [{ id: 'engineer' }],
+    routing_bindings: [],
     agent_tool_policies: [{ id: 'engineer', tools: { allow: ['read'] } }],
     active_plugin_ids: ['telegram'],
     external_plugin_ids: [],
@@ -310,6 +323,14 @@ test('preservation rejects agent roster, runtime contract, and tool authority dr
   }));
   assert.throws(() => assertSnapshotPreserved(expected, changedRuntime), /agent runtime contract changed/);
 
+  const changedRouting = collectSnapshot('/bin/openclaw', runnerFor({
+    bindings: [
+      baseBindings[0],
+      { agentId: 'tasks', match: { channel: 'telegram', accountId: 'tasks-v2' } },
+    ],
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedRouting), /agent routing bindings changed/);
+
   const changedAuthority = collectSnapshot('/bin/openclaw', runnerFor({
     agentEntries: {
       ...baseAgentEntries,
@@ -371,6 +392,20 @@ test('staging allows Task-owned plugin contract and exact frozen Task tool polic
     },
   }));
   assert.deepEqual(assertStagedSnapshotAllowed(expected, actual, stagingAllowance(targetTasksTools)), actual);
+});
+
+test('staging rejects routing drift', () => {
+  const expected = baselineSnapshot();
+  const actual = collectSnapshot('/bin/openclaw', runnerFor({
+    bindings: [
+      baseBindings[0],
+      { agentId: 'tasks', match: { channel: 'telegram', accountId: 'tasks-v2' } },
+    ],
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, actual, stagingAllowance()),
+    /agent routing bindings during staging changed/,
+  );
 });
 
 test('staging rejects Task authority drift that does not match the frozen target', () => {
