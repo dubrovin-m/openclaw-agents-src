@@ -113,6 +113,10 @@ case "${1:-}" in
         fi
         ;;
       get)
+        if [ "${3:-}" = tools ]; then
+          echo '{"profile":"coding","deny":["browser"],"sessions":{"visibility":"tree"}}'
+          exit 0
+        fi
         [ "${3:-}" = agents.entries ] || exit 2
         if [ -e "$FAKE_PREDEPLOY_AUTHORITY_MARKER" ]; then
           echo '{"main":{"tools":{"alsoAllow":["contacts"]}},"tasks":{"tools":{"profile":"full","allow":["task_list"],"deny":[],"fs":{"workspaceOnly":true}}},"engineer":{"tools":{"allow":["read","exec","process"],"deny":["write"],"fs":{"workspaceOnly":true}}},"calendar":{"tools":{"allow":["calendar_analyze"],"deny":["exec"]}},"investments":{"tools":{"allow":["read","investment_holdings"],"deny":["write","exec"]}}}'

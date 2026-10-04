@@ -42,11 +42,14 @@ const baseBindings = [
 
 const baseAgentEntries = {
   main: {
+    skills: ['contacts'],
     tools: {
       alsoAllow: ['contacts'],
     },
   },
   tasks: {
+    bootstrapMaxChars: 12000,
+    bootstrapTotalMaxChars: 24000,
     tools: {
       profile: 'full',
       allow: ['task_list', 'task_get'],
@@ -54,6 +57,12 @@ const baseAgentEntries = {
       fs: { workspaceOnly: true },
     },
   },
+};
+
+const baseGlobalTools = {
+  profile: 'coding',
+  deny: ['browser'],
+  sessions: { visibility: 'tree' },
 };
 
 const basePlugins = {
@@ -86,7 +95,13 @@ const basePlugins = {
   ],
 };
 
-function runnerFor({ agents = baseAgents, bindings, agentEntries = baseAgentEntries, plugins = basePlugins } = {}) {
+function runnerFor({
+  agents = baseAgents,
+  bindings,
+  agentEntries = baseAgentEntries,
+  globalTools = baseGlobalTools,
+  plugins = basePlugins,
+} = {}) {
   const runtimeBindings = bindings ?? baseBindings.filter((binding) => agents.some((agent) => agent.id === binding.agentId));
   return (_bin, args) => {
     const command = args.join(' ');
@@ -95,6 +110,7 @@ function runnerFor({ agents = baseAgents, bindings, agentEntries = baseAgentEntr
     if (command === 'agents list --json') return agents;
     if (command === 'agents bindings --json') return runtimeBindings;
     if (command === 'config get agents.entries --json') return agentEntries;
+    if (command === 'config get tools --json') return globalTools;
     if (command === 'plugins list --json') return plugins;
     throw new Error(`unexpected command ${command}`);
   };
@@ -183,6 +199,33 @@ test('collectSnapshot captures agent runtime, tool authority, and custom plugin 
       { agent_id: 'main', match: { accountId: 'main', channel: 'telegram' } },
       { agent_id: 'tasks', match: { accountId: 'tasks', channel: 'telegram' } },
     ],
+    global_tool_policy: {
+      deny: ['browser'],
+      profile: 'coding',
+      sessions: { visibility: 'tree' },
+    },
+    agent_entries: [
+      {
+        id: 'main',
+        entry: {
+          skills: ['contacts'],
+          tools: { alsoAllow: ['contacts'] },
+        },
+      },
+      {
+        id: 'tasks',
+        entry: {
+          bootstrapMaxChars: 12000,
+          bootstrapTotalMaxChars: 24000,
+          tools: {
+            allow: ['task_get', 'task_list'],
+            deny: ['exec', 'write'],
+            fs: { workspaceOnly: true },
+            profile: 'full',
+          },
+        },
+      },
+    ],
     agent_tool_policies: [
       { id: 'main', tools: { alsoAllow: ['contacts'] } },
       {
@@ -212,6 +255,7 @@ test('collectSnapshot captures agent runtime, tool authority, and custom plugin 
     'agents list --json',
     'agents bindings --json',
     'config get agents.entries --json',
+    'config get tools --json',
     'plugins list --json',
   ]);
 });
@@ -220,12 +264,15 @@ test('collectSnapshot accepts a healthy runtime without external plugins', () =>
   const snapshot = collectSnapshot('/bin/openclaw', runnerFor({
     agents: [{ id: 'engineer' }],
     agentEntries: { engineer: { tools: { allow: ['read'] } } },
+    globalTools: { profile: 'coding' },
     plugins: { plugins: [{ id: 'telegram', enabled: true, origin: 'bundled', status: 'loaded' }] },
   }));
   assert.deepEqual(snapshot, {
     agent_ids: ['engineer'],
     agent_runtime: [{ id: 'engineer' }],
     routing_bindings: [],
+    global_tool_policy: { profile: 'coding' },
+    agent_entries: [{ id: 'engineer', entry: { tools: { allow: ['read'] } } }],
     agent_tool_policies: [{ id: 'engineer', tools: { allow: ['read'] } }],
     active_plugin_ids: ['telegram'],
     external_plugin_ids: [],
@@ -256,8 +303,12 @@ test('preservation accepts plugin origin migration, additive plugins, official p
   const expected = baselineSnapshot();
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
     agentEntries: {
-      main: { tools: { alsoAllow: ['contacts'] } },
+      main: {
+        ...baseAgentEntries.main,
+        tools: { alsoAllow: ['contacts'] },
+      },
       tasks: {
+        ...baseAgentEntries.tasks,
         tools: {
           deny: ['exec', 'write'],
           allow: ['task_get', 'task_list'],
@@ -331,6 +382,25 @@ test('preservation rejects agent roster, runtime contract, and tool authority dr
   }));
   assert.throws(() => assertSnapshotPreserved(expected, changedRouting), /agent routing bindings changed/);
 
+  const changedGlobalAuthority = collectSnapshot('/bin/openclaw', runnerFor({
+    globalTools: {
+      ...baseGlobalTools,
+      profile: 'full',
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedGlobalAuthority), /global tool authority policy changed/);
+
+  const changedEntry = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      ...baseAgentEntries,
+      tasks: {
+        ...baseAgentEntries.tasks,
+        bootstrapMaxChars: 16000,
+      },
+    },
+  }));
+  assert.throws(() => assertSnapshotPreserved(expected, changedEntry), /agent entry configuration changed/);
+
   const changedAuthority = collectSnapshot('/bin/openclaw', runnerFor({
     agentEntries: {
       ...baseAgentEntries,
@@ -343,7 +413,7 @@ test('preservation rejects agent roster, runtime contract, and tool authority dr
       },
     },
   }));
-  assert.throws(() => assertSnapshotPreserved(expected, changedAuthority), /agent tool authority policy changed/);
+  assert.throws(() => assertSnapshotPreserved(expected, changedAuthority), /agent entry configuration changed/);
 });
 
 test('preservation rejects loss or contract drift of a specialized external plugin', () => {
@@ -383,7 +453,7 @@ test('staging allows Task-owned plugin contract and exact frozen Task tool polic
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
     agentEntries: {
       ...baseAgentEntries,
-      tasks: { tools: targetTasksTools },
+      tasks: { ...baseAgentEntries.tasks, tools: targetTasksTools },
     },
     plugins: {
       plugins: basePlugins.plugins.map((plugin) => plugin.id === 'taskctl'
@@ -408,6 +478,28 @@ test('staging rejects routing drift', () => {
   );
 });
 
+test('staging rejects global tool policy and non-tool agent-entry drift', () => {
+  const expected = baselineSnapshot();
+  const changedGlobal = collectSnapshot('/bin/openclaw', runnerFor({
+    globalTools: { ...baseGlobalTools, deny: [] },
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, changedGlobal, stagingAllowance()),
+    /global tool authority policy during staging changed/,
+  );
+
+  const changedEntry = collectSnapshot('/bin/openclaw', runnerFor({
+    agentEntries: {
+      ...baseAgentEntries,
+      tasks: { ...baseAgentEntries.tasks, bootstrapTotalMaxChars: 32000 },
+    },
+  }));
+  assert.throws(
+    () => assertStagedSnapshotAllowed(expected, changedEntry, stagingAllowance()),
+    /staged agent entry does not match frozen target: tasks/,
+  );
+});
+
 test('staging rejects Task authority drift that does not match the frozen target', () => {
   const expected = baselineSnapshot();
   const actual = collectSnapshot('/bin/openclaw', runnerFor({
@@ -424,7 +516,7 @@ test('staging rejects Task authority drift that does not match the frozen target
   }));
   assert.throws(
     () => assertStagedSnapshotAllowed(expected, actual, stagingAllowance()),
-    /staged agent tool policy does not match frozen target: tasks/,
+    /staged agent entry does not match frozen target: tasks/,
   );
 });
 

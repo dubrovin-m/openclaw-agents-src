@@ -122,6 +122,20 @@ function normalizeAgentToolPolicies(value, agentIds) {
   });
 }
 
+function normalizeAgentEntries(value, agentIds) {
+  const entries = requireObject(value, 'agent entries');
+  const entryIds = Object.keys(entries).sort();
+  if (JSON.stringify(entryIds) !== JSON.stringify(agentIds)) {
+    throw new Error('agent entries do not match agent roster');
+  }
+  return entryIds.map((id) => {
+    const entry = requireObject(entries[id], `agent entries.${id}`);
+    const normalized = canonicalize(entry);
+    if (entry.tools !== undefined) normalized.tools = normalizeAgentToolPolicyValue(entry.tools);
+    return { id, entry: normalized };
+  });
+}
+
 function normalizeToolNames(plugin) {
   const source = Array.isArray(plugin?.toolNames)
     ? plugin.toolNames
@@ -200,11 +214,14 @@ export function collectSnapshot(openclawBin, runner = runJson) {
   const agentIds = normalizeAgentRoster(agents);
   const routingBindings = runner(openclawBin, ['agents', 'bindings', '--json']);
   const agentEntries = runner(openclawBin, ['config', 'get', 'agents.entries', '--json']);
+  const globalTools = runner(openclawBin, ['config', 'get', 'tools', '--json']);
   const plugins = normalizePluginInventory(runner(openclawBin, ['plugins', 'list', '--json']));
   return {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntime(agents),
     routing_bindings: normalizeRoutingBindings(routingBindings, agentIds),
+    global_tool_policy: normalizeAgentToolPolicyValue(globalTools, 'tools'),
+    agent_entries: normalizeAgentEntries(agentEntries, agentIds),
     agent_tool_policies: normalizeAgentToolPolicies(agentEntries, agentIds),
     ...plugins,
   };
@@ -252,6 +269,23 @@ function normalizeAgentRuntimeSnapshot(items, agentIds) {
   return normalized;
 }
 
+function normalizeAgentEntriesSnapshot(items, agentIds) {
+  if (!Array.isArray(items)) throw new Error('snapshot agent entries are invalid');
+  const normalized = items.map((item, index) => {
+    if (!item || typeof item !== 'object' || typeof item.id !== 'string' || item.id.trim() === '') {
+      throw new Error(`snapshot agent entries[${index}] has no valid id`);
+    }
+    const entry = requireObject(item.entry, `snapshot agent entries[${index}].entry`);
+    const normalizedEntry = canonicalize(entry);
+    if (entry.tools !== undefined) normalizedEntry.tools = normalizeAgentToolPolicyValue(entry.tools);
+    return { id: item.id, entry: normalizedEntry };
+  }).sort((a, b) => a.id.localeCompare(b.id));
+  if (JSON.stringify(normalized.map((item) => item.id)) !== JSON.stringify(agentIds)) {
+    throw new Error('snapshot agent entries do not match agent roster');
+  }
+  return normalized;
+}
+
 function normalizeAgentToolPolicySnapshot(items, agentIds) {
   if (!Array.isArray(items)) throw new Error('snapshot agent tool policies are invalid');
   const normalized = items.map((item, index) => {
@@ -276,6 +310,8 @@ export function normalizeSnapshot(value) {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntimeSnapshot(snapshot.agent_runtime, agentIds),
     routing_bindings: normalizeRoutingBindings(snapshot.routing_bindings, agentIds, 'snapshot routing bindings'),
+    global_tool_policy: normalizeAgentToolPolicyValue(snapshot.global_tool_policy, 'snapshot global tools'),
+    agent_entries: normalizeAgentEntriesSnapshot(snapshot.agent_entries, agentIds),
     agent_tool_policies: normalizeAgentToolPolicySnapshot(snapshot.agent_tool_policies, agentIds),
     active_plugin_ids: normalizeIds(snapshot.active_plugin_ids, 'snapshot active plugin ids', { allowEmpty: true }),
     external_plugin_ids: normalizeIds(snapshot.external_plugin_ids, 'snapshot external plugin ids', { allowEmpty: true }),
@@ -311,6 +347,12 @@ export function assertSnapshotPreserved(expectedValue, actualValue) {
   }
   if (JSON.stringify(actual.routing_bindings) !== JSON.stringify(expected.routing_bindings)) {
     throw new Error('agent routing bindings changed');
+  }
+  if (JSON.stringify(actual.global_tool_policy) !== JSON.stringify(expected.global_tool_policy)) {
+    throw new Error('global tool authority policy changed');
+  }
+  if (JSON.stringify(actual.agent_entries) !== JSON.stringify(expected.agent_entries)) {
+    throw new Error('agent entry configuration changed');
   }
   if (JSON.stringify(actual.agent_tool_policies) !== JSON.stringify(expected.agent_tool_policies)) {
     throw new Error('agent tool authority policy changed');
@@ -370,6 +412,24 @@ export function assertStagedSnapshotAllowed(expectedValue, actualValue, stagingA
   assertEqual('agent roster during staging', expected.agent_ids, actual.agent_ids);
   assertEqual('agent runtime contract during staging', expected.agent_runtime, actual.agent_runtime);
   assertEqual('agent routing bindings during staging', expected.routing_bindings, actual.routing_bindings);
+  assertEqual('global tool authority policy during staging', expected.global_tool_policy, actual.global_tool_policy);
+  const actualEntries = new Map(actual.agent_entries.map((item) => [item.id, item]));
+  for (const expectedEntry of expected.agent_entries) {
+    const actualEntry = actualEntries.get(expectedEntry.id);
+    if (targetPolicies.has(expectedEntry.id)) {
+      const targetEntry = { id: expectedEntry.id, entry: { ...expectedEntry.entry } };
+      if (targetPolicies.get(expectedEntry.id) === null) {
+        delete targetEntry.entry.tools;
+      } else {
+        targetEntry.entry.tools = targetPolicies.get(expectedEntry.id);
+      }
+      if (JSON.stringify(actualEntry) !== JSON.stringify(targetEntry)) {
+        throw new Error(`staged agent entry does not match frozen target: ${expectedEntry.id}`);
+      }
+    } else if (JSON.stringify(actualEntry) !== JSON.stringify(expectedEntry)) {
+      throw new Error(`non-staged agent entry configuration changed during staging: ${expectedEntry.id}`);
+    }
+  }
   const actualPolicies = new Map(actual.agent_tool_policies.map((item) => [item.id, item]));
   for (const expectedPolicy of expected.agent_tool_policies) {
     const actualPolicy = actualPolicies.get(expectedPolicy.id);
