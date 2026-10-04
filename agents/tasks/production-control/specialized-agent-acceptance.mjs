@@ -192,15 +192,23 @@ function runJson(openclawBin, args) {
     maxBuffer: 8 * 1024 * 1024,
   });
   if (result.error) throw result.error;
+  let parsed;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch {
+    parsed = undefined;
+  }
   if (result.status !== 0) {
-    const detail = String(result.stderr ?? '').trim();
+    const optionalUnsetPath = args.join(' ') === 'config get tools --json'
+      && parsed?.ok === false
+      && parsed?.error?.type === 'cli_error'
+      && parsed?.error?.message === 'Config path is valid but unset: tools. The runtime default applies until you set an authored value with openclaw config set tools <value>.';
+    if (optionalUnsetPath) return null;
+    const detail = String(result.stderr ?? '').trim() || String(parsed?.error?.message ?? '').trim();
     throw new Error(`openclaw ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`);
   }
-  try {
-    return JSON.parse(result.stdout);
-  } catch {
-    throw new Error(`openclaw ${args.join(' ')} did not return JSON`);
-  }
+  if (parsed === undefined) throw new Error(`openclaw ${args.join(' ')} did not return JSON`);
+  return parsed;
 }
 
 export function collectSnapshot(openclawBin, runner = runJson) {
