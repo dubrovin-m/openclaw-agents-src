@@ -18,7 +18,9 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 SCHEMA_VERSION = 1
-COLLECTOR_VERSION = "1.0.2"
+COLLECTOR_VERSION = "1.1.0"
+AGENT_OUTPUT_MAX_BYTES = 18000
+AGENT_LIST_LIMIT = 40
 HOME = Path.home()
 NEXUS = HOME / ".openclaw" / "workspace" / "nexus"
 STATE_DB = HOME / ".openclaw" / "state" / "openclaw.sqlite"
@@ -419,10 +421,303 @@ def nexus_context() -> dict:
     }
 
 
+
+def _clip_text(value: object, limit: int = 1200) -> str | None:
+    if value is None:
+        return None
+    text = redact(str(value))
+    if len(text) <= limit:
+        return text
+    return text[:limit] + f"<truncated {len(text) - limit} chars>"
+
+
+def _clip_items(items: list[object], limit: int = AGENT_LIST_LIMIT) -> dict:
+    return {
+        "total": len(items),
+        "items": items[:limit],
+        "truncated": max(0, len(items) - limit),
+    }
+
+
+def _command_brief(value: object, *, stdout_limit: int = 1200, stderr_limit: int = 500) -> dict | None:
+    if value is None:
+        return None
+    if not isinstance(value, dict):
+        return {"value": _clip_text(value, stdout_limit)}
+    result = {
+        key: value.get(key)
+        for key in ("available", "exit_code", "ok", "timed_out", "error")
+        if key in value
+    }
+    if value.get("stdout"):
+        result["stdout"] = _clip_text(value.get("stdout"), stdout_limit)
+    if value.get("stderr"):
+        result["stderr"] = _clip_text(value.get("stderr"), stderr_limit)
+    return result
+
+
+def _stdout_json(value: object) -> object | None:
+    if not isinstance(value, dict):
+        return None
+    raw = value.get("stdout")
+    if not isinstance(raw, str) or not raw.strip():
+        return None
+    try:
+        return json.loads(raw)
+    except json.JSONDecodeError:
+        return None
+
+
+def _apt_upgradable_summary(value: object) -> dict:
+    result = {"command": _command_brief(value, stdout_limit=200)}
+    stdout = value.get("stdout", "") if isinstance(value, dict) else ""
+    packages = []
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if not line or line == "Listing..." or "/" not in line:
+            continue
+        packages.append(line.split("/", 1)[0])
+    result["packages"] = _clip_items(packages, 30)
+    return result
+
+
+def _simulation_summary(value: object) -> dict:
+    stdout = value.get("stdout", "") if isinstance(value, dict) else ""
+    summary_lines = []
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if (
+            re.match(r"^\d+ upgraded,", line)
+            or line.startswith("The following upgrades have been deferred")
+            or line.startswith("The following packages have been kept back")
+        ):
+            summary_lines.append(line)
+    return {
+        "command": _command_brief(value, stdout_limit=200),
+        "summary_lines": _clip_items(summary_lines, 12),
+    }
+
+
+def _autoremove_summary(value: object) -> dict:
+    stdout = value.get("stdout", "") if isinstance(value, dict) else ""
+    packages: list[str] = []
+    collecting = False
+    for raw in stdout.splitlines():
+        line = raw.strip()
+        if line == "The following packages will be REMOVED:":
+            collecting = True
+            continue
+        if collecting and re.match(r"^\d+ upgraded,", line):
+            collecting = False
+        if collecting and line and not line.startswith("Remv "):
+            packages.extend(line.split())
+    return {
+        "command": _command_brief(value, stdout_limit=200),
+        "packages": _clip_items(packages),
+    }
+
+
+def _version_line(value: object) -> str | None:
+    if not isinstance(value, dict):
+        return None
+    stdout = str(value.get("stdout") or "").strip()
+    stderr = str(value.get("stderr") or "").strip()
+    text = stdout or stderr
+    return text.splitlines()[0] if text else None
+
+
+def _npm_inventory_summary(value: object) -> dict:
+    if not isinstance(value, dict):
+        return {"error": "missing"}
+    packages = value.get("packages") if isinstance(value.get("packages"), list) else []
+    rows = []
+    for item in packages:
+        if not isinstance(item, dict):
+            continue
+        installed = item.get("installed")
+        latest = item.get("latest")
+        registry_ok = item.get("registry_ok")
+        if latest != installed or registry_ok is False:
+            rows.append({
+                "name": item.get("name"),
+                "installed": installed,
+                "latest": latest,
+                "registry_ok": registry_ok,
+                "registry_error": _clip_text(item.get("registry_error"), 240),
+            })
+    return {"total_packages": len(packages), "exceptions": _clip_items(rows)}
+
+
+def _automation_exceptions(value: object) -> dict:
+    jobs = value.get("jobs") if isinstance(value, dict) and isinstance(value.get("jobs"), list) else []
+    exceptions = []
+    for item in jobs:
+        if not isinstance(item, dict):
+            continue
+        if item.get("enabled") is False or item.get("last_status") not in (None, "ok"):
+            exceptions.append(item)
+    return {"total_jobs": len(jobs), "exceptions": _clip_items(exceptions)}
+
+
+def _checkout_summary(value: object) -> dict | None:
+    if not isinstance(value, dict):
+        return None
+    return {
+        "path": value.get("path"),
+        "head": _command_brief(value.get("head"), stdout_limit=120),
+        "origin": _command_brief(value.get("origin"), stdout_limit=300),
+        "engineer_source_sha256": value.get("engineer_source_sha256"),
+        "deployed_engineer_sha256": value.get("deployed_engineer_sha256"),
+    }
+
+
+def _plugin_summary(value: object) -> dict:
+    plugins = value.get("enabled_plugins") if isinstance(value, dict) and isinstance(value.get("enabled_plugins"), list) else []
+    versions: Counter[str] = Counter()
+    statuses: Counter[str] = Counter()
+    for item in plugins:
+        if not isinstance(item, dict):
+            continue
+        versions[str(item.get("version") or "unknown")] += 1
+        statuses[str(item.get("status") or "unknown")] += 1
+    return {
+        "total": len(plugins),
+        "versions": dict(versions),
+        "statuses": dict(statuses),
+    }
+
+
+def compact_for_agent(snapshot: dict) -> dict:
+    official = snapshot.get("official_sources") if isinstance(snapshot.get("official_sources"), dict) else {}
+    updates = snapshot.get("updates") if isinstance(snapshot.get("updates"), dict) else {}
+    cleanup = snapshot.get("cleanup") if isinstance(snapshot.get("cleanup"), dict) else {}
+    capacity = snapshot.get("capacity") if isinstance(snapshot.get("capacity"), dict) else {}
+    reliability = snapshot.get("reliability") if isinstance(snapshot.get("reliability"), dict) else {}
+    inventory = snapshot.get("inventory") if isinstance(snapshot.get("inventory"), dict) else {}
+    config = snapshot.get("configuration_drift") if isinstance(snapshot.get("configuration_drift"), dict) else {}
+    recovery = snapshot.get("recovery_readiness") if isinstance(snapshot.get("recovery_readiness"), dict) else {}
+    nexus = snapshot.get("nexus") if isinstance(snapshot.get("nexus"), dict) else {}
+    versions = snapshot.get("versions") if isinstance(snapshot.get("versions"), dict) else {}
+
+    security = _stdout_json(updates.get("ubuntu_security_status"))
+    security_summary = security.get("summary") if isinstance(security, dict) and isinstance(security.get("summary"), dict) else security
+
+    latest_openclaw = official.get("openclaw_latest_stable")
+    if isinstance(latest_openclaw, dict):
+        latest_openclaw = {
+            key: latest_openclaw.get(key)
+            for key in ("tag", "name", "published_at", "updated_at")
+        }
+
+    node_latest = official.get("node_latest")
+    if isinstance(node_latest, dict):
+        node_latest = {key: node_latest.get(key) for key in ("version", "date", "lts")}
+    node_lts = official.get("node_latest_lts")
+    if isinstance(node_lts, dict):
+        node_lts = {key: node_lts.get(key) for key in ("version", "date", "lts")}
+
+    result = {
+        "schema_version": snapshot.get("schema_version"),
+        "collector_version": snapshot.get("collector_version"),
+        "mode": snapshot.get("mode"),
+        "generated_at_utc": snapshot.get("generated_at_utc"),
+        "read_only_contract": snapshot.get("read_only_contract"),
+        "agent_output": True,
+        "nexus": {
+            "head": nexus.get("head"),
+            "scheduled_maintenance_contract": _clip_text(nexus.get("scheduled_maintenance_contract"), 4000),
+        },
+        "sections": {
+            "updates": {
+                "installed_versions": {key: _version_line(value) for key, value in versions.items()},
+                "apt_upgradable": _apt_upgradable_summary(updates.get("apt_upgradable")),
+                "apt_upgrade_simulation": _simulation_summary(updates.get("apt_upgrade_simulation")),
+                "ubuntu_security_summary": security_summary,
+                "latest_openclaw": latest_openclaw,
+                "taskctl_compatibility": official.get("taskctl_compatibility"),
+                "node_latest": node_latest,
+                "node_latest_lts": node_lts,
+                "npm_global": _npm_inventory_summary(inventory.get("npm_global")),
+            },
+            "cleanup": {
+                "apt_autoremove": _autoremove_summary(cleanup.get("apt_autoremove_simulation")),
+                "apt_cache": cleanup.get("apt_cache"),
+                "journal_disk_usage": _command_brief(cleanup.get("journal_disk_usage"), stdout_limit=500),
+                "tmp_older_7d": cleanup.get("tmp_older_7d"),
+                "var_tmp_older_14d": cleanup.get("var_tmp_older_14d"),
+                "known_directory_sizes": _clip_items(
+                    cleanup.get("known_directory_sizes") if isinstance(cleanup.get("known_directory_sizes"), list) else [],
+                    20,
+                ),
+                "old_kernel_packages": _command_brief(cleanup.get("old_kernel_packages"), stdout_limit=800),
+                "docker_system_df": _command_brief(cleanup.get("docker_system_df"), stdout_limit=400),
+                "docker_containers": _command_brief(cleanup.get("docker_containers"), stdout_limit=400),
+            },
+            "capacity": {
+                "cpu_count": capacity.get("cpu_count"),
+                "load_1m": capacity.get("load_1m"),
+                "load_5m": capacity.get("load_5m"),
+                "load_15m": capacity.get("load_15m"),
+                "memory": {
+                    key: capacity.get("memory", {}).get(key)
+                    for key in ("MemTotal", "MemAvailable", "SwapTotal", "SwapFree")
+                    if isinstance(capacity.get("memory"), dict)
+                },
+                "root_filesystem": capacity.get("root_filesystem"),
+                "home_filesystem": capacity.get("home_filesystem"),
+                "pressure": capacity.get("pressure"),
+            },
+            "reliability": {
+                "failed_user_units": _command_brief(reliability.get("failed_user_units"), stdout_limit=1400),
+                "failed_system_units": _command_brief(reliability.get("failed_system_units"), stdout_limit=1400),
+                "journal_errors": reliability.get("journal_errors"),
+                "kernel_oom": _command_brief(reliability.get("kernel_oom"), stdout_limit=800),
+                "openclaw_automation_exceptions": _automation_exceptions(reliability.get("openclaw_automations")),
+            },
+            "configuration_drift": {
+                "implementation_checkout": _checkout_summary(config.get("implementation_checkout")),
+                "public_implementation_main": config.get("public_implementation_main"),
+                "enabled_plugins": _plugin_summary(snapshot.get("openclaw_plugins")),
+                "listening_sockets": _command_brief(inventory.get("listening_sockets"), stdout_limit=650),
+            },
+            "recovery_readiness": {
+                "nexus_sync_unit": _command_brief(recovery.get("nexus_sync_unit"), stdout_limit=700),
+                "nexus_sync_timer": _command_brief(recovery.get("nexus_sync_timer"), stdout_limit=700),
+                "production_control_unit": _command_brief(recovery.get("production_control_unit"), stdout_limit=700),
+                "backup_named_units": recovery.get("backup_named_units"),
+                "root_available_bytes": recovery.get("root_available_bytes"),
+            },
+        },
+    }
+
+    result["agent_output_bytes"] = 0
+    for _ in range(3):
+        encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+        result["agent_output_bytes"] = len(encoded)
+    encoded = json.dumps(result, ensure_ascii=False, separators=(",", ":")).encode("utf-8")
+    result["agent_output_bytes"] = len(encoded)
+    if len(encoded) > AGENT_OUTPUT_MAX_BYTES:
+        raise RuntimeError(
+            f"agent output exceeds limit: {len(encoded)} > {AGENT_OUTPUT_MAX_BYTES} bytes"
+        )
+    return result
+
+
+
 def parse_mode(argv: list[str]) -> str:
-    if len(argv) != 2 or argv[1] not in {"weekly", "monthly"}:
-        raise ValueError("usage: engineer-vps-maintenance-snapshot weekly|monthly")
+    valid = (
+        len(argv) == 2
+        or (len(argv) == 3 and argv[2] == "--agent-output")
+    )
+    if not valid or argv[1] not in {"weekly", "monthly"}:
+        raise ValueError(
+            "usage: engineer-vps-maintenance-snapshot weekly|monthly [--agent-output]"
+        )
     return argv[1]
+
+
+def wants_agent_output(argv: list[str]) -> bool:
+    return len(argv) == 3 and argv[2] == "--agent-output"
 
 
 def collect(mode: str) -> dict:
@@ -551,6 +846,8 @@ def main(argv: list[str]) -> int:
         return 2
     try:
         result = collect(mode)
+        if wants_agent_output(argv):
+            result = compact_for_agent(result)
     except Exception as exc:
         print(json.dumps({"schema_version": SCHEMA_VERSION, "mode": mode, "fatal_error": f"{type(exc).__name__}: {exc}"}, ensure_ascii=False))
         return 1

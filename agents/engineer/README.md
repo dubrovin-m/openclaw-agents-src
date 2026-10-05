@@ -15,7 +15,7 @@ Engineer v0 is intentionally small. This package contains:
 - `tests/maintenance_snapshot_test.py` — collector boundary tests;
 - `validate.sh` — deterministic source validation.
 
-Engineer v0 has no custom plugin, backend, database, production controller, custom scheduler, or shared infrastructure of its own. The maintenance collector is a bounded read-only helper: it accepts only `weekly` or `monthly`, gathers operational evidence, and has no mutation interface. Registered native OpenClaw Automation instances are runtime-owned provider state and are not defined by this package.
+Engineer v0 has no custom plugin, backend, database, production controller, custom scheduler, or shared infrastructure of its own. The maintenance collector is a bounded read-only helper: it accepts `weekly` or `monthly`, with an optional fixed `--agent-output` projection for scheduled model consumption, gathers operational evidence, and has no mutation interface. The agent projection preserves the six maintenance evidence areas while enforcing a deterministic maximum payload size; an oversized projection fails closed instead of relying on transport truncation. Registered native OpenClaw Automation instances are runtime-owned provider state and are not defined by this package.
 
 The package does not contain or provision model credentials, GitHub credentials, Telegram bot tokens, Nexus write access, host approval allowlists, or other secrets/provider-managed state.
 
