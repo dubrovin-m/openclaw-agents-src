@@ -18,7 +18,8 @@ on:
       - '.github/workflows/task-production-control-ci.yml'
   pull_request:
     branches: [main]
-    types: [opened, synchronize, reopened, ready_for_review]
+    # Ready does not change the candidate SHA; candidate changes are covered by opened/synchronize/reopened.
+    types: [opened, synchronize, reopened]
   workflow_dispatch:
 
 permissions:
