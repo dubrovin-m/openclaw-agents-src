@@ -52,8 +52,8 @@ export const VALID_CONFIG: CalendarConfig = {
   ],
   unclassifiedLabel: { id: "label-unclassified", name: "Unclassified", backgroundColor: "#CCCCCC" },
   classificationRules: [
-    "Use confirmed configured labels as authoritative state.",
-    "Ask before writing a model-proposed category."
+    "Use configured provider labels as authoritative state.",
+    "Automatically apply one clear category; ask only when classification remains materially ambiguous."
   ],
   targets: {
     parents: { direction: 60, execution: 40 },
