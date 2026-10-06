@@ -61,4 +61,8 @@ if grep -RIEq --exclude='validate.sh'   '(-----BEGIN (OPENSSH|RSA|EC|DSA) PRIVAT
   fail "possible secret material detected"
 fi
 
+if grep -RIEq --include='*.ts' --include='*.js' 'open(Keyed|SyncKeyed|Blob)Store' "$ROOT/plugin/src"; then
+  fail "Calendar external plugin must not depend on trusted-only OpenClaw plugin state"
+fi
+
 printf 'CALENDAR_AGENT_SOURCE_VALID\n'
