@@ -6,6 +6,7 @@ import {
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import {
   abandonSession,
+  applyApprovedProgramChange,
   completeConditioning,
   completeExercise,
   createConditioningPrescription,
@@ -18,6 +19,7 @@ import {
   getSession,
   pauseSession,
   prescribeExercise,
+  proposeProgramChange,
   resumeExercise,
   resumeSession,
   skipExercise,
@@ -29,6 +31,7 @@ import {
   type ConditioningSegmentActual,
   type ConditioningSegmentInput,
   type PrescribedSet,
+  type ProgramChangeType,
 } from "./domain.js";
 import { healthSnapshot, openTrainingStore } from "./store.js";
 
@@ -431,6 +434,69 @@ const entry = defineToolPlugin({
             : { rir: params.value };
           return correctSetResult(db, params.session_set_id, patch, params.reason);
         }),
+    })),
+    tool(ownerTool({
+      name: "training_program_change_propose",
+      label: "Propose training program change",
+      description: "Create an auditable bounded permanent-program change proposal without changing the active Program Version.",
+      parameters: Type.Object({
+        change: Type.Union([
+          Type.Object({
+            change_type: Type.Literal("REPLACE_EXERCISE"),
+            proposal: Type.Object({
+              template_exercise_id: Type.String({ minLength: 1, maxLength: 100 }),
+              replacement_exercise_id: Type.String({ minLength: 1, maxLength: 100 }),
+            }, { additionalProperties: false }),
+          }, { additionalProperties: false }),
+          Type.Object({
+            change_type: Type.Literal("UPDATE_EXERCISE_TARGETS"),
+            proposal: Type.Object({
+              template_exercise_id: Type.String({ minLength: 1, maxLength: 100 }),
+              target_sets: Type.Optional(Type.Integer({ minimum: 1, maximum: 20 })),
+              target_reps_min: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()])),
+              target_reps_max: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()])),
+              target_rir_min: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()])),
+              target_rir_max: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()])),
+              progression_policy_json: Type.Optional(Type.String({ minLength: 2, maxLength: 2000 })),
+            }, { additionalProperties: false }),
+          }, { additionalProperties: false }),
+          Type.Object({
+            change_type: Type.Literal("UPDATE_CONDITIONING_POLICY"),
+            proposal: Type.Object({
+              conditioning_policy_id: Type.String({ minLength: 1, maxLength: 100 }),
+              objective: Type.Optional(Type.String({ minLength: 1, maxLength: 1000 })),
+              min_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 86400 }), Type.Null()])),
+              max_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 86400 }), Type.Null()])),
+              intensity_basis: Type.Optional(Type.Union([
+                Type.Literal("HR_ZONE"),Type.Literal("HEART_RATE"),Type.Literal("RPE"),
+                Type.Literal("POWER"),Type.Literal("PACE"),Type.Literal("MIXED"),Type.Null()
+              ])),
+              modality_ids: Type.Optional(Type.Array(Type.String({ minLength: 1, maxLength: 100 }), { minItems: 1, maxItems: 20 })),
+            }, { additionalProperties: false }),
+          }, { additionalProperties: false }),
+        ]),
+        rationale: Type.String({ minLength: 1, maxLength: 4000 }),
+        created_by: Type.Optional(Type.Union([Type.Literal("TRAINING_AGENT"), Type.Literal("USER")])),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => proposeProgramChange(db, {
+          change_type: params.change.change_type as ProgramChangeType,
+          proposal: params.change.proposal as Record<string, unknown>,
+          rationale: params.rationale,
+          created_by: params.created_by,
+        })),
+    })),
+    tool(ownerTool({
+      name: "training_program_change_apply",
+      label: "Apply approved training program change",
+      description: "Apply exactly one pending user-approved proposal by creating a new immutable Program Version starting from Strength A.",
+      parameters: Type.Object({
+        proposal_id: Type.String({ minLength: 1, maxLength: 100 }),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => applyApprovedProgramChange(db, params.proposal_id, "USER")),
     })),
     tool(ownerTool({
       name: "training_session_void",
