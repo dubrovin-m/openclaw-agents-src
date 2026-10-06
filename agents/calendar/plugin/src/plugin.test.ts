@@ -21,12 +21,9 @@ describe("Calendar plugin registration", () => {
     const api = {
       pluginConfig: VALID_CONFIG,
       runtime: {
-        state: {
-          openKeyedStore: vi.fn(() => ({
-            register: vi.fn(),
-            lookup: vi.fn(),
-            delete: vi.fn(),
-          })),
+        config: {
+          current: vi.fn(() => ({ plugins: { entries: { "calendar-analytics": { config: VALID_CONFIG } } } })),
+          mutateConfigFile: vi.fn(),
         },
       },
       registerTool(tool: unknown, options?: { name?: string; optional?: boolean }) {
@@ -37,6 +34,7 @@ describe("Calendar plugin registration", () => {
 
     entry.register(api as never);
 
+    expect("state" in api.runtime).toBe(false);
     expect(registrations).toHaveLength(EXPECTED_TOOL_NAMES.length);
     expect(registrations.map(({ options }) => options?.name).sort()).toEqual(EXPECTED_TOOL_NAMES);
 
