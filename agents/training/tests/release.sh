@@ -9,6 +9,7 @@ TMP=$(mktemp -d /tmp/training-release-test.XXXXXX)
 trap 'rm -rf "$TMP"' EXIT
 (
   cd "$ROOT/plugin"
+  npm run build >/dev/null
   npm pack --pack-destination "$TMP" >/dev/null
 )
 BUILT=$(find "$TMP" -maxdepth 1 -name '*.tgz' -print -quit)
