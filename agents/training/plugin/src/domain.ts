@@ -181,6 +181,200 @@ export function getSession(db: DatabaseSync, sessionId?: string) {
   return { ...session, exercises };
 }
 
+type ProgressionPolicy = {
+  kind?: "DOUBLE_SUCCESS_THEN_INCREMENT" | "HOLD_LAST_LOAD";
+  initial_load_kg?: number;
+  increment_kg?: number;
+  successful_exposures_required?: number;
+};
+
+function parseProgressionPolicy(raw: SQLInputValue): ProgressionPolicy {
+  if (typeof raw !== "string" || !raw.trim()) return {};
+  const value = JSON.parse(raw) as unknown;
+  if (!value || typeof value !== "object" || Array.isArray(value)) {
+    throw new Error("Invalid progression policy JSON");
+  }
+  const policy = value as ProgressionPolicy;
+  if (policy.initial_load_kg !== undefined && (!Number.isFinite(policy.initial_load_kg) || policy.initial_load_kg < 0)) {
+    throw new Error("Invalid progression initial_load_kg");
+  }
+  if (policy.increment_kg !== undefined && (!Number.isFinite(policy.increment_kg) || policy.increment_kg <= 0)) {
+    throw new Error("Invalid progression increment_kg");
+  }
+  if (policy.successful_exposures_required !== undefined &&
+      (!Number.isInteger(policy.successful_exposures_required) ||
+       policy.successful_exposures_required < 1 ||
+       policy.successful_exposures_required > 10)) {
+    throw new Error("Invalid successful_exposures_required");
+  }
+  return policy;
+}
+
+function uniformCompletedLoad(sets: Row[]): number | null | undefined {
+  if (!sets.length) return undefined;
+  const loads = sets.map((set) =>
+    set.actual_load_kg == null ? null : Number(set.actual_load_kg)
+  );
+  if (loads.some((load) => load === null)) {
+    return loads.every((load) => load === null) ? null : undefined;
+  }
+  const first = loads[0] as number;
+  return loads.every((load) => Math.abs((load as number) - first) < 1e-9)
+    ? first
+    : undefined;
+}
+
+function exposureSucceeded(sets: Row[]): boolean {
+  if (!sets.length) return false;
+  return sets.every((set) => {
+    if (set.status !== "COMPLETED" || set.actual_reps == null) return false;
+    const targetReps = set.target_reps == null ? null : Number(set.target_reps);
+    const actualReps = Number(set.actual_reps);
+    if (targetReps !== null && actualReps < targetReps) return false;
+    if (set.target_rir != null) {
+      if (set.actual_rir == null || Number(set.actual_rir) < Number(set.target_rir)) return false;
+    }
+    return true;
+  });
+}
+
+export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: string) {
+  const current = one<{
+    session_exercise_id:string;
+    training_session_id:string;
+    template_exercise_id:string;
+    exercise_id:string;
+    equipment_instance_id:SQLInputValue;
+    started_at:SQLInputValue;
+    load_mode:string;
+    load_progression_direction:string;
+    target_sets:number;
+    target_reps_min:SQLInputValue;
+    target_reps_max:SQLInputValue;
+    target_rir_min:SQLInputValue;
+    target_rir_max:SQLInputValue;
+    exercise_policy:string;
+    program_policy:string;
+  }>(
+    db,
+    `SELECT se.session_exercise_id,se.training_session_id,se.template_exercise_id,se.exercise_id,
+            se.equipment_instance_id,ts.started_at,e.load_mode,e.load_progression_direction,
+            te.target_sets,te.target_reps_min,te.target_reps_max,te.target_rir_min,te.target_rir_max,
+            te.progression_policy_json AS exercise_policy,
+            pv.progression_policy_json AS program_policy
+       FROM session_exercises se
+       JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+       JOIN exercises e ON e.exercise_id=se.exercise_id
+       JOIN template_exercises te ON te.template_exercise_id=se.template_exercise_id
+       JOIN program_versions pv ON pv.program_version_id=ts.program_version_id
+      WHERE se.session_exercise_id=?`,
+    sessionExerciseId
+  );
+  if (!current) throw new Error("Session exercise not found");
+
+  const exercisePolicy = parseProgressionPolicy(current.exercise_policy);
+  const programPolicy = parseProgressionPolicy(current.program_policy);
+  const policy: ProgressionPolicy = { ...programPolicy, ...exercisePolicy };
+  const required = policy.successful_exposures_required ?? 2;
+
+  const prior = all<{
+    session_exercise_id:string;
+    started_at:string;
+    equipment_instance_id:SQLInputValue;
+  }>(
+    db,
+    `SELECT se.session_exercise_id,ts.started_at,se.equipment_instance_id
+       FROM session_exercises se
+       JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+      WHERE se.exercise_id=?
+        AND se.session_exercise_id<>?
+        AND se.status='COMPLETED'
+        AND ts.status<>'VOIDED'
+        AND ts.started_at<=?
+        AND (
+          (? IS NULL AND se.equipment_instance_id IS NULL)
+          OR se.equipment_instance_id=?
+        )
+      ORDER BY ts.started_at DESC, se.completed_at DESC
+      LIMIT 10`,
+    current.exercise_id,
+    sessionExerciseId,
+    String(current.started_at),
+    current.equipment_instance_id,
+    current.equipment_instance_id
+  );
+
+  const exposures = prior.map((row) => {
+    const sets = all<Row>(
+      db,
+      "SELECT * FROM session_sets WHERE session_exercise_id=? ORDER BY set_number",
+      row.session_exercise_id
+    );
+    return {
+      session_exercise_id: row.session_exercise_id,
+      started_at: row.started_at,
+      load_kg: uniformCompletedLoad(sets),
+      success: exposureSucceeded(sets),
+      set_count: sets.length,
+    };
+  });
+
+  const latestComparable = exposures.find((exposure) => exposure.load_kg !== undefined);
+  let candidateLoad: number | null = policy.initial_load_kg ?? null;
+  let basis = "INITIAL_LOAD";
+
+  if (current.load_mode === "BODYWEIGHT" || current.load_mode === "NONE") {
+    candidateLoad = null;
+    basis = "NO_EXTERNAL_LOAD";
+  } else if (latestComparable) {
+    candidateLoad = latestComparable.load_kg ?? null;
+    basis = "HOLD_LAST_COMPARABLE_LOAD";
+
+    const successful = exposures.slice(0, required);
+    const sameLoad =
+      successful.length === required &&
+      successful.every((exposure) => exposure.success) &&
+      successful.every((exposure) => exposure.load_kg === latestComparable.load_kg);
+
+    if (
+      policy.kind === "DOUBLE_SUCCESS_THEN_INCREMENT" &&
+      sameLoad &&
+      candidateLoad !== null &&
+      policy.increment_kg
+    ) {
+      if (current.load_progression_direction === "HIGHER_IS_HARDER") {
+        candidateLoad += policy.increment_kg;
+        basis = "SUCCESS_STREAK_INCREMENT";
+      } else if (current.load_progression_direction === "LOWER_IS_HARDER") {
+        candidateLoad = Math.max(0, candidateLoad - policy.increment_kg);
+        basis = "SUCCESS_STREAK_DECREMENT_ASSISTANCE";
+      }
+    }
+  } else if (policy.initial_load_kg === undefined) {
+    candidateLoad = null;
+    basis = "NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD";
+  }
+
+  return {
+    session_exercise_id: sessionExerciseId,
+    exercise_id: current.exercise_id,
+    target_sets: current.target_sets,
+    target_reps_min: current.target_reps_min,
+    target_reps_max: current.target_reps_max,
+    target_rir_min: current.target_rir_min,
+    target_rir_max: current.target_rir_max,
+    candidate_load_kg: candidateLoad,
+    basis,
+    policy: {
+      kind: policy.kind ?? "HOLD_LAST_LOAD",
+      increment_kg: policy.increment_kg ?? null,
+      successful_exposures_required: required,
+      initial_load_kg: policy.initial_load_kg ?? null,
+    },
+    recent_exposures: exposures.slice(0, Math.max(required, 3)),
+  };
+}
+
 export type PrescribedSet = {
   set_number: number;
   candidate_reps: number | null;
