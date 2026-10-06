@@ -94,10 +94,13 @@ jobs:
           bash agents/training/tests/release.sh
 
       - name: Qualify staged Training deployment and rollback
+        env:
+          OPENCLAW_QUALIFICATION_VERSION: ${{ steps.runtime.outputs.openclaw_version }}
         run: |
           set -euo pipefail
-          export PATH="$GITHUB_WORKSPACE/agents/training/plugin/node_modules/.bin:$PATH"
-          bash agents/training/tests/deploy.sh
+          root="$RUNNER_TEMP/openclaw-training-deploy-host"
+          npm install --prefix "$root" --no-save --package-lock=false "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
+          OPENCLAW_BIN="$root/node_modules/.bin/openclaw" bash agents/training/tests/deploy.sh
 
       - name: Qualify normalized Training migration
         working-directory: agents/training/plugin
