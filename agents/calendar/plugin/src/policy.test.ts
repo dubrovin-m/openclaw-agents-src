@@ -87,12 +87,17 @@ describe("Calendar tool policy", () => {
     )).toMatchObject({ block: true });
   });
 
-  it("allows only a bounded classification-label write", () => {
+  it("allows only bounded compare-and-set classification-label writes", () => {
     expect(calendarToolPolicy(
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: EVENT_REF, label_id: "label-strategy" },
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: null,
+          write_mode: "automatic",
+        },
       },
       { agentId: "calendar" },
     )).toBeUndefined();
@@ -101,7 +106,40 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: "raw-provider-event-id", label_id: "label-strategy" },
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: "label-unclassified",
+          write_mode: "automatic",
+        },
+      },
+      { agentId: "calendar" },
+    )).toBeUndefined();
+
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      {
+        toolName: "calendar_provider_set_label",
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: "label-delivery",
+          write_mode: "human_correction",
+        },
+      },
+      { agentId: "calendar" },
+    )).toBeUndefined();
+
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      {
+        toolName: "calendar_provider_set_label",
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: "label-delivery",
+          write_mode: "automatic",
+        },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -110,7 +148,12 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: EVENT_REF, label_id: "label-strategy", title: "mutate me" },
+        params: {
+          event_id: "raw-provider-event-id",
+          label_id: "label-strategy",
+          expected_label_id: null,
+          write_mode: "automatic",
+        },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -119,7 +162,41 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: EVENT_REF, label_id: "unknown-label" },
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: null,
+          write_mode: "automatic",
+          title: "mutate me",
+        },
+      },
+      { agentId: "calendar" },
+    )).toMatchObject({ block: true });
+
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      {
+        toolName: "calendar_provider_set_label",
+        params: {
+          event_id: EVENT_REF,
+          label_id: "unknown-label",
+          expected_label_id: null,
+          write_mode: "automatic",
+        },
+      },
+      { agentId: "calendar" },
+    )).toMatchObject({ block: true });
+
+    expect(calendarToolPolicy(
+      VALID_CONFIG,
+      {
+        toolName: "calendar_provider_set_label",
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-strategy",
+          expected_label_id: "unknown-label",
+          write_mode: "human_correction",
+        },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
@@ -143,7 +220,12 @@ describe("Calendar tool policy", () => {
       VALID_CONFIG,
       {
         toolName: "calendar_provider_set_label",
-        params: { event_id: EVENT_REF, label_id: "label-unclassified" },
+        params: {
+          event_id: EVENT_REF,
+          label_id: "label-unclassified",
+          expected_label_id: null,
+          write_mode: "automatic",
+        },
       },
       { agentId: "calendar" },
     )).toMatchObject({ block: true });
