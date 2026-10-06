@@ -1280,3 +1280,353 @@ export function correctSetResult(
   });
 }
 
+export type ProgramChangeType =
+  | "REPLACE_EXERCISE"
+  | "UPDATE_EXERCISE_TARGETS"
+  | "UPDATE_CONDITIONING_POLICY";
+
+export function proposeProgramChange(
+  db: DatabaseSync,
+  params: {
+    change_type: ProgramChangeType;
+    proposal: Record<string, unknown>;
+    rationale: string;
+    created_by?: "TRAINING_AGENT" | "USER";
+  }
+) {
+  return withTransaction(db, () => {
+    const active = one<{program_version_id:string}>(
+      db,
+      "SELECT program_version_id FROM program_versions WHERE status='ACTIVE'"
+    );
+    if (!active) throw new Error("No active Program Version");
+    const proposalId = newId("proposal");
+    const now = nowIso();
+    db.prepare(`INSERT INTO program_change_proposals(
+      proposal_id,base_program_version_id,created_by,change_type,proposal_json,rationale,
+      status,decision_actor,decided_at,applied_program_version_id,created_at
+    ) VALUES(?,?,?,?,?,?,'PENDING',NULL,NULL,NULL,?)`).run(
+      proposalId, active.program_version_id, params.created_by ?? "TRAINING_AGENT",
+      params.change_type, JSON.stringify(params.proposal), params.rationale, now
+    );
+    return one<Row>(
+      db,
+      "SELECT * FROM program_change_proposals WHERE proposal_id=?",
+      proposalId
+    );
+  });
+}
+
+function requiredString(value: unknown, field: string): string {
+  if (typeof value !== "string" || !value.trim()) throw new Error(`Missing or invalid ${field}`);
+  return value;
+}
+function optionalNumber(value: unknown, field: string): number | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== "number" || !Number.isFinite(value)) throw new Error(`Invalid ${field}`);
+  return value;
+}
+
+function cloneProgramVersion(db: DatabaseSync, baseVersionId: string, createdBy: "USER" | "HEALTH_MAIN", reason: string) {
+  const base = one<{
+    program_id:string;
+    version_number:number;
+    progression_policy_json:string;
+    status:string;
+  }>(
+    db,
+    "SELECT program_id,version_number,progression_policy_json,status FROM program_versions WHERE program_version_id=?",
+    baseVersionId
+  );
+  if (!base || base.status !== "ACTIVE") throw new Error("Program change base must be the active version");
+
+  const newVersionId = newId("ver");
+  const now = nowIso();
+  db.prepare(`INSERT INTO program_versions(
+    program_version_id,program_id,version_number,status,progression_policy_json,created_by,
+    decision_reason,activated_at,retired_at,created_at
+  ) VALUES(?,?,?,'DRAFT',?,?,?,NULL,NULL,?)`).run(
+    newVersionId, base.program_id, base.version_number + 1,
+    base.progression_policy_json, createdBy, reason, now
+  );
+
+  const templateMap = new Map<string,string>();
+  const templates = all<Row>(
+    db,
+    "SELECT * FROM workout_templates WHERE program_version_id=? ORDER BY rowid",
+    baseVersionId
+  );
+  for (const template of templates) {
+    const newTemplateId = newId("tpl");
+    templateMap.set(String(template.workout_template_id), newTemplateId);
+    db.prepare("INSERT INTO workout_templates VALUES(?,?,?,?,?)").run(
+      newTemplateId, newVersionId, template.name, template.workout_kind, template.notes
+    );
+  }
+
+  const slotMap = new Map<string,string>();
+  const slots = all<Row>(
+    db,
+    "SELECT * FROM program_slots WHERE program_version_id=? ORDER BY sequence",
+    baseVersionId
+  );
+  for (const slot of slots) {
+    const newSlotId = newId("slot");
+    slotMap.set(String(slot.program_slot_id), newSlotId);
+    const mappedTemplate = templateMap.get(String(slot.workout_template_id));
+    if (!mappedTemplate) throw new Error("Program clone lost workout template mapping");
+    db.prepare("INSERT INTO program_slots VALUES(?,?,?,?)").run(
+      newSlotId, newVersionId, slot.sequence, mappedTemplate
+    );
+  }
+
+  const templateExerciseMap = new Map<string,string>();
+  const templateExercises = all<Row>(
+    db,
+    `SELECT te.* FROM template_exercises te
+       JOIN workout_templates wt ON wt.workout_template_id=te.workout_template_id
+      WHERE wt.program_version_id=?
+      ORDER BY wt.rowid,te.sequence`,
+    baseVersionId
+  );
+  for (const te of templateExercises) {
+    const newIdValue = newId("te");
+    templateExerciseMap.set(String(te.template_exercise_id), newIdValue);
+    const mappedTemplate = templateMap.get(String(te.workout_template_id));
+    if (!mappedTemplate) throw new Error("Program clone lost template exercise mapping");
+    db.prepare(`INSERT INTO template_exercises(
+      template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
+      target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,notes
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+      newIdValue, mappedTemplate, te.exercise_id, te.sequence, te.target_sets,
+      te.target_reps_min, te.target_reps_max, te.target_rir_min, te.target_rir_max,
+      te.progression_policy_json, te.notes
+    );
+  }
+
+  const conditioningPolicyMap = new Map<string,string>();
+  const policies = all<Row>(
+    db,
+    `SELECT cp.* FROM conditioning_policies cp
+       JOIN workout_templates wt ON wt.workout_template_id=cp.workout_template_id
+      WHERE wt.program_version_id=?`,
+    baseVersionId
+  );
+  for (const policy of policies) {
+    const newPolicyId = newId("cp");
+    conditioningPolicyMap.set(String(policy.conditioning_policy_id), newPolicyId);
+    const mappedTemplate = templateMap.get(String(policy.workout_template_id));
+    if (!mappedTemplate) throw new Error("Program clone lost Conditioning template mapping");
+    db.prepare(`INSERT INTO conditioning_policies(
+      conditioning_policy_id,workout_template_id,objective,min_duration_sec,max_duration_sec,intensity_basis,notes
+    ) VALUES(?,?,?,?,?,?,?)`).run(
+      newPolicyId, mappedTemplate, policy.objective, policy.min_duration_sec,
+      policy.max_duration_sec, policy.intensity_basis, policy.notes
+    );
+    const modalities = all<{modality_id:string}>(
+      db,
+      "SELECT modality_id FROM conditioning_policy_modalities WHERE conditioning_policy_id=?",
+      policy.conditioning_policy_id
+    );
+    for (const modality of modalities) {
+      db.prepare("INSERT INTO conditioning_policy_modalities VALUES(?,?)")
+        .run(newPolicyId, modality.modality_id);
+    }
+  }
+
+  return {
+    newVersionId,
+    templateMap,
+    slotMap,
+    templateExerciseMap,
+    conditioningPolicyMap,
+  };
+}
+
+function applyProgramProposalPayload(
+  db: DatabaseSync,
+  changeType: ProgramChangeType,
+  proposal: Record<string, unknown>,
+  maps: ReturnType<typeof cloneProgramVersion>,
+) {
+  if (changeType === "REPLACE_EXERCISE") {
+    const sourceId = requiredString(proposal.template_exercise_id, "template_exercise_id");
+    const replacementExerciseId = requiredString(proposal.replacement_exercise_id, "replacement_exercise_id");
+    const targetId = maps.templateExerciseMap.get(sourceId);
+    if (!targetId) throw new Error("Program proposal references a template exercise outside the base version");
+    const exercise = one<{active:number}>(db, "SELECT active FROM exercises WHERE exercise_id=?", replacementExerciseId);
+    if (!exercise || exercise.active !== 1) throw new Error("Replacement exercise is unavailable");
+    db.prepare("UPDATE template_exercises SET exercise_id=? WHERE template_exercise_id=?")
+      .run(replacementExerciseId, targetId);
+    return;
+  }
+
+  if (changeType === "UPDATE_EXERCISE_TARGETS") {
+    const sourceId = requiredString(proposal.template_exercise_id, "template_exercise_id");
+    const targetId = maps.templateExerciseMap.get(sourceId);
+    if (!targetId) throw new Error("Program proposal references a template exercise outside the base version");
+    const current = one<Row>(db, "SELECT * FROM template_exercises WHERE template_exercise_id=?", targetId)!;
+    const targetSets = optionalNumber(proposal.target_sets, "target_sets") ?? Number(current.target_sets);
+    const repsMin = proposal.target_reps_min === undefined ? current.target_reps_min : proposal.target_reps_min;
+    const repsMax = proposal.target_reps_max === undefined ? current.target_reps_max : proposal.target_reps_max;
+    const rirMin = proposal.target_rir_min === undefined ? current.target_rir_min : proposal.target_rir_min;
+    const rirMax = proposal.target_rir_max === undefined ? current.target_rir_max : proposal.target_rir_max;
+    const progression = proposal.progression_policy_json === undefined
+      ? String(current.progression_policy_json)
+      : requiredString(proposal.progression_policy_json, "progression_policy_json");
+    parseProgressionPolicy(progression);
+    if (!Number.isInteger(targetSets) || targetSets < 1 || targetSets > 20) throw new Error("Invalid target_sets");
+    if (repsMin != null && (typeof repsMin !== "number" || repsMin < 0)) throw new Error("Invalid target_reps_min");
+    if (repsMax != null && (typeof repsMax !== "number" || repsMax < 0)) throw new Error("Invalid target_reps_max");
+    if (rirMin != null && (typeof rirMin !== "number" || rirMin < 0)) throw new Error("Invalid target_rir_min");
+    if (rirMax != null && (typeof rirMax !== "number" || rirMax < 0)) throw new Error("Invalid target_rir_max");
+    if (repsMin != null && repsMax != null && Number(repsMin) > Number(repsMax)) throw new Error("Invalid rep range");
+    if (rirMin != null && rirMax != null && Number(rirMin) > Number(rirMax)) throw new Error("Invalid RIR range");
+    db.prepare(`UPDATE template_exercises
+      SET target_sets=?,target_reps_min=?,target_reps_max=?,target_rir_min=?,target_rir_max=?,progression_policy_json=?
+      WHERE template_exercise_id=?`).run(
+      targetSets, repsMin as SQLInputValue, repsMax as SQLInputValue,
+      rirMin as SQLInputValue, rirMax as SQLInputValue, progression, targetId
+    );
+    return;
+  }
+
+  if (changeType === "UPDATE_CONDITIONING_POLICY") {
+    const sourcePolicyId = requiredString(proposal.conditioning_policy_id, "conditioning_policy_id");
+    const targetPolicyId = maps.conditioningPolicyMap.get(sourcePolicyId);
+    if (!targetPolicyId) throw new Error("Program proposal references a Conditioning policy outside the base version");
+    const current = one<Row>(
+      db,
+      "SELECT * FROM conditioning_policies WHERE conditioning_policy_id=?",
+      targetPolicyId
+    )!;
+    const objective = proposal.objective === undefined
+      ? String(current.objective)
+      : requiredString(proposal.objective, "objective");
+    const minDuration = proposal.min_duration_sec === undefined ? current.min_duration_sec : proposal.min_duration_sec;
+    const maxDuration = proposal.max_duration_sec === undefined ? current.max_duration_sec : proposal.max_duration_sec;
+    const intensity = proposal.intensity_basis === undefined ? current.intensity_basis : proposal.intensity_basis;
+    if (minDuration != null && (typeof minDuration !== "number" || minDuration < 0)) throw new Error("Invalid min_duration_sec");
+    if (maxDuration != null && (typeof maxDuration !== "number" || maxDuration < 0)) throw new Error("Invalid max_duration_sec");
+    if (minDuration != null && maxDuration != null && Number(minDuration) > Number(maxDuration)) throw new Error("Invalid Conditioning duration range");
+    db.prepare(`UPDATE conditioning_policies
+      SET objective=?,min_duration_sec=?,max_duration_sec=?,intensity_basis=?
+      WHERE conditioning_policy_id=?`).run(
+      objective, minDuration as SQLInputValue, maxDuration as SQLInputValue,
+      intensity as SQLInputValue, targetPolicyId
+    );
+    if (proposal.modality_ids !== undefined) {
+      if (!Array.isArray(proposal.modality_ids) || proposal.modality_ids.length === 0) {
+        throw new Error("modality_ids must be a non-empty array");
+      }
+      db.prepare("DELETE FROM conditioning_policy_modalities WHERE conditioning_policy_id=?")
+        .run(targetPolicyId);
+      for (const raw of proposal.modality_ids) {
+        const modalityId = requiredString(raw, "modality_id");
+        const modality = one<{active:number}>(db, "SELECT active FROM conditioning_modalities WHERE modality_id=?", modalityId);
+        if (!modality || modality.active !== 1) throw new Error(`Unavailable Conditioning modality: ${modalityId}`);
+        db.prepare("INSERT INTO conditioning_policy_modalities VALUES(?,?)").run(targetPolicyId, modalityId);
+      }
+    }
+    return;
+  }
+
+  throw new Error(`Unsupported program change type: ${changeType}`);
+}
+
+export function applyApprovedProgramChange(
+  db: DatabaseSync,
+  proposalId: string,
+  decisionActor: "USER" | "HEALTH_MAIN" = "USER",
+) {
+  return withTransaction(db, () => {
+    if (getOpenSession(db)) throw new Error("Program Version cannot change while a session is open");
+    const proposal = one<Row>(
+      db,
+      "SELECT * FROM program_change_proposals WHERE proposal_id=?",
+      proposalId
+    );
+    if (!proposal) throw new Error("Program change proposal not found");
+    if (proposal.status === "APPLIED") {
+      return {
+        replayed: true,
+        proposal,
+        active_program: one<Row>(db, "SELECT * FROM program_versions WHERE status='ACTIVE'"),
+      };
+    }
+    if (proposal.status !== "PENDING" && proposal.status !== "APPROVED") {
+      throw new Error("Program change proposal is not applicable");
+    }
+    const active = one<{program_version_id:string}>(
+      db,
+      "SELECT program_version_id FROM program_versions WHERE status='ACTIVE'"
+    );
+    if (!active || active.program_version_id !== proposal.base_program_version_id) {
+      throw new Error("Program change proposal base is stale");
+    }
+
+    const changeType = String(proposal.change_type) as ProgramChangeType;
+    const payload = JSON.parse(String(proposal.proposal_json)) as Record<string, unknown>;
+    const maps = cloneProgramVersion(
+      db,
+      String(proposal.base_program_version_id),
+      decisionActor,
+      String(proposal.rationale)
+    );
+    applyProgramProposalPayload(db, changeType, payload, maps);
+
+    const first = one<{program_slot_id:string; name:string}>(
+      db,
+      `SELECT ps.program_slot_id,wt.name
+         FROM program_slots ps JOIN workout_templates wt ON wt.workout_template_id=ps.workout_template_id
+        WHERE ps.program_version_id=?
+        ORDER BY ps.sequence LIMIT 1`,
+      maps.newVersionId
+    );
+    if (!first || first.name !== "Strength A") {
+      throw new Error("New Program Version must start with Strength A");
+    }
+
+    const now = nowIso();
+    db.prepare("UPDATE program_versions SET status='RETIRED',retired_at=? WHERE program_version_id=?")
+      .run(now, proposal.base_program_version_id);
+    db.prepare("UPDATE program_versions SET status='ACTIVE',activated_at=? WHERE program_version_id=?")
+      .run(now, maps.newVersionId);
+    db.prepare("INSERT INTO program_cursor VALUES(?,?,?,?)")
+      .run(maps.newVersionId, 1, first.program_slot_id, now);
+    db.prepare(`UPDATE program_change_proposals
+      SET status='APPLIED',decision_actor=?,decided_at=?,applied_program_version_id=?
+      WHERE proposal_id=?`).run(decisionActor, now, maps.newVersionId, proposalId);
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "PROGRAM_VERSION_ACTIVATED", "program_version", maps.newVersionId,
+      JSON.stringify({ base_program_version_id: proposal.base_program_version_id, proposal_id: proposalId }), now
+    );
+
+    return {
+      replayed: false,
+      proposal: one<Row>(db, "SELECT * FROM program_change_proposals WHERE proposal_id=?", proposalId),
+      active_program: one<Row>(db, "SELECT * FROM program_versions WHERE program_version_id=?", maps.newVersionId),
+      recommendation: getRecommendation(db),
+    };
+  });
+}
+
+export function applyDirectProgramChange(
+  db: DatabaseSync,
+  params: {
+    change_type: ProgramChangeType;
+    proposal: Record<string, unknown>;
+    rationale: string;
+  }
+) {
+  return withTransaction(db, () => {
+    const proposal = proposeProgramChange(db, {
+      ...params,
+      created_by: "USER",
+    }) as Row;
+    // proposeProgramChange owns its own transaction, so direct application must be
+    // implemented without nested transactions by returning the proposal id to the caller.
+    return proposal;
+  });
+}
+
