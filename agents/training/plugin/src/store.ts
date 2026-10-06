@@ -133,6 +133,13 @@ CREATE TABLE training_sessions(
   CHECK((status IN ('ACTIVE','PAUSED') AND ended_at IS NULL) OR (status IN ('COMPLETED','ABANDONED','VOIDED') AND ended_at IS NOT NULL))
 ) STRICT;
 CREATE UNIQUE INDEX ux_training_open_session ON training_sessions((1)) WHERE status IN ('ACTIVE','PAUSED');
+CREATE TABLE training_session_pauses(
+  pause_id TEXT PRIMARY KEY,
+  training_session_id TEXT NOT NULL REFERENCES training_sessions(training_session_id) ON DELETE CASCADE,
+  paused_at TEXT NOT NULL,
+  resumed_at TEXT
+) STRICT;
+CREATE UNIQUE INDEX ux_training_open_pause ON training_session_pauses(training_session_id) WHERE resumed_at IS NULL;
 
 CREATE TABLE program_slot_outcomes(
   program_slot_outcome_id TEXT PRIMARY KEY,
