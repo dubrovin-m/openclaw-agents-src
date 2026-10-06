@@ -642,6 +642,7 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
     exercise_id:string;
     equipment_instance_id:SQLInputValue;
     started_at:SQLInputValue;
+    local_date:string;
     load_mode:string;
     load_progression_direction:string;
     target_sets:number;
@@ -654,7 +655,7 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
   }>(
     db,
     `SELECT se.session_exercise_id,se.training_session_id,se.template_exercise_id,se.exercise_id,
-            se.equipment_instance_id,ts.started_at,e.load_mode,e.load_progression_direction,
+            se.equipment_instance_id,ts.started_at,ts.local_date,e.load_mode,e.load_progression_direction,
             se.planned_sets AS target_sets,se.target_reps_min,se.target_reps_max,se.target_rir_min,se.target_rir_max,
             se.progression_policy_json AS exercise_policy,
             COALESCE(pv.progression_policy_json,'{}') AS program_policy
@@ -674,27 +675,28 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
 
   const prior = all<{
     session_exercise_id:string;
-    started_at:string;
+    started_at:SQLInputValue;
+    local_date:string;
     equipment_instance_id:SQLInputValue;
   }>(
     db,
-    `SELECT se.session_exercise_id,ts.started_at,se.equipment_instance_id
+    `SELECT se.session_exercise_id,ts.started_at,ts.local_date,se.equipment_instance_id
        FROM session_exercises se
        JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
       WHERE se.exercise_id=?
         AND se.session_exercise_id<>?
         AND se.status='COMPLETED'
         AND ts.status<>'VOIDED'
-        AND ts.started_at<=?
+        AND ts.local_date<=?
         AND (
           (? IS NULL AND se.equipment_instance_id IS NULL)
           OR se.equipment_instance_id=?
         )
-      ORDER BY ts.started_at DESC, se.completed_at DESC
+      ORDER BY ts.local_date DESC,COALESCE(ts.started_at,'') DESC,se.completed_at DESC
       LIMIT 10`,
     current.exercise_id,
     sessionExerciseId,
-    String(current.started_at),
+    current.local_date,
     current.equipment_instance_id,
     current.equipment_instance_id
   );
@@ -707,6 +709,7 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
     );
     return {
       session_exercise_id: row.session_exercise_id,
+      local_date: row.local_date,
       started_at: row.started_at,
       load_kg: uniformCompletedLoad(sets),
       success: exposureSucceeded(sets),
