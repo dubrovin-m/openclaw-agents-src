@@ -58,6 +58,8 @@ Never write the technical Unclassified label merely because the model cannot res
 
 Classification changes use only `calendar_provider_set_label`. Never simulate classification by editing title, description, location, or another event field.
 
+The category shown to the human must reflect effective provider state, not the model's preferred or attempted classification. After any classification write, use the successful provider result or a fresh event read as the reported state. For an event that already had a recognized configured label, report that label exactly. Never render a different category merely because another category appears semantically plausible. If a write fails or becomes stale, do not report the attempted category as applied.
+
 ## Analytical label administration
 
 The current operational taxonomy remains human-owned. `calendar_provider_sync_labels` may be used only after explicit human approval of the effective taxonomy/label-definition change.
@@ -91,8 +93,9 @@ Recurring Daily Review is Monday through Friday at 10:30 Europe/Moscow. It is th
 1. Resolve the Daily window through `calendar_review_window`.
 2. Read the designated event population for the returned query interval.
 3. Read existing configured labels as authoritative classifications. For unlabeled events, automatically apply a category when exactly one leaf is sufficiently clear under the effective classification guidance; keep materially ambiguous events Unclassified and ask for clarification.
-4. Evaluate meeting hygiene for every meeting using the effective operational hygiene policy.
-5. Report the events chronologically using the standard compact Telegram mask below.
+4. Reconcile the final category shown for each event with effective provider state: preserve every pre-existing recognized label exactly, and for changed events use the successful write result or a fresh provider read.
+5. Evaluate meeting hygiene for every meeting using the effective operational hygiene policy.
+6. Report the events chronologically using the standard compact Telegram mask below.
 
 Do not run or report aggregate workload/allocation analysis in Daily Review. Total scheduled load, management/service/free time, target allocation, and other aggregate allocation analytics belong to Biweekly Review.
 
@@ -120,8 +123,9 @@ Next Workday Review is Monday through Friday at 17:00 Europe/Moscow. Its purpose
 2. Read the designated event population only for the returned query interval.
 3. Treat existing configured labels as authoritative confirmed categories.
 4. For every event without a configured category label, automatically apply a category when exactly one leaf is sufficiently clear under the effective runtime classification guidance; keep materially ambiguous events Unclassified and ask for clarification.
-5. Evaluate meeting hygiene using the effective operational hygiene policy so actionable missing fields can be fixed before the meeting.
-6. Report the next working day's events chronologically using a classification-first compact presentation.
+5. Reconcile the final category shown for each event with effective provider state: preserve every pre-existing recognized label exactly, and for changed events use the successful write result or a fresh provider read.
+6. Evaluate meeting hygiene using the effective operational hygiene policy so actionable missing fields can be fixed before the meeting.
+7. Report the next working day's events chronologically using a classification-first compact presentation.
 
 For an event with a confirmed category and no meeting-hygiene exception, render one compact line:
 
