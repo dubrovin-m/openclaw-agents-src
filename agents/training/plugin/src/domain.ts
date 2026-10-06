@@ -37,7 +37,7 @@ export function getRecommendation(db: DatabaseSync) {
   );
   if (!slot) throw new Error("Program cursor references an invalid slot");
 
-  const exercises = slot.workout_kind === "STRENGTH" ? all(
+  const exercises = all(
     db,
     `SELECT te.template_exercise_id,te.sequence,e.exercise_id,e.name,e.load_mode,e.rep_mode,
             e.load_progression_direction,te.target_sets,te.target_reps_min,te.target_reps_max,
@@ -45,7 +45,7 @@ export function getRecommendation(db: DatabaseSync) {
        FROM template_exercises te JOIN exercises e ON e.exercise_id=te.exercise_id
       WHERE te.workout_template_id=? ORDER BY te.sequence`,
     slot.workout_template_id
-  ) : [];
+  );
 
   const conditioningPolicy = slot.workout_kind === "CONDITIONING" ? one(
     db,
@@ -101,22 +101,19 @@ export function getProgramState(db: DatabaseSync) {
       ORDER BY ps.sequence`,
     active.program_version_id
   ).map((slot) => {
-    if (slot.workout_kind === "STRENGTH") {
-      return {
-        ...slot,
-        exercises: all(
-          db,
-          `SELECT te.template_exercise_id,te.sequence,e.exercise_id,e.name,e.load_mode,e.rep_mode,
-                  e.load_progression_direction,te.target_sets,te.target_reps_min,te.target_reps_max,
-                  te.target_rir_min,te.target_rir_max,te.target_duration_sec,te.target_distance_m
-             FROM template_exercises te
-             JOIN exercises e ON e.exercise_id=te.exercise_id
-            WHERE te.workout_template_id=?
-            ORDER BY te.sequence`,
-          slot.workout_template_id
-        ),
-        conditioning: null,
-      };
+    const exercises = all(
+      db,
+      `SELECT te.template_exercise_id,te.sequence,e.exercise_id,e.name,e.load_mode,e.rep_mode,
+              e.load_progression_direction,te.target_sets,te.target_reps_min,te.target_reps_max,
+              te.target_rir_min,te.target_rir_max,te.target_duration_sec,te.target_distance_m
+         FROM template_exercises te
+         JOIN exercises e ON e.exercise_id=te.exercise_id
+        WHERE te.workout_template_id=?
+        ORDER BY te.sequence`,
+      slot.workout_template_id
+    );
+    if (slot.workout_kind !== "CONDITIONING") {
+      return { ...slot, exercises, conditioning: null };
     }
     const policy = one<Row>(
       db,
@@ -125,7 +122,7 @@ export function getProgramState(db: DatabaseSync) {
     );
     return {
       ...slot,
-      exercises: [],
+      exercises,
       conditioning: policy ? {
         ...policy,
         modalities: all(
@@ -228,6 +225,7 @@ export function startProgramSession(
   params: {
     selected_program_slot_id?: string;
     selected_workout_template_id?: string;
+    selected_workout_kind?: "CONDITIONING";
     timezone_at_start: string;
     local_date: string;
   }
@@ -239,8 +237,13 @@ export function startProgramSession(
     const rec = getRecommendation(db);
     if (!rec.active_program || !rec.recommendation) throw new Error("No active training program");
     const recommended = rec.recommendation;
-    if (params.selected_program_slot_id && params.selected_workout_template_id) {
-      throw new Error("Select either an exact Program Slot or a workout template, not both");
+    const explicitSelectors = [
+      params.selected_program_slot_id,
+      params.selected_workout_template_id,
+      params.selected_workout_kind,
+    ].filter(Boolean);
+    if (explicitSelectors.length > 1) {
+      throw new Error("Select one of exact Program Slot, workout template, or workout kind");
     }
 
     let selectedId = params.selected_program_slot_id ?? recommended.program_slot_id;
@@ -264,6 +267,22 @@ export function startProgramSession(
       } else {
         throw new Error("No unpassed matching Program Slot remains; select an exact slot or request ad-hoc training");
       }
+    }
+    if (params.selected_workout_kind) {
+      const candidates = all<{program_slot_id:string; sequence:number}>(
+        db,
+        `SELECT ps.program_slot_id,ps.sequence
+           FROM program_slots ps
+           JOIN workout_templates wt ON wt.workout_template_id=ps.workout_template_id
+          WHERE ps.program_version_id=? AND wt.workout_kind=?
+          ORDER BY ps.sequence`,
+        rec.active_program.program_version_id, params.selected_workout_kind
+      );
+      const unpassed = candidates.find((candidate) => candidate.sequence >= recommended.sequence);
+      if (!unpassed) {
+        throw new Error("No unpassed matching Program Slot remains; select an exact slot or request ad-hoc training");
+      }
+      selectedId = unpassed.program_slot_id;
     }
 
     const selected = one<{program_slot_id:string; sequence:number; workout_template_id:string; name:string; workout_kind:string}>(
@@ -309,41 +328,40 @@ export function startProgramSession(
       "ACTIVE", now, params.timezone_at_start, params.local_date, now
     );
 
-    if (selected.workout_kind === "STRENGTH") {
-      const template = all<{
-        template_exercise_id:string;
-        exercise_id:string;
-        sequence:number;
-        target_sets:number;
-        target_reps_min:SQLInputValue;
-        target_reps_max:SQLInputValue;
-        target_rir_min:SQLInputValue;
-        target_rir_max:SQLInputValue;
-        target_duration_sec:SQLInputValue;
-        target_distance_m:SQLInputValue;
-        progression_policy_json:string;
-      }>(
-        db,
-        `SELECT template_exercise_id,exercise_id,sequence,target_sets,target_reps_min,target_reps_max,
-                target_rir_min,target_rir_max,target_duration_sec,target_distance_m,progression_policy_json
-           FROM template_exercises
-          WHERE workout_template_id=?
-          ORDER BY sequence`,
-        selected.workout_template_id
+    const template = all<{
+      template_exercise_id:string;
+      exercise_id:string;
+      sequence:number;
+      target_sets:number;
+      target_reps_min:SQLInputValue;
+      target_reps_max:SQLInputValue;
+      target_rir_min:SQLInputValue;
+      target_rir_max:SQLInputValue;
+      target_duration_sec:SQLInputValue;
+      target_distance_m:SQLInputValue;
+      progression_policy_json:string;
+    }>(
+      db,
+      `SELECT template_exercise_id,exercise_id,sequence,target_sets,target_reps_min,target_reps_max,
+              target_rir_min,target_rir_max,target_duration_sec,target_distance_m,progression_policy_json
+         FROM template_exercises
+        WHERE workout_template_id=?
+        ORDER BY sequence`,
+      selected.workout_template_id
+    );
+    const insert = db.prepare(`INSERT INTO session_exercises(
+      session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
+      planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
+      progression_policy_json,status
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING')`);
+    for (const item of template) {
+      insert.run(
+        newId("sex"), sessionId, item.template_exercise_id, item.exercise_id, item.sequence,
+        item.target_sets,item.target_reps_min,item.target_reps_max,item.target_rir_min,item.target_rir_max,
+        item.target_duration_sec,item.target_distance_m,item.progression_policy_json
       );
-      const insert = db.prepare(`INSERT INTO session_exercises(
-        session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
-        planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
-        progression_policy_json,status
-      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,'PENDING')`);
-      for (const item of template) {
-        insert.run(
-          newId("sex"), sessionId, item.template_exercise_id, item.exercise_id, item.sequence,
-          item.target_sets,item.target_reps_min,item.target_reps_max,item.target_rir_min,item.target_rir_max,
-          item.target_duration_sec,item.target_distance_m,item.progression_policy_json
-        );
-      }
     }
+
 
     db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
       newId("evt"), "SESSION_STARTED", "training_session", sessionId,
