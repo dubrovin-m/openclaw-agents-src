@@ -225,7 +225,12 @@ function nextSlot(db: DatabaseSync, versionId: string, sequence: number, cycle: 
 
 export function startProgramSession(
   db: DatabaseSync,
-  params: { selected_program_slot_id?: string; timezone_at_start: string; local_date: string }
+  params: {
+    selected_program_slot_id?: string;
+    selected_workout_template_id?: string;
+    timezone_at_start: string;
+    local_date: string;
+  }
 ) {
   return withTransaction(db, () => {
     const existing = getOpenSession(db);
@@ -234,7 +239,33 @@ export function startProgramSession(
     const rec = getRecommendation(db);
     if (!rec.active_program || !rec.recommendation) throw new Error("No active training program");
     const recommended = rec.recommendation;
-    const selectedId = params.selected_program_slot_id ?? recommended.program_slot_id;
+    if (params.selected_program_slot_id && params.selected_workout_template_id) {
+      throw new Error("Select either an exact Program Slot or a workout template, not both");
+    }
+
+    let selectedId = params.selected_program_slot_id ?? recommended.program_slot_id;
+    if (params.selected_workout_template_id) {
+      const candidates = all<{program_slot_id:string; sequence:number}>(
+        db,
+        `SELECT program_slot_id,sequence
+           FROM program_slots
+          WHERE program_version_id=? AND workout_template_id=?
+          ORDER BY sequence`,
+        rec.active_program.program_version_id, params.selected_workout_template_id
+      );
+      if (!candidates.length) {
+        throw new Error("Selected workout template does not belong to the active Program Version");
+      }
+      const unpassed = candidates.find((candidate) => candidate.sequence >= recommended.sequence);
+      if (unpassed) {
+        selectedId = unpassed.program_slot_id;
+      } else if (candidates.length === 1) {
+        selectedId = candidates[0]!.program_slot_id;
+      } else {
+        throw new Error("No unpassed matching Program Slot remains; select an exact slot or request ad-hoc training");
+      }
+    }
+
     const selected = one<{program_slot_id:string; sequence:number; workout_template_id:string; name:string; workout_kind:string}>(
       db,
       `SELECT ps.program_slot_id,ps.sequence,ps.workout_template_id,wt.name,wt.workout_kind

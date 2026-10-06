@@ -730,6 +730,47 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     }
   });
 
+  it("TRA-SEL-007: duplicate Conditioning template resolves to nearest not-yet-passed slot", () => {
+    const db1 = fixture();
+    try {
+      const first: any = startProgramSession(db1, {
+        selected_workout_template_id: "tpl_cond",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      expect(first.session.selected_program_slot_id).toBe("slot_cond_1");
+      expect(first.session.selection_source).toBe("USER_FORWARD_OVERRIDE");
+    } finally {
+      db1.close();
+    }
+
+    const db2 = fixture();
+    try {
+      db2.prepare("UPDATE program_cursor SET next_program_slot_id='slot_b' WHERE program_version_id='ver_test'").run();
+      const second: any = startProgramSession(db2, {
+        selected_workout_template_id: "tpl_cond",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-07",
+      });
+      expect(second.session.selected_program_slot_id).toBe("slot_cond_2");
+      expect(second.session.selection_source).toBe("USER_FORWARD_OVERRIDE");
+    } finally {
+      db2.close();
+    }
+
+    const db3 = fixture();
+    try {
+      db3.prepare("UPDATE program_cursor SET next_program_slot_id='slot_c' WHERE program_version_id='ver_test'").run();
+      expect(() => startProgramSession(db3, {
+        selected_workout_template_id: "tpl_cond",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-08",
+      })).toThrow(/No unpassed matching Program Slot/);
+    } finally {
+      db3.close();
+    }
+  });
+
   it("TRA-SEL-008: explicit cycle restart starts a new cycle at Strength A", () => {
     const db = fixture();
     try {
