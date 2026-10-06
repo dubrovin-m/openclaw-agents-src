@@ -1130,6 +1130,22 @@ export function finishSession(db: DatabaseSync, sessionId: string, overallFeedba
     }
 
     const now = nowIso();
+
+    if (session.session_kind === "CONDITIONING") {
+      const result = one(
+        db,
+        `SELECT cr.conditioning_prescription_id
+           FROM conditioning_prescriptions cp
+           JOIN conditioning_results cr
+             ON cr.conditioning_prescription_id=cp.conditioning_prescription_id
+          WHERE cp.training_session_id=?`,
+        sessionId
+      );
+      if (!result) {
+        throw new Error("Conditioning result must be recorded before session completion");
+      }
+    }
+
     if (session.status === "PAUSED") {
       db.prepare(
         "UPDATE training_session_pauses SET resumed_at=? WHERE training_session_id=? AND resumed_at IS NULL"
