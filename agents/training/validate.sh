@@ -24,7 +24,7 @@ python3 - "$ROOT" <<'PY'
 import json, pathlib, re, sys
 root=pathlib.Path(sys.argv[1])
 plugin=(root/'plugin/src/plugin.ts').read_text()
-actual=re.findall(r'name:\\s*"(training_[^"]+)"',plugin)
+actual=re.findall(r'name:\s*"(training_[^"]+)"',plugin)
 manifest=json.load((root/'plugin/openclaw.plugin.json').open())['contracts']['tools']
 allow=json.load((root/'config/training-tools.json').open())['allow']
 if len(actual)!=len(set(actual)):
