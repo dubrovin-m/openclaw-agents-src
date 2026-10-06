@@ -1,3 +1,6 @@
+import { AsyncLocalStorage } from "node:async_hooks";
+import { createHash } from "node:crypto";
+import type { DatabaseSync } from "node:sqlite";
 import { Type, type Static, type TSchema } from "typebox";
 import {
   defineToolPlugin,
@@ -41,7 +44,7 @@ import {
   type PrescribedSet,
   type ProgramChangeType,
 } from "./domain.js";
-import { healthSnapshot, openTrainingStore } from "./store.js";
+import { healthSnapshot, openTrainingStore, withToolCallReceipt } from "./store.js";
 
 const configSchema = Type.Object({
   databasePath: Type.String({ minLength: 1, pattern: "^/" }),
@@ -57,13 +60,36 @@ type OwnerToolSpec<T extends TSchema> = {
   execute: (params: Static<T>, config: TrainingConfig) => unknown;
 };
 
+const trainingDbScope = new AsyncLocalStorage<DatabaseSync>();
+
 function withDb<T>(config: TrainingConfig, effect: (db: ReturnType<typeof openTrainingStore>) => T): T {
+  const scoped = trainingDbScope.getStore();
+  if (scoped) return effect(scoped);
   const db = openTrainingStore(config.databasePath);
   try {
     return effect(db);
   } finally {
     db.close();
   }
+}
+
+function canonicalJson(value: unknown): string {
+  const normalize = (input: unknown): unknown => {
+    if (Array.isArray(input)) return input.map(normalize);
+    if (input && typeof input === "object") {
+      return Object.fromEntries(
+        Object.entries(input as Record<string, unknown>)
+          .sort(([a], [b]) => a.localeCompare(b))
+          .map(([key, item]) => [key, normalize(item)]),
+      );
+    }
+    return input;
+  };
+  return JSON.stringify(normalize(value));
+}
+
+function mutationInputHash(value: unknown): string {
+  return createHash("sha256").update(canonicalJson(value)).digest("hex");
 }
 
 function ownerTool<T extends TSchema>(
@@ -84,18 +110,34 @@ function ownerTool<T extends TSchema>(
         label: definition.label,
         description: definition.description,
         parameters: definition.parameters,
-        async execute(_toolCallId, rawParams) {
-          if (definition.mutate) {
-            if (!toolContext.assertInvocationCurrent) {
-              throw new Error("Training mutation authority is unavailable");
-            }
-            // No awaited preparation is allowed between this final authority check
-            // and the synchronous SQLite mutation path.
-            toolContext.assertInvocationCurrent();
+        async execute(toolCallId, rawParams) {
+          if (!definition.mutate) {
+            return jsonResult(await definition.execute(rawParams as Static<T>, config));
           }
-          return jsonResult(
-            await definition.execute(rawParams as Static<T>, config),
-          );
+          if (!toolContext.assertInvocationCurrent) {
+            throw new Error("Training mutation authority is unavailable");
+          }
+          if (typeof toolCallId !== "string" || !toolCallId.trim()) {
+            throw new Error("Training mutation requires a stable tool-call id");
+          }
+
+          // Final authority check immediately precedes the synchronous SQLite transaction.
+          toolContext.assertInvocationCurrent();
+          const db = openTrainingStore(config.databasePath);
+          try {
+            const receipt = trainingDbScope.run(db, () => withToolCallReceipt(
+              db,
+              {
+                toolCallId,
+                operationName: definition.name,
+                inputHash: mutationInputHash(rawParams),
+              },
+              () => definition.execute(rawParams as Static<T>, config),
+            ));
+            return jsonResult(receipt.result);
+          } finally {
+            db.close();
+          }
         },
       };
     },

@@ -353,6 +353,15 @@ CREATE TABLE migration_records(
   PRIMARY KEY(migration_batch_id,source_record_type,source_record_id)
 ) STRICT;
 
+CREATE TABLE tool_call_receipts(
+  tool_call_id TEXT NOT NULL,
+  operation_name TEXT NOT NULL,
+  input_hash TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  processed_at TEXT NOT NULL,
+  PRIMARY KEY(tool_call_id,operation_name)
+) STRICT;
+
 CREATE TABLE training_events(
   event_id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,
@@ -403,7 +412,25 @@ export function openTrainingStore(databasePath: string): DatabaseSync {
   return db;
 }
 
+let savepointSequence = 0;
+
 export function withTransaction<T>(db: DatabaseSync, effect: () => T): T {
+  if (db.isTransaction) {
+    const savepoint = `training_nested_${++savepointSequence}`;
+    db.exec(`SAVEPOINT ${savepoint};`);
+    try {
+      const result = effect();
+      db.exec(`RELEASE SAVEPOINT ${savepoint};`);
+      return result;
+    } catch (error) {
+      try {
+        db.exec(`ROLLBACK TO SAVEPOINT ${savepoint};`);
+        db.exec(`RELEASE SAVEPOINT ${savepoint};`);
+      } catch {}
+      throw error;
+    }
+  }
+
   db.exec("BEGIN IMMEDIATE;");
   try {
     const result = effect();
@@ -413,6 +440,39 @@ export function withTransaction<T>(db: DatabaseSync, effect: () => T): T {
     try { db.exec("ROLLBACK;"); } catch {}
     throw error;
   }
+}
+
+export function withToolCallReceipt<T>(
+  db: DatabaseSync,
+  params: { toolCallId: string; operationName: string; inputHash: string },
+  effect: () => T,
+): { replayed: boolean; result: T } {
+  const toolCallId = params.toolCallId.trim();
+  const operationName = params.operationName.trim();
+  if (!toolCallId || !operationName || !/^[a-f0-9]{64}$/i.test(params.inputHash)) {
+    throw new Error("Invalid Training tool-call receipt identity");
+  }
+
+  return withTransaction(db, () => {
+    const prior = db.prepare(
+      "SELECT input_hash,result_json FROM tool_call_receipts WHERE tool_call_id=? AND operation_name=?"
+    ).get(toolCallId, operationName) as { input_hash:string; result_json:string } | undefined;
+    if (prior) {
+      if (prior.input_hash !== params.inputHash) {
+        throw new Error("Training tool-call id was reused with different input");
+      }
+      return { replayed: true, result: JSON.parse(prior.result_json) as T };
+    }
+
+    const result = effect();
+    if (result && typeof (result as any).then === "function") {
+      throw new Error("Training mutations must remain synchronous inside the SQLite transaction");
+    }
+    db.prepare(
+      "INSERT INTO tool_call_receipts(tool_call_id,operation_name,input_hash,result_json,processed_at) VALUES(?,?,?,?,?)"
+    ).run(toolCallId, operationName, params.inputHash, JSON.stringify(result), nowIso());
+    return { replayed: false, result };
+  });
 }
 
 export function healthSnapshot(db: DatabaseSync) {

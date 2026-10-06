@@ -25,3 +25,13 @@ This initial implementation covers:
 - basic anomaly rejection
 
 Conditioning execution, corrections, program version changes, migration, learning operations, and recovery are added in later phases before activation.
+
+## Idempotency
+
+Training mutations use layered idempotency:
+
+1. the repository-qualified OpenClaw Telegram ingress persistently deduplicates provider messages by account, bot, chat, and Telegram message id before agent execution;
+2. the Training plugin atomically records each successful mutation by OpenClaw tool-call id plus operation name and input hash in the same SQLite transaction as the mutation;
+3. domain state transitions remain semantically idempotent where a user can legitimately repeat an instruction.
+
+A repeated tool-call id with different input fails closed. Distinct operation names may share one tool-call lineage without colliding. The Training Store does not fabricate or accept a model-supplied Telegram message id because that trusted provider identity is not exposed through the qualified generic plugin tool context.
