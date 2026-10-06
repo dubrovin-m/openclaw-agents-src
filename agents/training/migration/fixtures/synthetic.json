@@ -11,6 +11,15 @@
       "load_mode": "TOTAL_EXTERNAL",
       "rep_mode": "TOTAL",
       "load_progression_direction": "HIGHER_IS_HARDER"
+    },
+    {
+      "source_id": "ex-carry",
+      "name": "Synthetic Farmer Carry",
+      "category": "strength",
+      "equipment_type": "dumbbell",
+      "load_mode": "PER_HAND",
+      "rep_mode": "TOTAL",
+      "load_progression_direction": "HIGHER_IS_HARDER"
     }
   ],
   "program_versions": [
@@ -76,6 +85,23 @@
               "actual_reps": 6,
               "actual_load_kg": 67.5,
               "actual_rir": 2
+            }
+          ]
+        },
+        {
+          "source_id": "session-ex-carry",
+          "exercise_source_id": "ex-carry",
+          "sequence": 2,
+          "status": "COMPLETED",
+          "actual_sets": [
+            {
+              "source_id": "set-carry-1",
+              "set_number": 1,
+              "status": "COMPLETED",
+              "actual_reps": null,
+              "actual_load_kg": 32,
+              "actual_rir": null,
+              "actual_distance_m": 40
             }
           ]
         }

@@ -16,15 +16,26 @@ function payload(): NormalizedTrainingMigrationV1 {
     format: "training-normalized-migration-v1",
     source_system: "fitness-workbook",
     source_export_id: "synthetic-export-1",
-    exercises: [{
-      source_id: "legacy-ex-squat",
-      name: "Back Squat",
-      category: "strength",
-      equipment_type: "barbell",
-      load_mode: "TOTAL_EXTERNAL",
-      rep_mode: "TOTAL",
-      load_progression_direction: "HIGHER_IS_HARDER",
-    }],
+    exercises: [
+      {
+        source_id: "legacy-ex-squat",
+        name: "Back Squat",
+        category: "strength",
+        equipment_type: "barbell",
+        load_mode: "TOTAL_EXTERNAL",
+        rep_mode: "TOTAL",
+        load_progression_direction: "HIGHER_IS_HARDER",
+      },
+      {
+        source_id: "legacy-ex-carry",
+        name: "Farmer Carry",
+        category: "strength",
+        equipment_type: "dumbbell",
+        load_mode: "PER_HAND",
+        rep_mode: "TOTAL",
+        load_progression_direction: "HIGHER_IS_HARDER",
+      },
+    ],
     program_versions: [{
       source_id: "legacy-version-active",
       program_source_id: "legacy-program",
@@ -80,20 +91,37 @@ function payload(): NormalizedTrainingMigrationV1 {
         session_kind: "STRENGTH",
         status: "COMPLETED",
         local_date: "2026-09-30",
-        strength_exercises: [{
-          source_id: "legacy-session-ex-squat",
-          exercise_source_id: "legacy-ex-squat",
-          sequence: 1,
-          status: "COMPLETED",
-          actual_sets: [{
-            source_id: "legacy-set-squat-1",
-            set_number: 1,
+        strength_exercises: [
+          {
+            source_id: "legacy-session-ex-squat",
+            exercise_source_id: "legacy-ex-squat",
+            sequence: 1,
             status: "COMPLETED",
-            actual_reps: 6,
-            actual_load_kg: 67.5,
-            actual_rir: 2,
-          }],
-        }],
+            actual_sets: [{
+              source_id: "legacy-set-squat-1",
+              set_number: 1,
+              status: "COMPLETED",
+              actual_reps: 6,
+              actual_load_kg: 67.5,
+              actual_rir: 2,
+            }],
+          },
+          {
+            source_id: "legacy-session-ex-carry",
+            exercise_source_id: "legacy-ex-carry",
+            sequence: 2,
+            status: "COMPLETED",
+            actual_sets: [{
+              source_id: "legacy-set-carry-1",
+              set_number: 1,
+              status: "COMPLETED",
+              actual_reps: null,
+              actual_load_kg: 32,
+              actual_rir: null,
+              actual_distance_m: 40,
+            }],
+          },
+        ],
       },
       {
         source_id: "legacy-session-conditioning",
@@ -120,7 +148,7 @@ describe("Training normalized migration", () => {
       const result: any = importNormalizedTraining(db, payload(), "a".repeat(64));
       expect(result.replayed).toBe(false);
       expect(result.counts.training_sessions).toBe(2);
-      expect(result.counts.session_sets).toBe(1);
+      expect(result.counts.session_sets).toBe(2);
       expect(result.counts.conditioning_results).toBe(1);
 
       const migrated = db.prepare(
@@ -131,6 +159,21 @@ describe("Training normalized migration", () => {
       expect(migrated.timezone_at_start).toBeNull();
       expect(migrated.local_date).toBe("2026-09-30");
       expect(migrated.time_precision).toBe("DATE_ONLY");
+
+      const carry = db.prepare(
+        `SELECT ss.actual_reps,ss.actual_load_kg,ss.actual_rir,ss.actual_duration_sec,ss.actual_distance_m
+           FROM session_sets ss
+           JOIN session_exercises se ON se.session_exercise_id=ss.session_exercise_id
+           JOIN exercises e ON e.exercise_id=se.exercise_id
+          WHERE e.name='Farmer Carry'`
+      ).get() as any;
+      expect(carry).toEqual({
+        actual_reps: null,
+        actual_load_kg: 32,
+        actual_rir: null,
+        actual_duration_sec: null,
+        actual_distance_m: 40,
+      });
 
       const started: any = startProgramSession(db, {
         timezone_at_start: "Europe/Moscow",

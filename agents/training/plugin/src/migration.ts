@@ -10,6 +10,8 @@ type StrengthTemplateExercise = {
   target_reps_max?: number | null;
   target_rir_min?: number | null;
   target_rir_max?: number | null;
+  target_duration_sec?: number | null;
+  target_distance_m?: number | null;
   progression_policy_json?: string;
   notes?: string | null;
 };
@@ -100,6 +102,8 @@ export type NormalizedTrainingMigrationV1 = {
         actual_reps?: number | null;
         actual_load_kg?: number | null;
         actual_rir?: number | null;
+        actual_duration_sec?: number | null;
+        actual_distance_m?: number | null;
         notes?: string | null;
       }>;
       notes?: string | null;
@@ -134,6 +138,14 @@ function positiveInt(value: unknown, field: string): number {
 function nullableNumber(value: unknown, field: string): number | null {
   if (value == null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid ${field}`);
+  }
+  return value;
+}
+
+function nullablePositiveNumber(value: unknown, field: string): number | null {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     throw new Error(`Invalid ${field}`);
   }
   return value;
@@ -302,8 +314,9 @@ export function importNormalizedTraining(
             const targetId = newId("te");
             db.prepare(`INSERT INTO template_exercises(
               template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
-              target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,notes
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+              target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
+              progression_policy_json,notes
+            ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
               targetId, templateId, exerciseId,
               positiveInt(exercise.sequence, "template exercise sequence"),
               positiveInt(exercise.target_sets, "template exercise target_sets"),
@@ -311,6 +324,8 @@ export function importNormalizedTraining(
               nullableNumber(exercise.target_reps_max, "target_reps_max"),
               nullableNumber(exercise.target_rir_min, "target_rir_min"),
               nullableNumber(exercise.target_rir_max, "target_rir_max"),
+              nullablePositiveNumber(exercise.target_duration_sec, "target_duration_sec"),
+              nullablePositiveNumber(exercise.target_distance_m, "target_distance_m"),
               validateJsonObject(exercise.progression_policy_json, "exercise progression_policy_json"),
               exercise.notes ?? null
             );
@@ -427,9 +442,9 @@ export function importNormalizedTraining(
           const sessionExerciseId = newId("sex");
           db.prepare(`INSERT INTO session_exercises(
             session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
-            planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,
-            status,completed_at,notes
-          ) VALUES(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,'{}',?,?,?)`).run(
+            planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
+            progression_policy_json,status,completed_at,notes
+          ) VALUES(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'{}',?,?,?)`).run(
             sessionExerciseId, sessionId, exerciseId,
             positiveInt(exercise.sequence, "session exercise sequence"),
             exercise.status,
@@ -444,13 +459,19 @@ export function importNormalizedTraining(
             const reps = status === "SKIPPED" ? null : nullableNumber(set.actual_reps, "actual_reps");
             const load = status === "SKIPPED" ? null : nullableNumber(set.actual_load_kg, "actual_load_kg");
             const rir = status === "SKIPPED" ? null : nullableNumber(set.actual_rir, "actual_rir");
+            const duration = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_duration_sec, "actual_duration_sec");
+            const distance = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_distance_m, "actual_distance_m");
+            if (status === "COMPLETED" && reps == null && duration == null && distance == null) {
+              throw new Error("Completed migrated set requires reps, duration, or distance");
+            }
             db.prepare(`INSERT INTO session_sets(
               session_set_id,session_exercise_id,set_number,
-              candidate_reps,candidate_load_kg,candidate_rir,target_reps,target_load_kg,target_rir,
-              prescription_reason,actual_reps,actual_load_kg,actual_rir,status,notes
-            ) VALUES(?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?)`).run(
+              candidate_reps,candidate_load_kg,candidate_rir,candidate_duration_sec,candidate_distance_m,
+              target_reps,target_load_kg,target_rir,target_duration_sec,target_distance_m,prescription_reason,
+              actual_reps,actual_load_kg,actual_rir,actual_duration_sec,actual_distance_m,status,notes
+            ) VALUES(?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?)`).run(
               setId, sessionExerciseId, positiveInt(set.set_number, "set_number"),
-              reps, load, rir, status, set.notes ?? null
+              reps, load, rir, duration, distance, status, set.notes ?? null
             );
             recordSource("session_set", set.source_id, "session_set", setId);
           }

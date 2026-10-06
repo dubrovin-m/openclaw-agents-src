@@ -87,10 +87,10 @@ function fixture() {
   db.prepare("INSERT INTO program_cursor VALUES(?,?,?,?)")
     .run(version, 1, "slot_a", now);
 
-  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-    .run("te_a", "tpl_a", "ex_a", 1, 4, 6, 6, 2, 2, "{}", null);
-  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
-    .run("te_b", "tpl_b", "ex_b", 1, 4, 6, 6, 2, 2, "{}", null);
+  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("te_a", "tpl_a", "ex_a", 1, 4, 6, 6, 2, 2, null, null, "{}", null);
+  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)")
+    .run("te_b", "tpl_b", "ex_b", 1, 4, 6, 6, 2, 2, null, null, "{}", null);
 
   for (const [id, name] of [["bike", "Bike"], ["treadmill", "Treadmill"], ["swim", "Swim"]] as const) {
     db.prepare("INSERT INTO conditioning_modalities VALUES(?,?,1)").run(id, name);
@@ -196,6 +196,67 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(prescribeExercise(db, id, prescription).replayed).toBe(true);
       expect(() => prescribeExercise(db, id, fourSets(72.5)))
         .toThrow(/different durable prescription/);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("timed/distance working sets preserve NULL reps and copy targets exactly", () => {
+    const db = fixture();
+    try {
+      const started: any = startAdHocSession(db, {
+        session_kind: "STRENGTH",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+        strength_exercises: [{
+          exercise_id: "ex_a",
+          planned_sets: 2,
+          target_reps_min: null,
+          target_reps_max: null,
+          target_rir_min: null,
+          target_rir_max: null,
+          target_duration_sec: null,
+          target_distance_m: null,
+        }],
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, [
+        {
+          set_number: 1,
+          candidate_reps: null,
+          candidate_load_kg: null,
+          candidate_rir: null,
+          candidate_duration_sec: 30,
+          candidate_distance_m: null,
+          target_reps: null,
+          target_load_kg: null,
+          target_rir: null,
+          target_duration_sec: 30,
+          target_distance_m: null,
+        },
+        {
+          set_number: 2,
+          candidate_reps: null,
+          candidate_load_kg: 32,
+          candidate_rir: null,
+          candidate_duration_sec: null,
+          candidate_distance_m: 40,
+          target_reps: null,
+          target_load_kg: 32,
+          target_rir: null,
+          target_duration_sec: null,
+          target_distance_m: 40,
+        },
+      ]);
+      completeExercise(db, id, "AS_PRESCRIBED");
+      const rows = db.prepare(
+        `SELECT actual_reps,actual_load_kg,actual_rir,actual_duration_sec,actual_distance_m
+           FROM session_sets WHERE session_exercise_id=? ORDER BY set_number`
+      ).all(id) as any[];
+      expect(rows).toEqual([
+        { actual_reps: null, actual_load_kg: null, actual_rir: null, actual_duration_sec: 30, actual_distance_m: null },
+        { actual_reps: null, actual_load_kg: 32, actual_rir: null, actual_duration_sec: null, actual_distance_m: 40 },
+      ]);
     } finally {
       db.close();
     }
@@ -1037,8 +1098,8 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
         "ex_assist","Assisted Pull-up","strength","machine",
         "ASSISTANCE","TOTAL","LOWER_IS_HARDER",1,now
       );
-      db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(
-        "te_assist","tpl_a","ex_assist",2,1,6,6,2,2,
+      db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)").run(
+        "te_assist","tpl_a","ex_assist",2,1,6,6,2,2,null,null,
         JSON.stringify({kind:"DOUBLE_SUCCESS_THEN_INCREMENT",initial_load_kg:40,increment_kg:5,successful_exposures_required:2}),null
       );
 

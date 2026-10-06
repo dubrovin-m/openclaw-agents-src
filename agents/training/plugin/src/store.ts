@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const TRAINING_SCHEMA_VERSION = 1;
+export const TRAINING_SCHEMA_VERSION = 2;
 
 const DDL = String.raw`
 CREATE TABLE exercises(
@@ -82,6 +82,8 @@ CREATE TABLE template_exercises(
   target_reps_max INTEGER CHECK(target_reps_max IS NULL OR target_reps_max>=0),
   target_rir_min REAL CHECK(target_rir_min IS NULL OR target_rir_min>=0),
   target_rir_max REAL CHECK(target_rir_max IS NULL OR target_rir_max>=0),
+  target_duration_sec INTEGER CHECK(target_duration_sec IS NULL OR target_duration_sec>0),
+  target_distance_m REAL CHECK(target_distance_m IS NULL OR target_distance_m>0),
   progression_policy_json TEXT NOT NULL DEFAULT '{}',
   notes TEXT,
   UNIQUE(workout_template_id,sequence),
@@ -174,6 +176,8 @@ CREATE TABLE session_exercises(
   target_reps_max INTEGER CHECK(target_reps_max IS NULL OR target_reps_max>=0),
   target_rir_min REAL CHECK(target_rir_min IS NULL OR target_rir_min>=0),
   target_rir_max REAL CHECK(target_rir_max IS NULL OR target_rir_max>=0),
+  target_duration_sec INTEGER CHECK(target_duration_sec IS NULL OR target_duration_sec>0),
+  target_distance_m REAL CHECK(target_distance_m IS NULL OR target_distance_m>0),
   progression_policy_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL CHECK(status IN ('PENDING','ACTIVE','DEFERRED','COMPLETED','SKIPPED')),
   adaptation_reason TEXT,
@@ -194,13 +198,19 @@ CREATE TABLE session_sets(
   candidate_reps INTEGER CHECK(candidate_reps IS NULL OR candidate_reps>=0),
   candidate_load_kg REAL CHECK(candidate_load_kg IS NULL OR candidate_load_kg>=0),
   candidate_rir REAL CHECK(candidate_rir IS NULL OR candidate_rir>=0),
+  candidate_duration_sec INTEGER CHECK(candidate_duration_sec IS NULL OR candidate_duration_sec>0),
+  candidate_distance_m REAL CHECK(candidate_distance_m IS NULL OR candidate_distance_m>0),
   target_reps INTEGER CHECK(target_reps IS NULL OR target_reps>=0),
   target_load_kg REAL CHECK(target_load_kg IS NULL OR target_load_kg>=0),
   target_rir REAL CHECK(target_rir IS NULL OR target_rir>=0),
+  target_duration_sec INTEGER CHECK(target_duration_sec IS NULL OR target_duration_sec>0),
+  target_distance_m REAL CHECK(target_distance_m IS NULL OR target_distance_m>0),
   prescription_reason TEXT,
   actual_reps INTEGER CHECK(actual_reps IS NULL OR actual_reps>=0),
   actual_load_kg REAL CHECK(actual_load_kg IS NULL OR actual_load_kg>=0),
   actual_rir REAL CHECK(actual_rir IS NULL OR actual_rir>=0),
+  actual_duration_sec INTEGER CHECK(actual_duration_sec IS NULL OR actual_duration_sec>0),
+  actual_distance_m REAL CHECK(actual_distance_m IS NULL OR actual_distance_m>0),
   status TEXT NOT NULL DEFAULT 'PLANNED' CHECK(status IN ('PLANNED','COMPLETED','SKIPPED')),
   notes TEXT,
   UNIQUE(session_exercise_id,set_number)
