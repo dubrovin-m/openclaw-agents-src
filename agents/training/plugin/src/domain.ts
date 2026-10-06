@@ -384,6 +384,113 @@ export function deferExercise(db: DatabaseSync, sessionExerciseId: string) {
   });
 }
 
+export function resumeExercise(db: DatabaseSync, sessionExerciseId: string) {
+  return withTransaction(db, () => {
+    const row = one<{training_session_id:string; status:string}>(
+      db,
+      "SELECT training_session_id,status FROM session_exercises WHERE session_exercise_id=?",
+      sessionExerciseId
+    );
+    if (!row) throw new Error("Session exercise not found");
+    if (row.status === "ACTIVE") {
+      return { replayed: true, exercise: getSessionExercise(db, sessionExerciseId) };
+    }
+    if (row.status !== "DEFERRED") throw new Error("Only a DEFERRED exercise can be resumed");
+    const active = one<{session_exercise_id:string}>(
+      db,
+      "SELECT session_exercise_id FROM session_exercises WHERE training_session_id=? AND status='ACTIVE'",
+      row.training_session_id
+    );
+    if (active) throw new Error("Another exercise is already ACTIVE");
+    db.prepare("UPDATE session_exercises SET status='ACTIVE' WHERE session_exercise_id=?")
+      .run(sessionExerciseId);
+    return { replayed: false, exercise: getSessionExercise(db, sessionExerciseId) };
+  });
+}
+
+export function pauseSession(db: DatabaseSync, sessionId: string) {
+  return withTransaction(db, () => {
+    const session = one<{status:string}>(
+      db, "SELECT status FROM training_sessions WHERE training_session_id=?", sessionId
+    );
+    if (!session) throw new Error("Training session not found");
+    if (session.status === "PAUSED") {
+      return { replayed: true, session: getSession(db, sessionId) };
+    }
+    if (session.status !== "ACTIVE") throw new Error("Only an ACTIVE session can be paused");
+    const now = nowIso();
+    db.prepare("UPDATE training_sessions SET status='PAUSED' WHERE training_session_id=?").run(sessionId);
+    db.prepare("INSERT INTO training_session_pauses VALUES(?,?,?,NULL)")
+      .run(newId("pause"), sessionId, now);
+    return { replayed: false, session: getSession(db, sessionId) };
+  });
+}
+
+export function resumeSession(db: DatabaseSync, sessionId: string) {
+  return withTransaction(db, () => {
+    const session = one<{status:string}>(
+      db, "SELECT status FROM training_sessions WHERE training_session_id=?", sessionId
+    );
+    if (!session) throw new Error("Training session not found");
+    if (session.status === "ACTIVE") {
+      return { replayed: true, session: getSession(db, sessionId) };
+    }
+    if (session.status !== "PAUSED") throw new Error("Only a PAUSED session can be resumed");
+    const now = nowIso();
+    const pause = one<{pause_id:string}>(
+      db,
+      "SELECT pause_id FROM training_session_pauses WHERE training_session_id=? AND resumed_at IS NULL",
+      sessionId
+    );
+    if (!pause) throw new Error("PAUSED session is missing an open pause interval");
+    db.prepare("UPDATE training_session_pauses SET resumed_at=? WHERE pause_id=?")
+      .run(now, pause.pause_id);
+    db.prepare("UPDATE training_sessions SET status='ACTIVE' WHERE training_session_id=?").run(sessionId);
+    return { replayed: false, session: getSession(db, sessionId) };
+  });
+}
+
+function closeUnfinishedStrengthWork(db: DatabaseSync, sessionId: string, now: string, reason: string) {
+  db.prepare(
+    `UPDATE session_sets SET status='SKIPPED'
+      WHERE session_exercise_id IN (
+        SELECT session_exercise_id FROM session_exercises
+        WHERE training_session_id=? AND status IN ('PENDING','ACTIVE','DEFERRED')
+      ) AND status='PLANNED'`
+  ).run(sessionId);
+  db.prepare(
+    `UPDATE session_exercises
+        SET status='SKIPPED',adaptation_reason=COALESCE(adaptation_reason,?),completed_at=?
+      WHERE training_session_id=? AND status IN ('PENDING','ACTIVE','DEFERRED')`
+  ).run(reason, now, sessionId);
+}
+
+export function abandonSession(db: DatabaseSync, sessionId: string, reason?: string) {
+  return withTransaction(db, () => {
+    const session = one<{status:string}>(
+      db, "SELECT status FROM training_sessions WHERE training_session_id=?", sessionId
+    );
+    if (!session) throw new Error("Training session not found");
+    if (session.status === "ABANDONED") {
+      return { replayed: true, session: getSession(db, sessionId) };
+    }
+    if (!["ACTIVE","PAUSED"].includes(session.status)) {
+      throw new Error("Session cannot be abandoned from current state");
+    }
+    const now = nowIso();
+    if (session.status === "PAUSED") {
+      db.prepare(
+        "UPDATE training_session_pauses SET resumed_at=? WHERE training_session_id=? AND resumed_at IS NULL"
+      ).run(now, sessionId);
+    }
+    closeUnfinishedStrengthWork(db, sessionId, now, reason ?? "SESSION_ABANDONED");
+    db.prepare(
+      "UPDATE training_sessions SET status='ABANDONED',ended_at=?,overall_feedback=COALESCE(?,overall_feedback) WHERE training_session_id=?"
+    ).run(now, reason ?? null, sessionId);
+    return { replayed: false, session: getSession(db, sessionId) };
+  });
+}
+
 export function skipExercise(db: DatabaseSync, sessionExerciseId: string, reason?: string) {
   return withTransaction(db, () => {
     const row = one<{status:string}>(
@@ -423,16 +530,12 @@ export function finishSession(db: DatabaseSync, sessionId: string, overallFeedba
     }
 
     const now = nowIso();
-    db.prepare(
-      `UPDATE session_sets SET status='SKIPPED'
-        WHERE session_exercise_id IN (
-          SELECT session_exercise_id FROM session_exercises
-          WHERE training_session_id=? AND status IN ('PENDING','DEFERRED')
-        ) AND status='PLANNED'`
-    ).run(sessionId);
-    db.prepare(
-      "UPDATE session_exercises SET status='SKIPPED',completed_at=? WHERE training_session_id=? AND status IN ('PENDING','DEFERRED')"
-    ).run(now, sessionId);
+    if (session.status === "PAUSED") {
+      db.prepare(
+        "UPDATE training_session_pauses SET resumed_at=? WHERE training_session_id=? AND resumed_at IS NULL"
+      ).run(now, sessionId);
+    }
+    closeUnfinishedStrengthWork(db, sessionId, now, "SESSION_COMPLETED_EARLY");
 
     const skipped = Number((
       db.prepare(
@@ -473,15 +576,14 @@ export function finishSession(db: DatabaseSync, sessionId: string, overallFeedba
         }
       }
 
-      db.prepare(
-        "INSERT OR REPLACE INTO program_slot_outcomes VALUES(?,?,?,?,?,?,?)"
-      ).run(
-        newId("out"), session.program_version_id, session.cursor_before_cycle_number,
-        session.selected_program_slot_id, sessionId,
-        skipped > 0 ? "COMPLETED_PARTIAL" : "COMPLETED", now
-      );
-
       if (session.selection_source !== "USER_REPEAT") {
+        db.prepare(
+          "INSERT OR REPLACE INTO program_slot_outcomes VALUES(?,?,?,?,?,?,?)"
+        ).run(
+          newId("out"), session.program_version_id, session.cursor_before_cycle_number,
+          session.selected_program_slot_id, sessionId,
+          skipped > 0 ? "COMPLETED_PARTIAL" : "COMPLETED", now
+        );
         db.prepare(
           "UPDATE program_cursor SET next_program_slot_id=?,cycle_number=?,updated_at=? WHERE program_version_id=?"
         ).run(
@@ -521,3 +623,60 @@ export function voidSession(db: DatabaseSync, sessionId: string, reason?: string
     return { replayed: false, session: getSession(db, sessionId) };
   });
 }
+
+export function correctSetResult(
+  db: DatabaseSync,
+  sessionSetId: string,
+  patch: { reps?: number; load_kg?: number | null; rir?: number | null },
+  reason?: string,
+) {
+  return withTransaction(db, () => {
+    const set = one<Row>(
+      db,
+      `SELECT ss.*,ts.status AS session_status
+         FROM session_sets ss
+         JOIN session_exercises se ON se.session_exercise_id=ss.session_exercise_id
+         JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+        WHERE ss.session_set_id=?`,
+      sessionSetId
+    );
+    if (!set) throw new Error("Session set not found");
+    if (set.status !== "COMPLETED") throw new Error("Only a completed working set can be corrected");
+    if (set.session_status === "VOIDED") throw new Error("VOIDED session data is not corrected");
+
+    const fields: Array<["actual_reps"|"actual_load_kg"|"actual_rir", SQLInputValue]> = [];
+    if (patch.reps !== undefined) fields.push(["actual_reps", patch.reps]);
+    if (patch.load_kg !== undefined) fields.push(["actual_load_kg", patch.load_kg]);
+    if (patch.rir !== undefined) fields.push(["actual_rir", patch.rir]);
+    if (fields.length !== 1) throw new Error("A correction must change exactly one result field");
+
+    const [field, value] = fields[0]!;
+    const candidate: ActualSet = {
+      set_number: Number(set.set_number),
+      reps: field === "actual_reps" ? Number(value) : Number(set.actual_reps),
+      load_kg: field === "actual_load_kg" ? (value == null ? null : Number(value)) : (set.actual_load_kg == null ? null : Number(set.actual_load_kg)),
+      rir: field === "actual_rir" ? (value == null ? null : Number(value)) : (set.actual_rir == null ? null : Number(set.actual_rir)),
+    };
+    validateActual(set, candidate);
+
+    const previous = set[field];
+    if (previous === value) {
+      return { replayed: true, set: one<Row>(db, "SELECT * FROM session_sets WHERE session_set_id=?", sessionSetId) };
+    }
+
+    const now = nowIso();
+    db.prepare(`UPDATE session_sets SET ${field}=? WHERE session_set_id=?`).run(value, sessionSetId);
+    db.prepare(
+      "INSERT INTO data_corrections VALUES(?,?,?,?,?,?,?,?,?)"
+    ).run(
+      newId("corr"), "session_set", sessionSetId, field,
+      JSON.stringify(previous), JSON.stringify(value), reason ?? null, "USER_CORRECTION", now
+    );
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "SET_RESULT_CORRECTED", "session_set", sessionSetId,
+      JSON.stringify({ field, before: previous, after: value, reason: reason ?? null }), now
+    );
+    return { replayed: false, set: one<Row>(db, "SELECT * FROM session_sets WHERE session_set_id=?", sessionSetId) };
+  });
+}
+
