@@ -266,7 +266,7 @@ const entry = defineToolPlugin({
     tool(directOnlyTool({
       name: "calendar_provider_list_events",
       label: "Calendar events",
-      description: "Read events from the designated Google Calendar within one bounded RFC3339 time window.",
+      description: "Read events from the designated Google Calendar within one bounded RFC3339 time window, including the deterministic configured classification projection for each event.",
       parameters: providerListParameters,
       optional: true,
       execute: async (params, config) => provider.listEvents(operationalConfig(config).baseValue, params),
@@ -274,7 +274,7 @@ const entry = defineToolPlugin({
     tool(directOnlyTool({
       name: "calendar_provider_get_event",
       label: "Calendar event",
-      description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads.",
+      description: "Read one event from the designated Google Calendar by the deterministic event reference returned by Calendar event reads, including its deterministic configured classification projection.",
       parameters: providerEventParameters,
       optional: true,
       execute: async (params, config) => provider.getEvent(operationalConfig(config).baseValue, params),

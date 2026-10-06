@@ -18,6 +18,15 @@ export type ProviderEvent = {
     eventLabelId?: string;
     extendedProperties?: unknown;
 };
+export type CalendarClassificationView = {
+    categoryId: string;
+    leafName: string;
+    kind: "management" | "service";
+    providerLabelId: string;
+    displayName: string;
+    parentId?: string;
+    parentName?: string;
+};
 export type CalendarEventView = {
     id: string;
     etag?: string;
@@ -37,6 +46,7 @@ export type CalendarEventView = {
     originalStartTime?: string;
     eventType?: string;
     eventLabelId?: string;
+    classification: CalendarClassificationView | null;
 };
 export type CalendarLabels = {
     calendarId: string;
@@ -86,6 +96,7 @@ export declare function createGoogleCalendarProvider(deps?: GoogleCalendarProvid
         changed: boolean;
         event_id: string;
         label_id: string;
+        classification: CalendarClassificationView | null;
         etag: string | undefined;
     }>;
 };
