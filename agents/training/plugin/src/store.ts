@@ -3,7 +3,7 @@ import path from "node:path";
 import { randomUUID } from "node:crypto";
 import { DatabaseSync } from "node:sqlite";
 
-export const TRAINING_SCHEMA_VERSION = 2;
+export const TRAINING_SCHEMA_VERSION = 3;
 
 const DDL = String.raw`
 CREATE TABLE exercises(
@@ -11,11 +11,12 @@ CREATE TABLE exercises(
   name TEXT NOT NULL UNIQUE,
   category TEXT,
   equipment_type TEXT,
-  load_mode TEXT NOT NULL CHECK(load_mode IN ('TOTAL_EXTERNAL','PER_HAND','PER_SIDE','ADDED_BODYWEIGHT','ASSISTANCE','MACHINE_DISPLAYED','BODYWEIGHT','NONE')),
+  load_mode TEXT NOT NULL CHECK(load_mode IN ('TOTAL_EXTERNAL','PER_HAND','PER_SIDE','ADDED_BODYWEIGHT','ASSISTANCE','MACHINE_DISPLAYED','BODYWEIGHT','NONE','LEGACY_SOURCE_RECORDED')),
   rep_mode TEXT NOT NULL DEFAULT 'TOTAL' CHECK(rep_mode IN ('TOTAL','PER_SIDE')),
   load_progression_direction TEXT NOT NULL CHECK(load_progression_direction IN ('HIGHER_IS_HARDER','LOWER_IS_HARDER','NOT_APPLICABLE')),
   active INTEGER NOT NULL DEFAULT 1 CHECK(active IN (0,1)),
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  CHECK(load_mode <> 'LEGACY_SOURCE_RECORDED' OR (active=0 AND load_progression_direction='NOT_APPLICABLE'))
 ) STRICT;
 CREATE TABLE exercise_aliases(
   exercise_alias_id TEXT PRIMARY KEY,

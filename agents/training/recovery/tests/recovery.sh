@@ -100,10 +100,10 @@ create_training_db "$GOOD_DB" 0
 run_backup "$GOOD_DB" "$TEST_ROOT/home" "$TEST_ROOT/uploads" "$TEST_ROOT/curl.log" >/dev/null
 
 STATUS="$TEST_ROOT/home/state/nexus-recovery/training-independent-backup.json"
-version=$(node -e 'const s=require(process.argv[1]);if(s.last_result!=="PASS"||s.sqlite_schema!==2)process.exit(1);process.stdout.write(s.last_success_package_version)' "$STATUS")
+version=$(node -e 'const s=require(process.argv[1]);if(s.last_result!=="PASS"||s.sqlite_schema!==3)process.exit(1);process.stdout.write(s.last_success_package_version)' "$STATUS")
 [[ -n "$version" ]]
 [[ -s "$TEST_ROOT/uploads/training.sqlite3.age" && -s "$TEST_ROOT/uploads/manifest.json" ]]
-node -e 'const m=require(process.argv[1]);if(m.class!=="training-sqlite"||m.validation.sqlite_schema!==2||m.validation.integrity_check!=="ok"||m.validation.foreign_key_violations!==0)process.exit(1)' "$TEST_ROOT/uploads/manifest.json"
+node -e 'const m=require(process.argv[1]);if(m.class!=="training-sqlite"||m.validation.sqlite_schema!==3||m.validation.integrity_check!=="ok"||m.validation.foreign_key_violations!==0)process.exit(1)' "$TEST_ROOT/uploads/manifest.json"
 ! grep -q 'synthetic-secret-token' "$TEST_ROOT/curl.log"
 [[ $(find /tmp -maxdepth 1 -name 'nexus-training-recovery.*' | wc -l) -eq 0 ]]
 
@@ -122,7 +122,7 @@ try{
   const cursor=db.prepare("SELECT next_program_slot_id,cycle_number FROM program_cursor WHERE program_version_id='ver'").get();
   const session=db.prepare("SELECT status,training_session_id FROM training_sessions WHERE training_session_id='sess'").get();
   const pause=db.prepare("SELECT paused_at,resumed_at FROM training_session_pauses WHERE training_session_id='sess'").get();
-  if(schema!==2||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
+  if(schema!==3||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
 }finally{db.close();}
 NODE
 

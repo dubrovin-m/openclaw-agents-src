@@ -2,7 +2,7 @@
   "id": "training",
   "name": "Training",
   "description": "Owner-scoped deterministic Training Store and session execution tools.",
-  "version": "0.1.2",
+  "version": "0.1.3",
   "configSchema": {
     "type": "object",
     "required": [

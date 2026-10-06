@@ -2,7 +2,7 @@
   "format": "training-agent-release-v1",
   "deployment_mode": "stage-only",
   "generation": {
-    "sqlite_schema": 2,
+    "sqlite_schema": 3,
     "typebox_version": "1.3.15",
     "openclaw_build_version": "2026.9.7",
     "openclaw_compat": ">=2026.9.5 <=2026.9.7"
@@ -10,13 +10,13 @@
   "plugin": {
     "id": "training",
     "name": "openclaw-plugin-training",
-    "version": "0.1.2",
-    "artifact": "artifacts/openclaw-plugin-training-0.1.2.tgz",
-    "sha256": "7b47e89810e9a4c193cc35698e7fab0feb08c7130f871e8ee0b3f20e17715f94",
+    "version": "0.1.3",
+    "artifact": "artifacts/openclaw-plugin-training-0.1.3.tgz",
+    "sha256": "0064d619a8482f986b0239e265a587c54847e64f5734093519b35a68d916c720",
     "runtime_entry_sha256": "8bcbbbc1b4cc138007c48940525193386b746827cec93dad136894dbf18531b5"
   },
   "source": {
-    "source_revision": "e2964152475ee7a2f6fc2e8c2d82aaa5d47547ba",
+    "source_revision": "db5252c56f987aa0891607d8d0f958095670ffcd",
     "workspace_sha256": {
       "AGENTS.md": "98ed4a57c24d6257c9d06199885ecbd8b0876c8e9aace4e49ae9b1e915e63ea5",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
@@ -26,7 +26,7 @@
     },
     "tools_sha256": "8a4f5c5a238421f32ab7afec991f6ff2e94a3104bd682376e92c678e1950961f",
     "agent_fragment_sha256": "413d33f137a3cccc58851d39881c58ce54d50989ccf2f7dd0fc7ee555c9600f9",
-    "plugin_manifest_sha256": "7e6f9a4f58646652a34c0125ceea92a0f7fabfbd040dd3ceba29bc5dd1753ec7"
+    "plugin_manifest_sha256": "d071d2c242df397ad07f3e285d675c3e5083722cca683709405334be41d7f4cb"
   },
   "stage_contract": {
     "plugin_enabled": false,

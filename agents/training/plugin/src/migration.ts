@@ -51,7 +51,9 @@ export type NormalizedTrainingMigrationV1 = {
       | "ASSISTANCE"
       | "MACHINE_DISPLAYED"
       | "BODYWEIGHT"
-      | "NONE";
+      | "NONE"
+      | "LEGACY_SOURCE_RECORDED";
+    active?: boolean;
     rep_mode: "TOTAL" | "PER_SIDE";
     load_progression_direction: "HIGHER_IS_HARDER" | "LOWER_IS_HARDER" | "NOT_APPLICABLE";
   }>;
@@ -221,9 +223,13 @@ export function importNormalizedTraining(
       const sourceId = requiredString(item.source_id, "exercise.source_id");
       const targetId = newId("ex");
       mapUnique(exerciseMap, sourceId, targetId, "exercise");
+      const active = item.active === false ? 0 : 1;
+      if (item.load_mode === "LEGACY_SOURCE_RECORDED" && (active !== 0 || item.load_progression_direction !== "NOT_APPLICABLE")) {
+        throw new Error("LEGACY_SOURCE_RECORDED exercise must be inactive and non-progressing");
+      }
       db.prepare(`INSERT INTO exercises(
         exercise_id,name,category,equipment_type,load_mode,rep_mode,load_progression_direction,active,created_at
-      ) VALUES(?,?,?,?,?,?,?,1,?)`).run(
+      ) VALUES(?,?,?,?,?,?,?,?,?)`).run(
         targetId,
         requiredString(item.name, "exercise.name"),
         item.category ?? null,
@@ -231,6 +237,7 @@ export function importNormalizedTraining(
         item.load_mode,
         item.rep_mode,
         item.load_progression_direction,
+        active,
         now
       );
       recordSource("exercise", sourceId, "exercise", targetId);
@@ -312,6 +319,10 @@ export function importNormalizedTraining(
         for (const exercise of template.strength_exercises ?? []) {
           const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "template exercise exercise_source_id"));
           if (!exerciseId) throw new Error("Template exercise references unknown migrated exercise");
+          const exerciseState = db.prepare("SELECT active FROM exercises WHERE exercise_id=?").get(exerciseId) as { active:number } | undefined;
+          if (!exerciseState || exerciseState.active !== 1) {
+            throw new Error("Program template cannot reference an inactive migrated exercise");
+          }
           const targetId = newId("te");
           db.prepare(`INSERT INTO template_exercises(
             template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
