@@ -31,6 +31,12 @@ It:
 
 Provider download and production cut-over remain explicit recovery operations.
 
+## Isolated restore qualification
+
+`qualify-restore.sh` is the owner-workstation qualification wrapper around `restore.sh`. It downloads one explicitly selected Training recovery point from the registered GitLab Generic Package Registry, decrypts it only in temporary isolated staging with the externally supplied owner recovery identity, verifies a separately supplied structural fingerprint, removes the plaintext database, and writes owner-only non-sensitive PASS evidence containing only recovery metadata, RPO/RTO observations, integrity result, and cleanup result.
+
+The qualification wrapper requires runtime bindings for `GITLAB_PROJECT_ID`, `GITLAB_DEPLOY_TOKEN_FILE`, and optionally `GITLAB_BASE_URL`, plus absolute paths for the private age identity, expected structural fingerprint, and evidence output. The private identity is never copied into this repository, GitLab, the VPS, or ChatGPT.
+
 ## Schedule
 
 The packaged timer follows the existing four-hour Nexus recovery cadence. The actual production schedule is effective only after explicit installation and activation.
