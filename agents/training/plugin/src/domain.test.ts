@@ -4,8 +4,10 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   abandonSession,
+  completeConditioning,
   completeExercise,
   correctSetResult,
+  createConditioningPrescription,
   deferExercise,
   finishSession,
   getProgressionCandidate,
@@ -14,6 +16,7 @@ import {
   prescribeExercise,
   resumeExercise,
   resumeSession,
+  startAdHocSession,
   startProgramSession,
 } from "./domain.js";
 import { nowIso, openTrainingStore } from "./store.js";
@@ -76,6 +79,16 @@ function fixture() {
     .run("te_a", "tpl_a", "ex_a", 1, 4, 6, 6, 2, 2, "{}", null);
   db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
     .run("te_b", "tpl_b", "ex_b", 1, 4, 6, 6, 2, 2, "{}", null);
+
+  for (const [id, name] of [["bike", "Bike"], ["treadmill", "Treadmill"], ["swim", "Swim"]] as const) {
+    db.prepare("INSERT INTO conditioning_modalities VALUES(?,?,1)").run(id, name);
+  }
+  db.prepare("INSERT INTO conditioning_policies VALUES(?,?,?,?,?,?,?)")
+    .run("cp_base", "tpl_cond", "aerobic base", 1800, 2400, "HR_ZONE", null);
+  for (const modality of ["bike", "treadmill", "swim"]) {
+    db.prepare("INSERT INTO conditioning_policy_modalities VALUES(?,?)")
+      .run("cp_base", modality);
+  }
 
   return db;
 }
@@ -379,6 +392,110 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(candidate.candidate_load_kg).toBe(72.5);
       expect(candidate.basis).toBe("SUCCESS_STREAK_INCREMENT");
       expect(candidate.recent_exposures.slice(0, 2).every((x) => x.success)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-CON-002/005: modality override stays in the Conditioning slot and Fitbit is not required", () => {
+    const db = fixture();
+    try {
+      const strength: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const strengthExercise = strength.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, strengthExercise, fourSets(70));
+      completeExercise(db, strengthExercise, "AS_PRESCRIBED");
+      finishSession(db, strength.session.training_session_id);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_cond_1");
+
+      const conditioning: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-07",
+      });
+      const prescription: any = createConditioningPrescription(db, {
+        training_session_id: conditioning.session.training_session_id,
+        recommended_modality_id: "bike",
+        selected_modality_id: "treadmill",
+        modality_selection_source: "USER_OVERRIDE",
+        protocol_summary: "35 min Zone 2",
+        segments: [
+          { sequence: 1, segment_type: "WARMUP", target_duration_sec: 300 },
+          { sequence: 2, segment_type: "WORK", target_duration_sec: 1500, target_hr_zone: 2 },
+          { sequence: 3, segment_type: "COOLDOWN", target_duration_sec: 300 },
+        ],
+      });
+      expect(prescription.prescription.selected_modality_id).toBe("treadmill");
+      completeConditioning(db, {
+        conditioning_prescription_id: prescription.prescription.conditioning_prescription_id,
+        mode: "AS_PRESCRIBED",
+      });
+      finishSession(db, conditioning.session.training_session_id);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_b");
+      const result = db.prepare(
+        "SELECT actual_duration_sec FROM conditioning_results WHERE conditioning_prescription_id=?"
+      ).get(prescription.prescription.conditioning_prescription_id) as any;
+      expect(result.actual_duration_sec).toBe(2100);
+      const telemetry = Number((db.prepare(
+        "SELECT count(*) n FROM external_telemetry_links WHERE training_session_id=?"
+      ).get(conditioning.session.training_session_id) as any).n);
+      expect(telemetry).toBe(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("blocks Conditioning session completion until a Conditioning result exists", () => {
+    const db = fixture();
+    try {
+      const adHoc: any = startAdHocSession(db, {
+        session_kind: "CONDITIONING",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      createConditioningPrescription(db, {
+        training_session_id: adHoc.session.training_session_id,
+        selected_modality_id: "bike",
+        modality_selection_source: "USER_AD_HOC",
+        protocol_summary: "20 min easy",
+        segments: [{ sequence: 1, segment_type: "WORK", target_duration_sec: 1200 }],
+      });
+      expect(() => finishSession(db, adHoc.session.training_session_id))
+        .toThrow(/Conditioning result must be recorded/);
+      const state = db.prepare(
+        "SELECT status FROM training_sessions WHERE training_session_id=?"
+      ).get(adHoc.session.training_session_id) as any;
+      expect(state.status).toBe("ACTIVE");
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_a");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-SEL-006: ad-hoc Conditioning does not move the program cursor", () => {
+    const db = fixture();
+    try {
+      const before = getRecommendation(db).recommendation?.program_slot_id;
+      const adHoc: any = startAdHocSession(db, {
+        session_kind: "CONDITIONING",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const prescription: any = createConditioningPrescription(db, {
+        training_session_id: adHoc.session.training_session_id,
+        selected_modality_id: "swim",
+        modality_selection_source: "USER_AD_HOC",
+        protocol_summary: "30 min swim",
+        segments: [{ sequence: 1, segment_type: "WORK", target_duration_sec: 1800 }],
+      });
+      completeConditioning(db, {
+        conditioning_prescription_id: prescription.prescription.conditioning_prescription_id,
+        mode: "AS_PRESCRIBED",
+      });
+      finishSession(db, adHoc.session.training_session_id);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe(before);
     } finally {
       db.close();
     }
