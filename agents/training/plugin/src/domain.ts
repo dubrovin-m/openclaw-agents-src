@@ -176,6 +176,89 @@ export function startProgramSession(
   });
 }
 
+export type AdHocStrengthExercise = {
+  exercise_id: string;
+  planned_sets: number;
+  target_reps_min: number | null;
+  target_reps_max: number | null;
+  target_rir_min: number | null;
+  target_rir_max: number | null;
+  progression_policy_json?: string;
+};
+
+export function startAdHocSession(
+  db: DatabaseSync,
+  params: {
+    session_kind: "STRENGTH" | "CONDITIONING";
+    timezone_at_start: string;
+    local_date: string;
+    strength_exercises?: AdHocStrengthExercise[];
+  }
+) {
+  return withTransaction(db, () => {
+    const existing = getOpenSession(db);
+    if (existing) {
+      return { replayed: true, session: getSession(db, String(existing.training_session_id)) };
+    }
+    if (
+      params.session_kind === "STRENGTH" &&
+      (!params.strength_exercises || params.strength_exercises.length === 0)
+    ) {
+      throw new Error("Ad-hoc strength session requires at least one exercise");
+    }
+    if (
+      params.session_kind === "CONDITIONING" &&
+      params.strength_exercises?.length
+    ) {
+      throw new Error("Conditioning session cannot include strength exercise plan");
+    }
+
+    const now = nowIso();
+    const sessionId = newId("sess");
+    db.prepare(`INSERT INTO training_sessions(
+      training_session_id,program_version_id,workout_template_id,session_kind,session_source,
+      recommended_program_slot_id,selected_program_slot_id,selection_source,
+      cursor_before_slot_id,cursor_before_cycle_number,cursor_on_complete_slot_id,cursor_on_complete_cycle_number,
+      status,started_at,timezone_at_start,local_date,created_at
+    ) VALUES(?,NULL,NULL,?,'AD_HOC',NULL,NULL,'USER_AD_HOC',NULL,NULL,NULL,NULL,'ACTIVE',?,?,?,?)`).run(
+      sessionId, params.session_kind, now, params.timezone_at_start, params.local_date, now
+    );
+
+    if (params.session_kind === "STRENGTH") {
+      const insert = db.prepare(`INSERT INTO session_exercises(
+        session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
+        planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,status
+      ) VALUES(?,?,NULL,?,?,?,?,?,?,?,?,'PENDING')`);
+      params.strength_exercises!.forEach((item, index) => {
+        const exercise = one<{exercise_id:string; active:number}>(
+          db,
+          "SELECT exercise_id,active FROM exercises WHERE exercise_id=?",
+          item.exercise_id
+        );
+        if (!exercise || exercise.active !== 1) {
+          throw new Error(`Unknown or inactive exercise: ${item.exercise_id}`);
+        }
+        if (!Number.isInteger(item.planned_sets) || item.planned_sets < 1 || item.planned_sets > 20) {
+          throw new Error("Invalid ad-hoc planned_sets");
+        }
+        const policy = item.progression_policy_json ?? "{}";
+        parseProgressionPolicy(policy);
+        insert.run(
+          newId("sex"), sessionId, item.exercise_id, index + 1,
+          item.planned_sets, item.target_reps_min, item.target_reps_max,
+          item.target_rir_min, item.target_rir_max, policy
+        );
+      });
+    }
+
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "SESSION_STARTED", "training_session", sessionId,
+      JSON.stringify({ session_source: "AD_HOC", session_kind: params.session_kind }), now
+    );
+    return { replayed: false, session: getSession(db, sessionId) };
+  });
+}
+
 export function getSession(db: DatabaseSync, sessionId?: string) {
   const session = sessionId
     ? one(db, "SELECT * FROM training_sessions WHERE training_session_id=?", sessionId)
