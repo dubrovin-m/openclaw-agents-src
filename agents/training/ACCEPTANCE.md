@@ -130,7 +130,7 @@ No row marked **GAP** is acceptable for source freeze.
 
 ## Migration-source regression: Conditioning mobility blocks
 
-The authoritative pre-cutover Fitness cycle states that each between-strength Conditioning session includes its applicable mobility block while retaining the existing exercise selection. Training therefore supports planned `template_exercises` on `CONDITIONING` templates. The two program positions use distinct `Conditioning A` / `Conditioning B` templates so Mobility A and Mobility B remain distinct, while generic user selection of “Conditioning” resolves deterministically to the nearest not-yet-passed Conditioning slot by workout kind. This regression is qualified in the domain and normalized-migration test suites.
+The authoritative pre-cutover Fitness cycle states that each between-strength Conditioning session includes its applicable mobility block while retaining the existing exercise selection. Historical Fitness rows recorded as a same-date Conditioning summary plus Mobility A/B working sets are normalized into one migrated `CONDITIONING` session so completed mobility work is not lost. Training therefore supports planned `template_exercises` on `CONDITIONING` templates. The two program positions use distinct `Conditioning A` / `Conditioning B` templates so Mobility A and Mobility B remain distinct, while generic user selection of “Conditioning” resolves deterministically to the nearest not-yet-passed Conditioning slot by workout kind. This regression is qualified in the domain and normalized-migration test suites.
 
 ## Source-freeze conclusion
 

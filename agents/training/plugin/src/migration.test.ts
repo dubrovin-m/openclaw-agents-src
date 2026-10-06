@@ -147,6 +147,20 @@ function payload(): NormalizedTrainingMigrationV1 {
         session_kind: "CONDITIONING",
         status: "COMPLETED",
         local_date: "2026-10-01",
+        strength_exercises: [{
+          source_id: "legacy-session-ex-mobility",
+          exercise_source_id: "legacy-ex-mobility",
+          sequence: 1,
+          status: "COMPLETED",
+          actual_sets: [{
+            source_id: "legacy-set-mobility-1",
+            set_number: 1,
+            status: "COMPLETED",
+            actual_reps: 10,
+            actual_load_kg: null,
+            actual_rir: null,
+          }],
+        }],
         conditioning: {
           source_id: "legacy-conditioning-result",
           selected_modality: { source_id: "legacy-mod-bike", name: "Bike" },
@@ -167,7 +181,7 @@ describe("Training normalized migration", () => {
       const result: any = importNormalizedTraining(db, payload(), "a".repeat(64));
       expect(result.replayed).toBe(false);
       expect(result.counts.training_sessions).toBe(2);
-      expect(result.counts.session_sets).toBe(2);
+      expect(result.counts.session_sets).toBe(3);
       expect(result.counts.conditioning_results).toBe(1);
       const conditioningMobility = Number((db.prepare(
         `SELECT count(*) n FROM template_exercises te
@@ -175,6 +189,15 @@ describe("Training normalized migration", () => {
          WHERE wt.workout_kind='CONDITIONING'`
       ).get() as any).n);
       expect(conditioningMobility).toBe(1);
+      const migratedMobility = db.prepare(
+        `SELECT ss.actual_reps,ts.session_kind
+           FROM session_sets ss
+           JOIN session_exercises se ON se.session_exercise_id=ss.session_exercise_id
+           JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+           JOIN exercises e ON e.exercise_id=se.exercise_id
+          WHERE e.name='Ankle rocks' AND ts.local_date='2026-10-01'`
+      ).get() as any;
+      expect(migratedMobility).toEqual({ actual_reps: 10, session_kind: "CONDITIONING" });
 
       const migrated = db.prepare(
         "SELECT started_at,ended_at,timezone_at_start,local_date,time_precision FROM training_sessions WHERE local_date='2026-09-30'"
