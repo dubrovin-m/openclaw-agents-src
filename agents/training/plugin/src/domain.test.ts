@@ -3,10 +3,15 @@ import os from "node:os";
 import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
+  abandonSession,
   completeExercise,
+  correctSetResult,
   finishSession,
   getRecommendation,
+  pauseSession,
   prescribeExercise,
+  resumeExercise,
+  resumeSession,
   startProgramSession,
 } from "./domain.js";
 import { nowIso, openTrainingStore } from "./store.js";
@@ -201,4 +206,133 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       db.close();
     }
   });
+
+  it("TRA-LIFE-001/002: pause and resume preserve the cursor and pause interval", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      pauseSession(db, started.session.training_session_id);
+      expect((db.prepare("SELECT status FROM training_sessions WHERE training_session_id=?")
+        .get(started.session.training_session_id) as any).status).toBe("PAUSED");
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_a");
+
+      resumeSession(db, started.session.training_session_id);
+      const pause = db.prepare(
+        "SELECT paused_at,resumed_at FROM training_session_pauses WHERE training_session_id=?"
+      ).get(started.session.training_session_id) as any;
+      expect(pause.paused_at).toBeTruthy();
+      expect(pause.resumed_at).toBeTruthy();
+      expect((db.prepare("SELECT status FROM training_sessions WHERE training_session_id=?")
+        .get(started.session.training_session_id) as any).status).toBe("ACTIVE");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-STR-007: a deferred exercise can resume without losing its prescription", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      const { deferExercise } = require("./domain.js");
+      deferExercise(db, id);
+      const resumed: any = resumeExercise(db, id);
+      expect(resumed.exercise.status).toBe("ACTIVE");
+      expect(resumed.exercise.sets).toHaveLength(4);
+      expect(resumed.exercise.sets.every((x: any) => x.target_load_kg === 70)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-LIFE-004: abandoned session preserves cursor and closes unfinished work", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      abandonSession(db, started.session.training_session_id, "had to leave");
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_a");
+      const session = db.prepare("SELECT status FROM training_sessions WHERE training_session_id=?")
+        .get(started.session.training_session_id) as any;
+      expect(session.status).toBe("ABANDONED");
+      const exercise = db.prepare("SELECT status FROM session_exercises WHERE session_exercise_id=?").get(id) as any;
+      expect(exercise.status).toBe("SKIPPED");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-VAL-008: correction updates the authoritative value and preserves audit", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const exerciseId = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, exerciseId, fourSets(70));
+      completeExercise(db, exerciseId, "AS_PRESCRIBED");
+      const set = db.prepare(
+        "SELECT session_set_id FROM session_sets WHERE session_exercise_id=? AND set_number=2"
+      ).get(exerciseId) as any;
+      correctSetResult(db, set.session_set_id, { load_kg: 67.5 }, "user correction");
+      const corrected = db.prepare(
+        "SELECT actual_load_kg FROM session_sets WHERE session_set_id=?"
+      ).get(set.session_set_id) as any;
+      expect(corrected.actual_load_kg).toBe(67.5);
+      const audit = db.prepare(
+        "SELECT previous_value_json,corrected_value_json FROM data_corrections WHERE target_id=?"
+      ).get(set.session_set_id) as any;
+      expect(JSON.parse(audit.previous_value_json)).toBe(70);
+      expect(JSON.parse(audit.corrected_value_json)).toBe(67.5);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-SEL-005: repeating an earlier slot does not overwrite its original program outcome", () => {
+    const db = fixture();
+    try {
+      const first: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const firstExercise = first.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, firstExercise, fourSets(70));
+      completeExercise(db, firstExercise, "AS_PRESCRIBED");
+      finishSession(db, first.session.training_session_id);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_cond_1");
+
+      const repeated: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-07",
+      });
+      const repeatedExercise = repeated.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, repeatedExercise, fourSets(70));
+      completeExercise(db, repeatedExercise, "AS_PRESCRIBED");
+      finishSession(db, repeated.session.training_session_id);
+
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_cond_1");
+      const outcomes = db.prepare(
+        "SELECT training_session_id FROM program_slot_outcomes WHERE program_slot_id='slot_a'"
+      ).all() as any[];
+      expect(outcomes).toHaveLength(1);
+      expect(outcomes[0].training_session_id).toBe(first.session.training_session_id);
+    } finally {
+      db.close();
+    }
+  });
+
 });
