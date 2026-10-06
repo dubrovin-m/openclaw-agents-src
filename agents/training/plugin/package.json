@@ -4,7 +4,7 @@
   "type": "module",
   "private": true,
   "scripts": {
-    "build": "tsc -p tsconfig.json",
+    "build": "rm -rf dist && tsc -p tsconfig.json",
     "plugin:build": "npm run build && openclaw plugins build --root . --entry ./dist/plugin.js",
     "plugin:check": "npm run build && openclaw plugins build --check --root . --entry ./dist/plugin.js",
     "plugin:validate": "npm run build && openclaw plugins validate --root . --entry ./dist/plugin.js",
