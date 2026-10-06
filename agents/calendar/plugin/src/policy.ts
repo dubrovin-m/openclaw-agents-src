@@ -24,7 +24,7 @@ function block(reason: string) {
 }
 function baseCalendarConfig(value: unknown) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const { durableRules: _durableRules, ...base } = value as Record<string, unknown>;
+  const { durableRules: _durableRules, pendingRuleProposals: _pendingRuleProposals, ...base } = value as Record<string, unknown>;
   return base;
 }
 function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | undefined) {
