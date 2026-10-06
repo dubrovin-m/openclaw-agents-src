@@ -124,13 +124,22 @@ CREATE TABLE training_sessions(
   cursor_on_complete_slot_id TEXT REFERENCES program_slots(program_slot_id),
   cursor_on_complete_cycle_number INTEGER,
   status TEXT NOT NULL CHECK(status IN ('ACTIVE','PAUSED','COMPLETED','ABANDONED','VOIDED')),
-  started_at TEXT NOT NULL,
+  started_at TEXT,
   ended_at TEXT,
-  timezone_at_start TEXT NOT NULL,
+  timezone_at_start TEXT,
   local_date TEXT NOT NULL,
+  time_precision TEXT NOT NULL DEFAULT 'EXACT' CHECK(time_precision IN ('EXACT','DATE_ONLY','UNKNOWN')),
   overall_feedback TEXT,
   created_at TEXT NOT NULL,
-  CHECK((status IN ('ACTIVE','PAUSED') AND ended_at IS NULL) OR (status IN ('COMPLETED','ABANDONED','VOIDED') AND ended_at IS NOT NULL))
+  CHECK(
+    session_source='MIGRATION'
+    OR (started_at IS NOT NULL AND timezone_at_start IS NOT NULL AND time_precision='EXACT')
+  ),
+  CHECK(
+    (status IN ('ACTIVE','PAUSED') AND started_at IS NOT NULL AND ended_at IS NULL)
+    OR
+    (status IN ('COMPLETED','ABANDONED','VOIDED') AND (ended_at IS NOT NULL OR session_source='MIGRATION'))
+  )
 ) STRICT;
 CREATE UNIQUE INDEX ux_training_open_session ON training_sessions((1)) WHERE status IN ('ACTIVE','PAUSED');
 CREATE TABLE training_session_pauses(
