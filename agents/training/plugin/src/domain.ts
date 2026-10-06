@@ -1610,23 +1610,3 @@ export function applyApprovedProgramChange(
     };
   });
 }
-
-export function applyDirectProgramChange(
-  db: DatabaseSync,
-  params: {
-    change_type: ProgramChangeType;
-    proposal: Record<string, unknown>;
-    rationale: string;
-  }
-) {
-  return withTransaction(db, () => {
-    const proposal = proposeProgramChange(db, {
-      ...params,
-      created_by: "USER",
-    }) as Row;
-    // proposeProgramChange owns its own transaction, so direct application must be
-    // implemented without nested transactions by returning the proposal id to the caller.
-    return proposal;
-  });
-}
-
