@@ -32,8 +32,9 @@ EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CO
 node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/null || fail "Unsupported Node runtime"
 eval "$(node "$SUPPORT" release-env "$REPO_ROOT" "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION")" || fail "Invalid Training release"
 
-OPENCLAW_BIN=$(command -v openclaw || true)
+OPENCLAW_BIN=${OPENCLAW_BIN:-$(command -v openclaw || true)}
 [ -n "$OPENCLAW_BIN" ] || fail "Required command unavailable: openclaw"
+[ -x "$OPENCLAW_BIN" ] || fail "OpenClaw binary is not executable: $OPENCLAW_BIN"
 
 if [ -n "$TEST_ROOT" ]; then
   case "$TEST_ROOT" in /*) ;; *) fail "--test-root must be absolute" ;; esac
@@ -76,24 +77,43 @@ assess(){
   eval "$(node "$SUPPORT" config-env "$CONFIG" "$DB")" || fail "Unable to inspect Training config state"
   local plugin_json
   plugin_json=$(oc plugins list --json) || fail "Unable to inspect OpenClaw plugins"
-  eval "$(printf '%s' "$plugin_json" | node "$SUPPORT" plugin-env "$TARGET_PLUGIN_ID" "$TARGET_PLUGIN_VERSION" "$EXTENSION_DIR" "$TARGET_RUNTIME_ENTRY_SHA")" || fail "Unable to inspect Training plugin state"
-  local workspace_exact=0 db_present=0 extension_present=0
-  node "$SUPPORT" workspace-exact "$WORKSPACE" "$RELEASE_FILE" >/dev/null 2>&1 && workspace_exact=1 || true
+  eval "$(printf '%s' "$plugin_json" | node "$SUPPORT" plugin-env "$TARGET_PLUGIN_ID" "$TARGET_PLUGIN_VERSION" "$EXTENSION_DIR" "$TARGET_RUNTIME_ENTRY_SHA" TARGET)" || fail "Unable to inspect target Training plugin state"
+  if [ "$PREDECESSOR_PRESENT" = "1" ]; then
+    eval "$(printf '%s' "$plugin_json" | node "$SUPPORT" plugin-env "$TARGET_PLUGIN_ID" "$PREDECESSOR_PLUGIN_VERSION" "$EXTENSION_DIR" "$PREDECESSOR_RUNTIME_ENTRY_SHA" PREDECESSOR)" || fail "Unable to inspect predecessor Training plugin state"
+  else
+    PREDECESSOR_PLUGIN_COUNT=0
+    PREDECESSOR_PLUGIN_EXACT=0
+    PREDECESSOR_PLUGIN_ENABLED=0
+  fi
+  local target_workspace_exact=0 predecessor_workspace_exact=0 db_present=0 extension_present=0
+  node "$SUPPORT" workspace-exact "$WORKSPACE" "$RELEASE_FILE" target >/dev/null 2>&1 && target_workspace_exact=1 || true
+  if [ "$PREDECESSOR_PRESENT" = "1" ]; then
+    node "$SUPPORT" workspace-exact "$WORKSPACE" "$RELEASE_FILE" predecessor >/dev/null 2>&1 && predecessor_workspace_exact=1 || true
+  fi
   [ -e "$DB" ] && db_present=1 || true
   [ -e "$EXTENSION_DIR" ] && extension_present=1 || true
 
+  local common_staged=0
   if [ "$TRAINING_AGENT_COUNT" -eq 0 ] && [ "$TRAINING_BINDING_COUNT" -eq 0 ] && \
      [ "$TRAINING_PLUGIN_CONFIG_PRESENT" -eq 1 ] && [ "$TRAINING_PLUGIN_ENABLED" -eq 0 ] && \
-     [ "$TRAINING_PLUGIN_DB_EXACT" -eq 1 ] && [ "$TRAINING_PLUGIN_COUNT" -eq 1 ] && \
-     [ "$TRAINING_PLUGIN_EXACT" -eq 1 ] && [ "$workspace_exact" -eq 1 ] && [ "$db_present" -eq 0 ] && \
-     [ "$TRAINING_ALLOW_COUNT" -eq 0 ]; then
-    STATE="STAGED"
+     [ "$TRAINING_PLUGIN_DB_EXACT" -eq 1 ] && [ "$TRAINING_ALLOW_COUNT" -eq 0 ] && [ "$db_present" -eq 0 ]; then
+    common_staged=1
+  fi
+
+  if [ "$common_staged" -eq 1 ] && [ "$TARGET_PLUGIN_COUNT" -eq 1 ] && [ "$TARGET_PLUGIN_EXACT" -eq 1 ] && [ "$target_workspace_exact" -eq 1 ]; then
+    STATE="STAGED_TARGET"
+    return 0
+  fi
+
+  if [ "$PREDECESSOR_PRESENT" = "1" ] && [ "$common_staged" -eq 1 ] && \
+     [ "$PREDECESSOR_PLUGIN_COUNT" -eq 1 ] && [ "$PREDECESSOR_PLUGIN_EXACT" -eq 1 ] && [ "$predecessor_workspace_exact" -eq 1 ]; then
+    STATE="STAGED_PREDECESSOR"
     return 0
   fi
 
   if [ "$TRAINING_AGENT_COUNT" -eq 0 ] && [ "$TRAINING_BINDING_COUNT" -eq 0 ] && \
      [ "$TRAINING_PLUGIN_CONFIG_PRESENT" -eq 0 ] && [ "$TRAINING_ALLOW_COUNT" -eq 0 ] && \
-     [ "$TRAINING_PLUGIN_COUNT" -eq 0 ] && [ "$workspace_exact" -eq 0 ] && [ "$extension_present" -eq 0 ] && [ "$db_present" -eq 0 ]; then
+     [ "$TARGET_PLUGIN_COUNT" -eq 0 ] && [ "$target_workspace_exact" -eq 0 ] && [ "$extension_present" -eq 0 ] && [ "$db_present" -eq 0 ]; then
     STATE="ABSENT"
     return 0
   fi
@@ -115,27 +135,42 @@ exec 9>"$LOCK_FILE"
 flock -n 9 || fail "Another Training deployment is running"
 assess
 [ "$STATE" != "PARTIAL_OR_ACTIVE" ] || fail "Training runtime changed after preflight"
-if [ "$STATE" = "STAGED" ]; then
+if [ "$STATE" = "STAGED_TARGET" ]; then
   echo "TRAINING_DEPLOY_ALREADY_STAGED source=$SOURCE_REVISION plugin=$TARGET_PLUGIN_VERSION"
   exit 0
 fi
 
+ORIGINAL_STATE="$STATE"
 BACKUP_CONFIG=$(mktemp "${CONFIG}.training-stage-before.XXXXXX")
 cp -p "$CONFIG" "$BACKUP_CONFIG"
 WORKSPACE_TMP=$(mktemp -d "${STATE_DIR}/.workspace-training.stage.XXXXXX")
+WORKSPACE_BACKUP=""
+if [ "$ORIGINAL_STATE" = "STAGED_PREDECESSOR" ]; then
+  WORKSPACE_BACKUP=$(mktemp -d "${STATE_DIR}/.workspace-training.predecessor.XXXXXX")
+  cp -a "$WORKSPACE/." "$WORKSPACE_BACKUP/"
+fi
 MUTATION_STARTED=1
 
 rollback(){
   set +e
-  if [ "$MUTATION_STARTED" -eq 1 ]; then
-    oc plugins uninstall training --force >/dev/null 2>&1 || true
+  if [ "$ORIGINAL_STATE" = "STAGED_PREDECESSOR" ]; then
+    oc plugins install --force --no-enable --accept-capabilities "$PREDECESSOR_ARTIFACT" >/dev/null 2>&1 || true
+    rm -rf "$WORKSPACE"
+    install -d -m 700 "$WORKSPACE"
+    cp -a "$WORKSPACE_BACKUP/." "$WORKSPACE/" 2>/dev/null || true
+  else
+    if [ "$MUTATION_STARTED" -eq 1 ]; then
+      oc plugins uninstall training --force >/dev/null 2>&1 || true
+    fi
+    rm -rf "$EXTENSION_DIR" "$WORKSPACE"
   fi
-  rm -rf "$EXTENSION_DIR" "$WORKSPACE" "$WORKSPACE_TMP"
+  rm -rf "$WORKSPACE_TMP"
   cp -p "$BACKUP_CONFIG" "$CONFIG"
   rm -f "$DB"
   rmdir "$(dirname "$DB")" >/dev/null 2>&1 || true
   oc config validate >/dev/null 2>&1 || true
   rm -f "$BACKUP_CONFIG"
+  [ -z "$WORKSPACE_BACKUP" ] || rm -rf "$WORKSPACE_BACKUP"
   set -e
 }
 
@@ -146,6 +181,7 @@ set +e
   for name in AGENTS.md HEARTBEAT.md IDENTITY.md SOUL.md USER.md; do
     install -m 600 "$ROOT/workspace/$name" "$WORKSPACE_TMP/$name"
   done
+  rm -rf "$WORKSPACE"
   mv "$WORKSPACE_TMP" "$WORKSPACE"
 
   oc plugins install --force --no-enable --accept-capabilities "$ARTIFACT"
@@ -159,7 +195,7 @@ set +e
   fi
 
   assess
-  [ "$STATE" = "STAGED" ] || { echo "Training target state verification failed: $STATE" >&2; exit 98; }
+  [ "$STATE" = "STAGED_TARGET" ] || { echo "Training target state verification failed: $STATE" >&2; exit 98; }
 )
 CODE=$?
 set -e
@@ -167,11 +203,12 @@ set -e
 if [ "$CODE" -ne 0 ]; then
   rollback
   assess
-  [ "$STATE" = "ABSENT" ] || fail "Deployment failed and rollback did not restore ABSENT state"
+  [ "$STATE" = "$ORIGINAL_STATE" ] || fail "Deployment failed and rollback did not restore predecessor state: expected=$ORIGINAL_STATE actual=$STATE"
   echo "TRAINING_DEPLOY_ROLLED_BACK code=$CODE" >&2
   exit "$CODE"
 fi
 
 rm -f "$BACKUP_CONFIG"
 rm -rf "$WORKSPACE_TMP"
+[ -z "$WORKSPACE_BACKUP" ] || rm -rf "$WORKSPACE_BACKUP"
 echo "TRAINING_DEPLOY_STAGE_PASS source=$SOURCE_REVISION plugin=$TARGET_PLUGIN_VERSION"

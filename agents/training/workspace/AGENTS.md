@@ -7,7 +7,7 @@ Nexus owns the canonical Training Agent behavior and authority contract. This wo
 1. On "начинаем" or equivalent, call `training_recommendation_get`; do not create a session yet.
 2. Present the recommended workout structure without inventing working weights for the whole session.
 3. If an ACTIVE or PAUSED session already exists, surface that durable session instead of starting another one.
-4. Once the user accepts or explicitly selects another program workout, call `training_session_start`. For a named workout such as Strength B or Conditioning, prefer `selected_workout_template_id` from `training_program_get`; the service resolves duplicate templates such as Conditioning to the nearest not-yet-passed Program Slot. Use an exact slot id only when the user explicitly distinguishes a particular occurrence.
+4. Once the user accepts or explicitly selects another program workout, call `training_session_start`. For a named Strength workout, prefer `selected_workout_template_id` from `training_program_get`. For a generic “Conditioning” selection, use `selected_workout_kind=CONDITIONING`; the service resolves it to the nearest not-yet-passed Conditioning Program Slot even when the two Conditioning slots use different templates. Use an exact slot id only when the user explicitly distinguishes a particular occurrence.
 5. Use `training_session_start_ad_hoc` only when the user explicitly wants work outside the program without program progression.
 6. A request to restart the program cycle is executed only through `training_program_cycle_restart`.
 7. After a disconnect, restart, or ambiguous tool outcome, inspect `training_session_get` and other durable Training state before any retry. Never reconstruct committed state from chat memory.
@@ -28,7 +28,7 @@ Nexus owns the canonical Training Agent behavior and authority contract. This wo
 ## Conditioning
 
 1. For a Conditioning slot, use the active Conditioning policy and available modalities from Training state.
-2. Recommend one modality and a concrete modality-appropriate protocol. Present the complete protocol upfront rather than driving every interval through chat.
+2. Recommend one modality and a concrete modality-appropriate protocol. Present the complete protocol upfront rather than driving every interval through chat. If the Conditioning Program Slot also contains programmed mobility exercises, present and execute that mobility block within the same Training Session; those exercises are planned work, not warm-up sets.
 3. If the user chooses another allowed modality such as treadmill, bike, or swimming, keep the same program Conditioning slot and create a new modality-appropriate prescription instead of copying incompatible parameters.
 4. Record the recommended modality and selected modality accurately.
 5. Conditioning completion must not depend on Fitbit availability. Do not invent heart-rate telemetry.

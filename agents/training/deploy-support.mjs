@@ -25,24 +25,41 @@ function requireString(value, label) {
   if (typeof value !== 'string' || !value) fail(`Invalid ${label}`);
   return value;
 }
+function validateArtifact(releasePath, identity, expectedOpenClaw, compat, label) {
+  if (identity?.id !== 'training' || identity?.name !== 'openclaw-plugin-training' || !/^[0-9]+\.[0-9]+\.[0-9]+$/.test(identity?.version ?? '')) fail(`Unexpected ${label} plugin identity`);
+  if (!/^[a-f0-9]{64}$/.test(identity?.sha256 ?? '') || !/^[a-f0-9]{64}$/.test(identity?.runtime_entry_sha256 ?? '')) fail(`Invalid ${label} plugin hashes`);
+  const artifact = path.resolve(path.dirname(releasePath), requireString(identity.artifact, `${label} plugin artifact`));
+  if (!fs.statSync(artifact, {throwIfNoEntry:false})?.isFile()) fail(`${label} plugin artifact missing`);
+  if (fileSha(artifact) !== identity.sha256) fail(`${label} plugin artifact checksum mismatch`);
+  let packageJson, manifest, runtimeEntry, manifestBytes;
+  try {
+    packageJson = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], {encoding:'utf8'}));
+    manifestBytes = execFileSync('tar', ['-xOf', artifact, 'package/openclaw.plugin.json']);
+    manifest = JSON.parse(manifestBytes.toString('utf8'));
+    runtimeEntry = execFileSync('tar', ['-xOf', artifact, 'package/dist/plugin.js']);
+  } catch { fail(`Unable to inspect ${label} plugin artifact`); }
+  if (packageJson.name !== identity.name || packageJson.version !== identity.version) fail(`${label} artifact package identity mismatch`);
+  if (packageJson?.openclaw?.build?.openclawVersion !== expectedOpenClaw) fail(`${label} artifact OpenClaw build mismatch`);
+  if (packageJson?.openclaw?.compat?.pluginApi !== compat) fail(`${label} artifact OpenClaw compat mismatch`);
+  if (manifest.id !== identity.id || manifest.version !== identity.version) fail(`${label} artifact manifest identity mismatch`);
+  if (sha256(runtimeEntry) !== identity.runtime_entry_sha256) fail(`${label} artifact runtime entry mismatch`);
+  return {artifact, manifestSha:sha256(manifestBytes)};
+}
 function release(root, releasePath, expectedOpenClaw) {
   const r = readJson(releasePath);
   if (r?.format !== 'training-agent-release-v1' || r?.deployment_mode !== 'stage-only') fail('Invalid Training release format/mode');
   const g = r.generation ?? {};
-  if (g.sqlite_schema !== 1 || g.typebox_version !== '1.3.15') fail('Unexpected Training generation');
+  if (g.sqlite_schema !== 2 || g.typebox_version !== '1.3.15') fail('Unexpected Training generation');
   if (g.openclaw_build_version !== expectedOpenClaw) fail('Training/OpenClaw release version mismatch');
   if (g.openclaw_compat !== '>=2026.9.5 <=2026.9.7') fail('Unexpected Training OpenClaw compatibility');
   const p = r.plugin ?? {};
-  if (p.id !== 'training' || p.name !== 'openclaw-plugin-training' || p.version !== '0.1.0') fail('Unexpected Training plugin identity');
-  if (!/^[a-f0-9]{64}$/.test(p.sha256 ?? '') || !/^[a-f0-9]{64}$/.test(p.runtime_entry_sha256 ?? '')) fail('Invalid Training plugin hashes');
   const src = r.source ?? {};
   if (!/^[a-f0-9]{40}$/.test(src.source_revision ?? '')) fail('Invalid Training source revision');
   const stage = r.stage_contract ?? {};
   if (JSON.stringify(stage) !== JSON.stringify({plugin_enabled:false,agent_registered:false,telegram_binding:false,database_created:false,training_authority_switch:false})) fail('Unexpected Training stage contract');
 
-  const artifact = path.resolve(path.dirname(releasePath), requireString(p.artifact, 'plugin artifact'));
-  if (!fs.statSync(artifact, {throwIfNoEntry:false})?.isFile()) fail('Training plugin artifact missing');
-  if (fileSha(artifact) !== p.sha256) fail('Training plugin artifact checksum mismatch');
+  const targetArtifact = validateArtifact(releasePath, p, expectedOpenClaw, g.openclaw_compat, 'Training target');
+  const artifact = targetArtifact.artifact;
 
   const workspace = src.workspace_sha256 ?? {};
   const expectedWorkspace = ['AGENTS.md','HEARTBEAT.md','IDENTITY.md','SOUL.md','USER.md'];
@@ -60,20 +77,26 @@ function release(root, releasePath, expectedOpenClaw) {
     if (!/^[a-f0-9]{64}$/.test(expected ?? '') || fileSha(path.join(root, rel)) !== expected) fail(`Training ${label} drift`);
   }
 
-  let packageJson, manifest, runtimeEntry;
-  try {
-    packageJson = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/package.json'], {encoding:'utf8'}));
-    manifest = JSON.parse(execFileSync('tar', ['-xOf', artifact, 'package/openclaw.plugin.json'], {encoding:'utf8'}));
-    runtimeEntry = execFileSync('tar', ['-xOf', artifact, 'package/dist/plugin.js']);
-  } catch { fail('Unable to inspect Training plugin artifact'); }
-  if (packageJson.name !== p.name || packageJson.version !== p.version) fail('Training artifact package identity mismatch');
-  if (packageJson?.openclaw?.build?.openclawVersion !== expectedOpenClaw) fail('Training artifact OpenClaw build mismatch');
-  if (packageJson?.openclaw?.compat?.pluginApi !== g.openclaw_compat) fail('Training artifact OpenClaw compat mismatch');
-  if (manifest.id !== p.id || manifest.version !== p.version) fail('Training artifact manifest identity mismatch');
-  if (sha256(runtimeEntry) !== p.runtime_entry_sha256) fail('Training artifact runtime entry mismatch');
+  if (targetArtifact.manifestSha !== src.plugin_manifest_sha256) fail('Training target artifact manifest/source mismatch');
   try { execFileSync('git', ['-C', root, 'cat-file', '-e', `${src.source_revision}^{commit}`], {stdio:'ignore'}); }
   catch { fail('Training source revision is unavailable in repository history'); }
-  return {r, artifact};
+
+  const predecessor = r.predecessor ?? null;
+  let predecessorArtifact = null;
+  if (predecessor) {
+    if (!/^[a-f0-9]{40}$/.test(predecessor.source_revision ?? '')) fail('Invalid Training predecessor source revision');
+    const expectedWorkspaceKeys = expectedWorkspace.slice().sort();
+    const predecessorWorkspace = predecessor.workspace_sha256 ?? {};
+    if (JSON.stringify(Object.keys(predecessorWorkspace).sort()) !== JSON.stringify(expectedWorkspaceKeys)) fail('Unexpected Training predecessor workspace release set');
+    for (const name of expectedWorkspace) if (!/^[a-f0-9]{64}$/.test(predecessorWorkspace[name] ?? '')) fail(`Invalid predecessor workspace hash: ${name}`);
+    if (!/^[a-f0-9]{64}$/.test(predecessor.plugin_manifest_sha256 ?? '')) fail('Invalid Training predecessor manifest hash');
+    const checked = validateArtifact(releasePath, predecessor.plugin ?? {}, expectedOpenClaw, g.openclaw_compat, 'Training predecessor');
+    if (checked.manifestSha !== predecessor.plugin_manifest_sha256) fail('Training predecessor artifact manifest mismatch');
+    predecessorArtifact = checked.artifact;
+    try { execFileSync('git', ['-C', root, 'cat-file', '-e', `${predecessor.source_revision}^{commit}`], {stdio:'ignore'}); }
+    catch { fail('Training predecessor source revision is unavailable in repository history'); }
+  }
+  return {r, artifact, predecessorArtifact};
 }
 
 const command = process.argv[2];
@@ -81,7 +104,7 @@ if (command === 'release-env') {
   const root = path.resolve(process.argv[3]);
   const releasePath = path.resolve(process.argv[4]);
   const expected = requireString(process.argv[5], 'expected OpenClaw version');
-  const {r, artifact} = release(root, releasePath, expected);
+  const {r, artifact, predecessorArtifact} = release(root, releasePath, expected);
   const env = {
     TARGET_PLUGIN_ID:r.plugin.id,
     TARGET_PLUGIN_NAME:r.plugin.name,
@@ -92,6 +115,11 @@ if (command === 'release-env') {
     TARGET_OPENCLAW_VERSION:r.generation.openclaw_build_version,
     SOURCE_REVISION:r.source.source_revision,
     ARTIFACT:artifact,
+    PREDECESSOR_PRESENT:r.predecessor ? '1' : '0',
+    PREDECESSOR_PLUGIN_VERSION:r.predecessor?.plugin?.version ?? '',
+    PREDECESSOR_RUNTIME_ENTRY_SHA:r.predecessor?.plugin?.runtime_entry_sha256 ?? '',
+    PREDECESSOR_SOURCE_REVISION:r.predecessor?.source_revision ?? '',
+    PREDECESSOR_ARTIFACT:predecessorArtifact ?? '',
   };
   for (const [key,value] of Object.entries(env)) process.stdout.write(`${key}=${shell(value)}\n`);
   process.exit(0);
@@ -124,15 +152,17 @@ if (command === 'plugin-env') {
   const version = requireString(process.argv[4], 'plugin version');
   const rootDir = path.resolve(process.argv[5]);
   const runtimeSha = requireString(process.argv[6], 'runtime SHA');
+  const prefix = process.argv[7] ?? 'TRAINING';
+  if (!/^[A-Z][A-Z0-9_]*$/.test(prefix)) fail('Invalid plugin-env prefix');
   let x;
   try { x = JSON.parse(fs.readFileSync(0, 'utf8')); } catch { fail('Invalid OpenClaw plugin-list JSON'); }
   const matches = (Array.isArray(x?.plugins) ? x.plugins : []).filter(p => p?.id === id);
   const p = matches[0];
   const runtimePath = path.join(rootDir, 'dist/plugin.js');
   const exact = matches.length === 1 && p?.version === version && p?.enabled === false && p?.status === 'disabled' && path.resolve(p?.rootDir ?? '') === rootDir && fs.statSync(runtimePath,{throwIfNoEntry:false})?.isFile() && fileSha(runtimePath) === runtimeSha;
-  process.stdout.write(`TRAINING_PLUGIN_COUNT=${shell(matches.length)}\n`);
-  process.stdout.write(`TRAINING_PLUGIN_EXACT=${shell(exact ? 1 : 0)}\n`);
-  process.stdout.write(`TRAINING_PLUGIN_ENABLED=${shell(p?.enabled === true ? 1 : 0)}\n`);
+  process.stdout.write(`${prefix}_PLUGIN_COUNT=${shell(matches.length)}\n`);
+  process.stdout.write(`${prefix}_PLUGIN_EXACT=${shell(exact ? 1 : 0)}\n`);
+  process.stdout.write(`${prefix}_PLUGIN_ENABLED=${shell(p?.enabled === true ? 1 : 0)}\n`);
   process.exit(0);
 }
 
@@ -140,8 +170,10 @@ if (command === 'workspace-exact') {
   const dir = path.resolve(process.argv[3]);
   const releasePath = path.resolve(process.argv[4]);
   const r = readJson(releasePath);
+  const selector = process.argv[5] ?? 'target';
+  if (!['target','predecessor'].includes(selector)) fail('Invalid workspace selector');
   if (!fs.statSync(dir,{throwIfNoEntry:false})?.isDirectory()) process.exit(1);
-  const expected = r?.source?.workspace_sha256 ?? {};
+  const expected = selector === 'predecessor' ? (r?.predecessor?.workspace_sha256 ?? {}) : (r?.source?.workspace_sha256 ?? {});
   const actual = fs.readdirSync(dir).filter(name => fs.statSync(path.join(dir,name)).isFile()).sort();
   if (JSON.stringify(actual) !== JSON.stringify(Object.keys(expected).sort())) process.exit(1);
   for (const [name,hash] of Object.entries(expected)) if (fileSha(path.join(dir,name)) !== hash) process.exit(1);

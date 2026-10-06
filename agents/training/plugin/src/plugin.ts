@@ -153,9 +153,13 @@ const prescribedSet = Type.Object({
   candidate_reps: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
   candidate_load_kg: Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()]),
   candidate_rir: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+  candidate_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 86400 }), Type.Null()])),
+  candidate_distance_m: Type.Optional(Type.Union([Type.Number({ exclusiveMinimum: 0, maximum: 1000000 }), Type.Null()])),
   target_reps: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
   target_load_kg: Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()]),
   target_rir: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+  target_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 86400 }), Type.Null()])),
+  target_distance_m: Type.Optional(Type.Union([Type.Number({ exclusiveMinimum: 0, maximum: 1000000 }), Type.Null()])),
   prescription_reason: Type.Optional(Type.Union([
     Type.String({ maxLength: 500 }),
     Type.Null(),
@@ -164,9 +168,11 @@ const prescribedSet = Type.Object({
 
 const actualSet = Type.Object({
   set_number: Type.Integer({ minimum: 1, maximum: 20 }),
-  reps: Type.Integer({ minimum: 0, maximum: 200 }),
+  reps: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
   load_kg: Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()]),
   rir: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+  duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 86400 }), Type.Null()])),
+  distance_m: Type.Optional(Type.Union([Type.Number({ exclusiveMinimum: 0, maximum: 1000000 }), Type.Null()])),
   notes: Type.Optional(Type.Union([
     Type.String({ maxLength: 500 }),
     Type.Null(),
@@ -228,6 +234,7 @@ const entry = defineToolPlugin({
       parameters: Type.Object({
         selected_program_slot_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
         selected_workout_template_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        selected_workout_kind: Type.Optional(Type.Literal("CONDITIONING")),
         timezone_at_start: Type.String({ minLength: 1, maxLength: 100 }),
         local_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
       }, { additionalProperties: false }),
@@ -268,6 +275,8 @@ const entry = defineToolPlugin({
           target_reps_max: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
           target_rir_min: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
           target_rir_max: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+          target_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 86400 }), Type.Null()])),
+          target_distance_m: Type.Optional(Type.Union([Type.Number({ exclusiveMinimum: 0, maximum: 1000000 }), Type.Null()])),
           progression_policy_json: Type.Optional(Type.String({ maxLength: 2000 })),
         }, { additionalProperties: false }), { minItems: 1, maxItems: 20 })),
       }, { additionalProperties: false }),
@@ -518,20 +527,21 @@ const entry = defineToolPlugin({
           Type.Literal("reps"),
           Type.Literal("load_kg"),
           Type.Literal("rir"),
+          Type.Literal("duration_sec"),
+          Type.Literal("distance_m"),
         ]),
-        value: Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()]),
+        value: Type.Union([Type.Number({ minimum: 0, maximum: 1000000 }), Type.Null()]),
         reason: Type.Optional(Type.String({ maxLength: 500 })),
       }, { additionalProperties: false }),
       mutate: true,
       execute: (params, config) =>
         withDb(config, (db) => {
-          if (params.field === "reps" && params.value === null) {
-            throw new Error("reps correction cannot be null");
-          }
           const patch =
-            params.field === "reps" ? { reps: Number(params.value) }
+            params.field === "reps" ? { reps: params.value == null ? null : Number(params.value) }
             : params.field === "load_kg" ? { load_kg: params.value }
-            : { rir: params.value };
+            : params.field === "rir" ? { rir: params.value }
+            : params.field === "duration_sec" ? { duration_sec: params.value == null ? null : Number(params.value) }
+            : { distance_m: params.value };
           return correctSetResult(db, params.session_set_id, patch, params.reason);
         }),
     })),
@@ -638,6 +648,8 @@ const entry = defineToolPlugin({
               target_reps_max: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()])),
               target_rir_min: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()])),
               target_rir_max: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()])),
+              target_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 86400 }), Type.Null()])),
+              target_distance_m: Type.Optional(Type.Union([Type.Number({ exclusiveMinimum: 0, maximum: 1000000 }), Type.Null()])),
               progression_policy_json: Type.Optional(Type.String({ minLength: 2, maxLength: 2000 })),
             }, { additionalProperties: false }),
           }, { additionalProperties: false }),

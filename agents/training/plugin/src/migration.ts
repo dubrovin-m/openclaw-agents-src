@@ -10,6 +10,8 @@ type StrengthTemplateExercise = {
   target_reps_max?: number | null;
   target_rir_min?: number | null;
   target_rir_max?: number | null;
+  target_duration_sec?: number | null;
+  target_distance_m?: number | null;
   progression_policy_json?: string;
   notes?: string | null;
 };
@@ -100,6 +102,8 @@ export type NormalizedTrainingMigrationV1 = {
         actual_reps?: number | null;
         actual_load_kg?: number | null;
         actual_rir?: number | null;
+        actual_duration_sec?: number | null;
+        actual_distance_m?: number | null;
         notes?: string | null;
       }>;
       notes?: string | null;
@@ -134,6 +138,14 @@ function positiveInt(value: unknown, field: string): number {
 function nullableNumber(value: unknown, field: string): number | null {
   if (value == null) return null;
   if (typeof value !== "number" || !Number.isFinite(value) || value < 0) {
+    throw new Error(`Invalid ${field}`);
+  }
+  return value;
+}
+
+function nullablePositiveNumber(value: unknown, field: string): number | null {
+  if (value == null) return null;
+  if (typeof value !== "number" || !Number.isFinite(value) || value <= 0) {
     throw new Error(`Invalid ${field}`);
   }
   return value;
@@ -295,28 +307,30 @@ export function importNormalizedTraining(
         );
         recordSource("workout_template", templateSourceId, "workout_template", templateId);
 
-        if (template.workout_kind === "STRENGTH") {
-          for (const exercise of template.strength_exercises ?? []) {
-            const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "template exercise exercise_source_id"));
-            if (!exerciseId) throw new Error("Template exercise references unknown migrated exercise");
-            const targetId = newId("te");
-            db.prepare(`INSERT INTO template_exercises(
-              template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
-              target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,notes
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
-              targetId, templateId, exerciseId,
-              positiveInt(exercise.sequence, "template exercise sequence"),
-              positiveInt(exercise.target_sets, "template exercise target_sets"),
-              nullableNumber(exercise.target_reps_min, "target_reps_min"),
-              nullableNumber(exercise.target_reps_max, "target_reps_max"),
-              nullableNumber(exercise.target_rir_min, "target_rir_min"),
-              nullableNumber(exercise.target_rir_max, "target_rir_max"),
-              validateJsonObject(exercise.progression_policy_json, "exercise progression_policy_json"),
-              exercise.notes ?? null
-            );
-            recordSource("template_exercise", exercise.source_id, "template_exercise", targetId);
-          }
-        } else {
+        for (const exercise of template.strength_exercises ?? []) {
+          const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "template exercise exercise_source_id"));
+          if (!exerciseId) throw new Error("Template exercise references unknown migrated exercise");
+          const targetId = newId("te");
+          db.prepare(`INSERT INTO template_exercises(
+            template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
+            target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
+            progression_policy_json,notes
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+            targetId, templateId, exerciseId,
+            positiveInt(exercise.sequence, "template exercise sequence"),
+            positiveInt(exercise.target_sets, "template exercise target_sets"),
+            nullableNumber(exercise.target_reps_min, "target_reps_min"),
+            nullableNumber(exercise.target_reps_max, "target_reps_max"),
+            nullableNumber(exercise.target_rir_min, "target_rir_min"),
+            nullableNumber(exercise.target_rir_max, "target_rir_max"),
+            nullablePositiveNumber(exercise.target_duration_sec, "target_duration_sec"),
+            nullablePositiveNumber(exercise.target_distance_m, "target_distance_m"),
+            validateJsonObject(exercise.progression_policy_json, "exercise progression_policy_json"),
+            exercise.notes ?? null
+          );
+          recordSource("template_exercise", exercise.source_id, "template_exercise", targetId);
+        }
+        if (template.workout_kind === "CONDITIONING") {
           const cp = template.conditioning_policy;
           if (!cp) throw new Error("Conditioning template requires a normalized policy");
           const policyId = newId("cp");
@@ -420,42 +434,48 @@ export function importNormalizedTraining(
       );
       recordSource("training_session", sourceId, "training_session", sessionId);
 
-      if (session.session_kind === "STRENGTH") {
-        for (const exercise of session.strength_exercises ?? []) {
-          const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "session exercise exercise_source_id"));
-          if (!exerciseId) throw new Error("Session exercise references unknown migrated exercise");
-          const sessionExerciseId = newId("sex");
-          db.prepare(`INSERT INTO session_exercises(
-            session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
-            planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,
-            status,completed_at,notes
-          ) VALUES(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,'{}',?,?,?)`).run(
-            sessionExerciseId, sessionId, exerciseId,
-            positiveInt(exercise.sequence, "session exercise sequence"),
-            exercise.status,
-            endedAt,
-            exercise.notes ?? null
-          );
-          recordSource("session_exercise", exercise.source_id, "session_exercise", sessionExerciseId);
+      for (const exercise of session.strength_exercises ?? []) {
+        const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "session exercise exercise_source_id"));
+        if (!exerciseId) throw new Error("Session exercise references unknown migrated exercise");
+        const sessionExerciseId = newId("sex");
+        db.prepare(`INSERT INTO session_exercises(
+          session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
+          planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,target_duration_sec,target_distance_m,
+          progression_policy_json,status,completed_at,notes
+        ) VALUES(?,?,NULL,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,'{}',?,?,?)`).run(
+          sessionExerciseId, sessionId, exerciseId,
+          positiveInt(exercise.sequence, "session exercise sequence"),
+          exercise.status,
+          endedAt,
+          exercise.notes ?? null
+        );
+        recordSource("session_exercise", exercise.source_id, "session_exercise", sessionExerciseId);
 
-          for (const set of exercise.actual_sets ?? []) {
-            const setId = newId("set");
-            const status = set.status;
-            const reps = status === "SKIPPED" ? null : nullableNumber(set.actual_reps, "actual_reps");
-            const load = status === "SKIPPED" ? null : nullableNumber(set.actual_load_kg, "actual_load_kg");
-            const rir = status === "SKIPPED" ? null : nullableNumber(set.actual_rir, "actual_rir");
-            db.prepare(`INSERT INTO session_sets(
-              session_set_id,session_exercise_id,set_number,
-              candidate_reps,candidate_load_kg,candidate_rir,target_reps,target_load_kg,target_rir,
-              prescription_reason,actual_reps,actual_load_kg,actual_rir,status,notes
-            ) VALUES(?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?)`).run(
-              setId, sessionExerciseId, positiveInt(set.set_number, "set_number"),
-              reps, load, rir, status, set.notes ?? null
-            );
-            recordSource("session_set", set.source_id, "session_set", setId);
+        for (const set of exercise.actual_sets ?? []) {
+          const setId = newId("set");
+          const status = set.status;
+          const reps = status === "SKIPPED" ? null : nullableNumber(set.actual_reps, "actual_reps");
+          const load = status === "SKIPPED" ? null : nullableNumber(set.actual_load_kg, "actual_load_kg");
+          const rir = status === "SKIPPED" ? null : nullableNumber(set.actual_rir, "actual_rir");
+          const duration = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_duration_sec, "actual_duration_sec");
+          const distance = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_distance_m, "actual_distance_m");
+          if (status === "COMPLETED" && reps == null && duration == null && distance == null) {
+            throw new Error("Completed migrated set requires reps, duration, or distance");
           }
+          db.prepare(`INSERT INTO session_sets(
+            session_set_id,session_exercise_id,set_number,
+            candidate_reps,candidate_load_kg,candidate_rir,candidate_duration_sec,candidate_distance_m,
+            target_reps,target_load_kg,target_rir,target_duration_sec,target_distance_m,prescription_reason,
+            actual_reps,actual_load_kg,actual_rir,actual_duration_sec,actual_distance_m,status,notes
+          ) VALUES(?,?,?,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,NULL,?,?,?,?,?,?,?)`).run(
+            setId, sessionExerciseId, positiveInt(set.set_number, "set_number"),
+            reps, load, rir, duration, distance, status, set.notes ?? null
+          );
+          recordSource("session_set", set.source_id, "session_set", setId);
         }
-      } else {
+      }
+
+      if (session.session_kind === "CONDITIONING") {
         const conditioning = session.conditioning;
         if (!conditioning) throw new Error("Migrated Conditioning session requires normalized Conditioning facts");
         const modalityId = ensureModality(
