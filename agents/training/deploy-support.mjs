@@ -49,7 +49,7 @@ function release(root, releasePath, expectedOpenClaw) {
   const r = readJson(releasePath);
   if (r?.format !== 'training-agent-release-v1' || r?.deployment_mode !== 'stage-only') fail('Invalid Training release format/mode');
   const g = r.generation ?? {};
-  if (g.sqlite_schema !== 1 || g.typebox_version !== '1.3.15') fail('Unexpected Training generation');
+  if (g.sqlite_schema !== 2 || g.typebox_version !== '1.3.15') fail('Unexpected Training generation');
   if (g.openclaw_build_version !== expectedOpenClaw) fail('Training/OpenClaw release version mismatch');
   if (g.openclaw_compat !== '>=2026.9.5 <=2026.9.7') fail('Unexpected Training OpenClaw compatibility');
   const p = r.plugin ?? {};
