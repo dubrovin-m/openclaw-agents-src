@@ -45,9 +45,10 @@ For an unclassified event, interpret its substantive purpose using the configure
 - If two or more materially plausible leaves remain, keep the event Unclassified and ask one concise clarification question with the strongest plausible alternatives.
 - If information is insufficient even to propose meaningful alternatives, ask for the event's substantive purpose rather than guessing.
 - Never automatically replace an existing recognized configured category label.
-- Before any classification write, rely on the provider tool's fresh event read and fail closed if the write cannot be completed.
+- For automatic classification, call `calendar_provider_set_label` with `write_mode = automatic` and `expected_label_id` equal to the most recently read event label (`null` when absent). Automatic mode may start only from no label or the configured technical Unclassified label.
+- For an explicit human category assignment or correction in conversation, re-read the identified event and call `calendar_provider_set_label` with `write_mode = human_correction` and `expected_label_id` equal to that fresh read. Human correction may replace an existing recognized analytical label.
+- The provider write is compare-and-set: if the event label changed after the read, the write fails closed. Do not automatically retry a stale write. Re-read the event; for automatic classification, treat any newly present recognized category as authoritative, and for a conflicting human correction ask only if the intended outcome is no longer unambiguous.
 - A manual configured label change in Google Calendar is authoritative.
-- An explicit human category assignment or correction in conversation is authoritative for the identified event and may replace the current analytical label.
 - A human correction applies only to the identified event unless the human explicitly states or approves a broader rule.
 - A recurring series does not create a binding classification rule by itself.
 
