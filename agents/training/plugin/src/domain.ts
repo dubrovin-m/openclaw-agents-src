@@ -1614,3 +1614,198 @@ export function applyApprovedProgramChange(
     };
   });
 }
+
+export function recordTrainingFeedback(
+  db: DatabaseSync,
+  params: {
+    training_session_id: string;
+    session_exercise_id?: string | null;
+    raw_text: string;
+  }
+) {
+  return withTransaction(db, () => {
+    const session = one(
+      db,
+      "SELECT training_session_id FROM training_sessions WHERE training_session_id=?",
+      params.training_session_id
+    );
+    if (!session) throw new Error("Training session not found");
+    if (params.session_exercise_id) {
+      const exercise = one<{training_session_id:string}>(
+        db,
+        "SELECT training_session_id FROM session_exercises WHERE session_exercise_id=?",
+        params.session_exercise_id
+      );
+      if (!exercise || exercise.training_session_id !== params.training_session_id) {
+        throw new Error("Feedback exercise does not belong to the Training Session");
+      }
+    }
+    const text = params.raw_text.trim();
+    if (!text || text.length > 4000) throw new Error("Invalid training feedback text");
+    const feedbackId = newId("feedback");
+    const now = nowIso();
+    db.prepare(`INSERT INTO training_feedback(
+      feedback_id,training_session_id,session_exercise_id,
+      source_provider,source_chat_id,source_message_id,raw_text,created_at
+    ) VALUES(?,?,?,NULL,NULL,NULL,?,?)`).run(
+      feedbackId, params.training_session_id, params.session_exercise_id ?? null, text, now
+    );
+    return one<Row>(db, "SELECT * FROM training_feedback WHERE feedback_id=?", feedbackId);
+  });
+}
+
+export function recordObservation(
+  db: DatabaseSync,
+  params: {
+    kind: string;
+    subject_type: string;
+    subject_id?: string | null;
+    statement: string;
+    structured_value?: Record<string, unknown>;
+    persistence_class: "SITUATIONAL" | "POTENTIALLY_PERSISTENT" | "EXPLICITLY_PERSISTENT";
+    source_type: "USER_CHAT" | "PERFORMANCE" | "AGENT_ANALYSIS" | "MIGRATION";
+    source_feedback_id?: string | null;
+    source_session_id?: string | null;
+    observed_at?: string;
+  }
+) {
+  return withTransaction(db, () => {
+    const statement = params.statement.trim();
+    if (!statement || statement.length > 4000) throw new Error("Invalid observation statement");
+    if (params.source_type === "USER_CHAT" && !params.source_feedback_id) {
+      throw new Error("USER_CHAT observation requires source feedback provenance");
+    }
+    if (params.source_feedback_id) {
+      const feedback = one<{training_session_id:string}>(
+        db,
+        "SELECT training_session_id FROM training_feedback WHERE feedback_id=?",
+        params.source_feedback_id
+      );
+      if (!feedback) throw new Error("Observation source feedback not found");
+      if (params.source_session_id && feedback.training_session_id !== params.source_session_id) {
+        throw new Error("Observation feedback/session provenance mismatch");
+      }
+    }
+    if (params.source_session_id) {
+      const session = one(
+        db,
+        "SELECT training_session_id FROM training_sessions WHERE training_session_id=?",
+        params.source_session_id
+      );
+      if (!session) throw new Error("Observation source session not found");
+    }
+    const observationId = newId("obs");
+    const now = nowIso();
+    db.prepare(`INSERT INTO observations(
+      observation_id,kind,subject_type,subject_id,statement,structured_value_json,persistence_class,
+      source_type,source_feedback_id,source_session_id,observed_at,status,created_at
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'ACTIVE',?)`).run(
+      observationId, params.kind, params.subject_type, params.subject_id ?? null, statement,
+      JSON.stringify(params.structured_value ?? {}), params.persistence_class, params.source_type,
+      params.source_feedback_id ?? null, params.source_session_id ?? null,
+      params.observed_at ?? now, now
+    );
+    return one<Row>(db, "SELECT * FROM observations WHERE observation_id=?", observationId);
+  });
+}
+
+export function upsertLearnedItem(
+  db: DatabaseSync,
+  params: {
+    learned_item_id?: string;
+    kind: string;
+    subject_type: string;
+    subject_id?: string | null;
+    statement: string;
+    value?: Record<string, unknown>;
+    status: "HYPOTHESIS" | "ACTIVE" | "SUPERSEDED" | "REJECTED";
+    promotion_basis?: string | null;
+    evidence: Array<{ observation_id: string; relation: "SUPPORTS" | "CONTRADICTS" }>;
+  }
+) {
+  return withTransaction(db, () => {
+    if (!params.evidence.length) throw new Error("Learned item requires evidence");
+    const evidenceRows = params.evidence.map((item) => {
+      const observation = one<{observation_id:string; source_type:string; status:string}>(
+        db,
+        "SELECT observation_id,source_type,status FROM observations WHERE observation_id=?",
+        item.observation_id
+      );
+      if (!observation || observation.status !== "ACTIVE") {
+        throw new Error(`Learning evidence unavailable: ${item.observation_id}`);
+      }
+      return { ...item, source_type: observation.source_type };
+    });
+    if (
+      params.status === "ACTIVE" &&
+      !evidenceRows.some((item) =>
+        item.relation === "SUPPORTS" &&
+        ["USER_CHAT","PERFORMANCE","MIGRATION"].includes(item.source_type)
+      )
+    ) {
+      throw new Error("ACTIVE learning requires independent supporting evidence");
+    }
+
+    const now = nowIso();
+    const id = params.learned_item_id ?? newId("learn");
+    const existing = one<Row>(db, "SELECT * FROM learned_items WHERE learned_item_id=?", id);
+    const statement = params.statement.trim();
+    if (!statement || statement.length > 4000) throw new Error("Invalid learned-item statement");
+
+    if (existing) {
+      db.prepare(`UPDATE learned_items
+        SET kind=?,subject_type=?,subject_id=?,statement=?,value_json=?,status=?,
+            promotion_basis=?,updated_at=?,last_confirmed_at=CASE WHEN ?='ACTIVE' THEN ? ELSE last_confirmed_at END
+        WHERE learned_item_id=?`).run(
+        params.kind, params.subject_type, params.subject_id ?? null, statement,
+        JSON.stringify(params.value ?? {}), params.status, params.promotion_basis ?? null,
+        now, params.status, now, id
+      );
+      db.prepare("DELETE FROM learning_evidence WHERE learned_item_id=?").run(id);
+    } else {
+      db.prepare(`INSERT INTO learned_items(
+        learned_item_id,kind,subject_type,subject_id,statement,value_json,status,promotion_basis,
+        created_at,updated_at,last_confirmed_at
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+        id, params.kind, params.subject_type, params.subject_id ?? null, statement,
+        JSON.stringify(params.value ?? {}), params.status, params.promotion_basis ?? null,
+        now, now, params.status === "ACTIVE" ? now : null
+      );
+    }
+
+    const insert = db.prepare(
+      "INSERT INTO learning_evidence(learned_item_id,observation_id,relation,created_at) VALUES(?,?,?,?)"
+    );
+    for (const item of params.evidence) insert.run(id, item.observation_id, item.relation, now);
+
+    return {
+      item: one<Row>(db, "SELECT * FROM learned_items WHERE learned_item_id=?", id),
+      evidence: all<Row>(
+        db,
+        `SELECT le.observation_id,le.relation,o.source_type,o.statement
+           FROM learning_evidence le JOIN observations o ON o.observation_id=le.observation_id
+          WHERE le.learned_item_id=? ORDER BY le.created_at,o.observation_id`,
+        id
+      ),
+    };
+  });
+}
+
+export function getRelevantLearning(
+  db: DatabaseSync,
+  params: { subject_type: string; subject_id?: string | null; include_hypotheses?: boolean }
+) {
+  return all<Row>(
+    db,
+    `SELECT li.*,
+            (SELECT count(*) FROM learning_evidence le WHERE le.learned_item_id=li.learned_item_id AND le.relation='SUPPORTS') AS supporting_evidence_count,
+            (SELECT count(*) FROM learning_evidence le WHERE le.learned_item_id=li.learned_item_id AND le.relation='CONTRADICTS') AS contradicting_evidence_count
+       FROM learned_items li
+      WHERE li.subject_type=?
+        AND ((? IS NULL AND li.subject_id IS NULL) OR li.subject_id=?)
+        AND li.status IN (${params.include_hypotheses ? "'ACTIVE','HYPOTHESIS'" : "'ACTIVE'"})
+      ORDER BY CASE li.status WHEN 'ACTIVE' THEN 0 ELSE 1 END,li.updated_at DESC`,
+    params.subject_type, params.subject_id ?? null, params.subject_id ?? null
+  );
+}
+
