@@ -80,6 +80,8 @@ export declare function createGoogleCalendarProvider(deps?: GoogleCalendarProvid
     setLabel(configValue: unknown, params: {
         event_id: string;
         label_id: string;
+        expected_label_id: string | null;
+        write_mode: "automatic" | "human_correction";
     }): Promise<{
         changed: boolean;
         event_id: string;

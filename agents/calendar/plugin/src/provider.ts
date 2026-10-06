@@ -221,6 +221,17 @@ function validateConfiguredLabel(config: CalendarConfig, labelId: string) {
   return id;
 }
 
+function validateExpectedLabel(config: CalendarConfig, labelId: string | null) {
+  if (labelId === null) return null;
+  const id = bounded(labelId, "expected_label_id", 1024);
+  const allowed = new Set([
+    ...config.leaves.map((leaf) => leaf.providerLabel.id),
+    config.unclassifiedLabel.id,
+  ]);
+  if (!allowed.has(id)) throw new Error("expected_label_id is not part of the effective analytical configuration.");
+  return id;
+}
+
 async function listProviderEvents(
   deps: GoogleCalendarProviderDeps,
   config: CalendarConfig,
@@ -376,9 +387,29 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
       return { changed, calendar_id: current.id ?? config.designatedCalendar, labels: configured };
     },
 
-    async setLabel(configValue: unknown, params: { event_id: string; label_id: string }) {
+    async setLabel(
+      configValue: unknown,
+      params: {
+        event_id: string;
+        label_id: string;
+        expected_label_id: string | null;
+        write_mode: "automatic" | "human_correction";
+      },
+    ) {
       const config = parseCalendarConfig(configValue);
       const labelId = validateConfiguredLabel(config, params.label_id);
+      const expectedLabelId = validateExpectedLabel(config, params.expected_label_id);
+      if (params.write_mode !== "automatic" && params.write_mode !== "human_correction") {
+        throw new Error("write_mode must be automatic or human_correction.");
+      }
+      if (
+        params.write_mode === "automatic"
+        && expectedLabelId !== null
+        && expectedLabelId !== config.unclassifiedLabel.id
+      ) {
+        throw new Error("Automatic Calendar classification may start only from no label or technical Unclassified.");
+      }
+
       const resolved = await resolveEventReference(deps, config, params.event_id);
       const path = eventPath(config, resolved.id);
       const current = await requestJson<ProviderEvent>(deps, apiUrl(path));
@@ -389,6 +420,10 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
           label_id: labelId,
           etag: current.etag,
         };
+      }
+      const actualLabelId = current.eventLabelId ?? null;
+      if (actualLabelId !== expectedLabelId) {
+        throw new Error("Calendar event label changed since the classification read; re-read before any new write.");
       }
       const headers = new Headers();
       if (current.etag) headers.set("if-match", current.etag);

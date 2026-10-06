@@ -28,8 +28,8 @@ function baseCalendarConfig(value: unknown) {
   return base;
 }
 function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | undefined) {
-  if (!params || Object.keys(params).sort().join(",") !== "event_id,label_id") {
-    return block("Calendar classification write accepts exactly event_id and label_id.");
+  if (!params || Object.keys(params).sort().join(",") !== "event_id,expected_label_id,label_id,write_mode") {
+    return block("Calendar classification write accepts exactly event_id, label_id, expected_label_id, and write_mode.");
   }
   if (typeof params.event_id !== "string" || !EVENT_REFERENCE_PATTERN.test(params.event_id)) {
     return block("Calendar classification write requires one deterministic Calendar event reference.");
@@ -37,9 +37,23 @@ function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | 
   if (typeof params.label_id !== "string" || params.label_id.trim().length === 0 || params.label_id.length > 1024) {
     return block("Calendar classification write requires one bounded label_id.");
   }
-  const allowedLabels = new Set(config.leaves.map((leaf) => leaf.providerLabel.id));
-  if (!allowedLabels.has(params.label_id)) {
+  const categoryLabels = new Set(config.leaves.map((leaf) => leaf.providerLabel.id));
+  if (!categoryLabels.has(params.label_id)) {
     return block("Calendar classification write label_id is not part of the effective analytical configuration.");
+  }
+  const expected = params.expected_label_id;
+  if (expected !== null && (typeof expected !== "string" || expected.trim().length === 0 || expected.length > 1024)) {
+    return block("Calendar classification write expected_label_id must be null or one bounded configured analytical label.");
+  }
+  const expectedLabels = new Set([...categoryLabels, config.unclassifiedLabel.id]);
+  if (typeof expected === "string" && !expectedLabels.has(expected)) {
+    return block("Calendar classification write expected_label_id is not part of the effective analytical configuration.");
+  }
+  if (params.write_mode !== "automatic" && params.write_mode !== "human_correction") {
+    return block("Calendar classification write requires write_mode automatic or human_correction.");
+  }
+  if (params.write_mode === "automatic" && expected !== null && expected !== config.unclassifiedLabel.id) {
+    return block("Automatic Calendar classification may start only from no label or technical Unclassified.");
   }
   return undefined;
 }

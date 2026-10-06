@@ -106,6 +106,8 @@ const providerEventParameters = Type.Object({
 const providerSetLabelParameters = Type.Object({
   event_id: eventReferenceSchema,
   label_id: Type.String({ minLength: 1, maxLength: 1024 }),
+  expected_label_id: Type.Union([Type.String({ minLength: 1, maxLength: 1024 }), Type.Null()]),
+  write_mode: Type.Union([Type.Literal("automatic"), Type.Literal("human_correction")]),
 }, { additionalProperties: false });
 const ruleProposalParameters = Type.Object({
   action: Type.Union([Type.Literal("create"), Type.Literal("replace"), Type.Literal("delete")]),
@@ -296,7 +298,7 @@ const entry = defineToolPlugin({
     tool(directOnlyTool({
       name: "calendar_provider_set_label",
       label: "Set Calendar analytical label",
-      description: "Assign one configured analytical event label to the deterministic event reference returned by Calendar reads after explicit human confirmation, without changing title, time, attendees, RSVP, description, or sending guest updates.",
+      description: "Set one configured analytical event label with compare-and-set protection. Pass expected_label_id from the latest event read (null when absent). Use write_mode=automatic only for an unlabeled or technical-Unclassified event; use write_mode=human_correction only for an explicit human correction. Concurrent label changes fail closed. The write never changes title, time, attendees, RSVP, description, or sends guest updates.",
       parameters: providerSetLabelParameters,
       optional: true,
       execute: async (params, config) => provider.setLabel(operationalConfig(config).baseValue, params),
