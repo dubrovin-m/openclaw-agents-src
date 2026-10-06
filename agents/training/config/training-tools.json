@@ -23,7 +23,11 @@
     "training_session_abandon",
     "training_set_correct",
     "training_program_change_propose",
-    "training_program_change_apply"
+    "training_program_change_apply",
+    "training_feedback_record",
+    "training_observation_record",
+    "training_learning_get",
+    "training_learning_upsert"
   ],
   "deny": [
     "read",
