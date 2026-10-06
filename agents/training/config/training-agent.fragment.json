@@ -1,0 +1,6 @@
+{
+  "id": "training",
+  "workspace": "/home/dubrovin/.openclaw/workspace-training",
+  "agentDir": "/home/dubrovin/.openclaw/agents/training/agent",
+  "skills": []
+}

@@ -1,0 +1,121 @@
+name: Training Agent CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+    types: [opened, synchronize, reopened]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    name: Training Agent gate
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      npm_config_audit: "false"
+      npm_config_fund: "false"
+      npm_config_update_notifier: "false"
+    steps:
+      - name: Checkout exact source revision
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          ref: ${{ github.event.pull_request.head.sha || github.sha }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Read runtime requirements
+        id: runtime
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          import json, os, re
+          c=json.load(open('runtime-contract.json'))
+          q=json.load(open('openclaw-qualification.json'))
+          node_version=str(c.get('node',{}).get('ci_version',''))
+          openclaw_version=str(q.get('version',''))
+          version_re=r'[0-9]+\.[0-9]+\.[0-9]+'
+          if not re.fullmatch(version_re,node_version):
+              raise SystemExit('invalid node.ci_version')
+          if q.get('format')!='openclaw-qualification-target-v1' or not re.fullmatch(version_re,openclaw_version):
+              raise SystemExit('invalid OpenClaw qualification target')
+          with open(os.environ['GITHUB_OUTPUT'],'a',encoding='utf-8') as out:
+              out.write(f'node_version={node_version}\n')
+              out.write(f'openclaw_version={openclaw_version}\n')
+          PY
+
+      - name: Set up Node.js
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+        with:
+          node-version: ${{ steps.runtime.outputs.node_version }}
+
+      - name: Validate repository runtime requirements
+        run: |
+          set -euo pipefail
+          node shared/runtime-contract/runtime-contract.mjs validate runtime-contract.json
+          node shared/runtime-contract/runtime-contract.mjs openclaw-version openclaw-qualification.json
+          node shared/runtime-contract/runtime-contract.mjs repo-check .
+          node --test shared/runtime-contract/runtime-contract.test.mjs
+
+      - name: Validate Training source boundary
+        run: bash agents/training/validate.sh
+
+      - name: Install Training plugin dependencies
+        working-directory: agents/training/plugin
+        run: npm ci
+
+      - name: Qualify pinned OpenClaw Telegram idempotency boundary
+        working-directory: agents/training/plugin
+        run: node ../tests/qualified-openclaw-idempotency.mjs ./node_modules/openclaw/dist
+
+      - name: Test and build Training plugin
+        working-directory: agents/training/plugin
+        run: |
+          set -euo pipefail
+          npm test
+          export OPENCLAW_STATE_DIR="$RUNNER_TEMP/openclaw-training-build-state"
+          mkdir -p "$OPENCLAW_STATE_DIR"
+          npm run plugin:build
+          npm run plugin:validate
+
+      - name: Qualify normalized Training migration
+        working-directory: agents/training/plugin
+        run: |
+          set -euo pipefail
+          db="$RUNNER_TEMP/training-migration.sqlite3"
+          fixture="$(realpath ../migration/fixtures/synthetic.json)"
+          node ../migration/import.mjs "$db" "$fixture" > "$RUNNER_TEMP/migration-first.json"
+          node ../migration/import.mjs "$db" "$fixture" > "$RUNNER_TEMP/migration-replay.json"
+          node -e 'const fs=require("fs");const r=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(r.migration.replayed!==true||r.health.integrity!=="ok")process.exit(1)' "$RUNNER_TEMP/migration-replay.json"
+
+      - name: Qualify Training provider-independent recovery
+        run: bash agents/training/recovery/tests/recovery.sh
+
+      - name: Validate against qualified OpenClaw host
+        working-directory: agents/training/plugin
+        env:
+          OPENCLAW_QUALIFICATION_VERSION: ${{ steps.runtime.outputs.openclaw_version }}
+        run: |
+          set -euo pipefail
+          root="$RUNNER_TEMP/openclaw-training-qualification"
+          npm install --prefix "$root" --no-save --package-lock=false "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
+          export OPENCLAW_STATE_DIR="$RUNNER_TEMP/openclaw-training-qualified-state"
+          mkdir -p "$OPENCLAW_STATE_DIR"
+          "$root/node_modules/.bin/openclaw" plugins validate --root . --entry ./dist/plugin.js
+
+      - name: Verify generated metadata remains frozen
+        run: |
+          set -euo pipefail
+          git diff --exit-code -- \
+            agents/training/plugin/package.json \
+            agents/training/plugin/package-lock.json \
+            agents/training/plugin/openclaw.plugin.json
