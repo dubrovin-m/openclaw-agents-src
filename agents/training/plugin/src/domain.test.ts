@@ -22,11 +22,13 @@ import {
   restartProgramCycle,
   resumeExercise,
   searchExercises,
+  skipExercise,
   resumeSession,
   startAdHocSession,
   startProgramSession,
   substituteExercise,
   upsertLearnedItem,
+  voidSession,
 } from "./domain.js";
 import { nowIso, openTrainingStore } from "./store.js";
 
@@ -819,6 +821,133 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       db.prepare("INSERT INTO exercise_aliases VALUES('alias_press','ex_b','OHP')").run();
       expect((searchExercises(db, "press") as any[]).map((x) => x.exercise_id)).toContain("ex_b");
       expect((searchExercises(db, "ohp") as any[]).map((x) => x.exercise_id)).toEqual(["ex_b"]);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-SEL-002/009: accepting recommendation creates one session and a paused session blocks a second start", () => {
+    const db = fixture();
+    try {
+      const first: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      expect(first.session.selected_program_slot_id).toBe("slot_a");
+      expect(Number((db.prepare("SELECT count(*) n FROM training_sessions").get() as any).n)).toBe(1);
+      pauseSession(db, first.session.training_session_id);
+      const second: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_b",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      expect(second.replayed).toBe(true);
+      expect(second.session.training_session_id).toBe(first.session.training_session_id);
+      expect(Number((db.prepare("SELECT count(*) n FROM training_sessions").get() as any).n)).toBe(1);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_a");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-STR-004/005 and TRA-VAL-005/007: actual deviations validate atomically and corrected typo can be committed", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      const sets = fourSets(70);
+      prescribeExercise(db, id, sets);
+
+      expect(() => completeExercise(db, id, "ACTUALS", [{
+        set_number: 1,
+        reps: 6,
+        load_kg: 70,
+        rir: 2,
+      }])).toThrow(/set count/);
+      expect(() => completeExercise(db, id, "ACTUALS", [
+        { set_number: 1, reps: -1, load_kg: 70, rir: 2 },
+        { set_number: 2, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 3, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 4, reps: 6, load_kg: 70, rir: 2 },
+      ])).toThrow(/INVALID reps/);
+      expect(() => completeExercise(db, id, "ACTUALS", [
+        { set_number: 1, reps: 6, load_kg: 700, rir: 2 },
+        { set_number: 2, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 3, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 4, reps: 6, load_kg: 70, rir: 2 },
+      ])).toThrow(/SUSPICIOUS load/);
+
+      const afterFailures = db.prepare(
+        "SELECT count(*) n FROM session_sets WHERE session_exercise_id=? AND status='COMPLETED'"
+      ).get(id) as any;
+      expect(Number(afterFailures.n)).toBe(0);
+
+      completeExercise(db, id, "ACTUALS", [
+        { set_number: 1, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 2, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 3, reps: 6, load_kg: 70, rir: 2 },
+        { set_number: 4, reps: 5, load_kg: 70, rir: 0 },
+      ]);
+      const actual = db.prepare(
+        "SELECT actual_reps,actual_load_kg,actual_rir FROM session_sets WHERE session_exercise_id=? ORDER BY set_number"
+      ).all(id) as any[];
+      expect(actual[3]).toMatchObject({ actual_reps: 5, actual_load_kg: 70, actual_rir: 0 });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-STR-006/008 and TRA-LIFE-003: defer/skip and completed-partial advance cursor explicitly", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      deferExercise(db, id);
+      expect((db.prepare("SELECT status FROM session_exercises WHERE session_exercise_id=?").get(id) as any).status)
+        .toBe("DEFERRED");
+      skipExercise(db, id, "user skipped");
+      expect(Number((db.prepare(
+        "SELECT count(*) n FROM session_sets WHERE session_exercise_id=? AND status='SKIPPED'"
+      ).get(id) as any).n)).toBe(4);
+      finishSession(db, started.session.training_session_id);
+      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_cond_1");
+      const outcome = db.prepare(
+        "SELECT outcome FROM program_slot_outcomes WHERE training_session_id=? AND program_slot_id='slot_a'"
+      ).get(started.session.training_session_id) as any;
+      expect(outcome.outcome).toBe("COMPLETED_PARTIAL");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-LIFE-005: VOIDED session does not block a replacement session or progression history", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      voidSession(db, started.session.training_session_id, "test session");
+      expect((db.prepare("SELECT status FROM training_sessions WHERE training_session_id=?")
+        .get(started.session.training_session_id) as any).status).toBe("VOIDED");
+
+      const replacement: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-07",
+      });
+      expect(replacement.replayed).toBe(false);
+      const candidate = getProgressionCandidate(db, replacement.session.exercises[0].session_exercise_id);
+      expect(candidate.recent_exposures).toHaveLength(0);
     } finally {
       db.close();
     }
