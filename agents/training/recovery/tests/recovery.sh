@@ -29,17 +29,24 @@ cat > "$TEST_ROOT/bin/curl" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
 printf '%q ' "$@" >> "$TEST_CURL_LOG"; printf '\n' >> "$TEST_CURL_LOG"
-file=""; url=""
+file=""; output=""; url=""
 while (($#)); do
   case "$1" in
     --config) shift 2 ;;
     --upload-file) file=$2; shift 2 ;;
+    --output) output=$2; shift 2 ;;
     http*) url=$1; shift ;;
     *) shift ;;
   esac
 done
-[[ -n "$file" && -n "$url" ]]
-cp "$file" "$TEST_UPLOADS/${url##*/}"
+[[ -n "$url" ]]
+if [[ -n "$file" ]]; then
+  cp "$file" "$TEST_UPLOADS/${url##*/}"
+elif [[ -n "$output" ]]; then
+  cp "$TEST_DOWNLOADS/${url##*/}" "$output"
+else
+  exit 2
+fi
 SH
 chmod +x "$TEST_ROOT/bin/age" "$TEST_ROOT/bin/curl"
 
@@ -125,6 +132,30 @@ try{
   if(schema!==2||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
 }finally{db.close();}
 NODE
+
+EXPECTED="$TEST_ROOT/restore-expected.json"
+EVIDENCE="$TEST_ROOT/restore-evidence.json"
+cat > "$EXPECTED" <<'JSON'
+{
+  "format": "training-restore-expected-v1",
+  "sqlite_schema": 2,
+  "sessions": 1,
+  "exercises": 0,
+  "session_exercises": 0,
+  "sets": 0,
+  "conditioning_results": 0,
+  "active_program_version_number": 1,
+  "cursor_sequence": 1,
+  "cursor_cycle_number": 1,
+  "open_sessions": 1
+}
+JSON
+chmod 600 "$EXPECTED"
+PATH="$TEST_ROOT/bin:$PATH" HOME="$TEST_ROOT/home" TEST_UPLOADS="$TEST_ROOT/uploads" TEST_DOWNLOADS="$TEST_ROOT/uploads" TEST_CURL_LOG="$TEST_ROOT/qualify-curl.log" \
+  GITLAB_PROJECT_ID=123 GITLAB_DEPLOY_TOKEN_FILE="$TEST_ROOT/token" GITLAB_BASE_URL=https://gitlab.test \
+  bash "$ROOT/qualify-restore.sh" --package-version "$version" --identity "$TEST_ROOT/identity" --expected "$EXPECTED" --evidence "$EVIDENCE" --apply >/dev/null
+node -e 'const e=require(process.argv[1]);if(e.result!=="PASS"||e.structural_validation!=="PASS"||e.plaintext_cleanup!=="PASS"||e.sqlite_schema!==2)process.exit(1)' "$EVIDENCE"
+[[ $(find /tmp -maxdepth 1 -name 'training-restore-qualification.*' | wc -l) -eq 0 ]]
 
 CORRUPT="$TEST_ROOT/corrupt.sqlite3.age"
 cp "$TEST_ROOT/uploads/training.sqlite3.age" "$CORRUPT"
