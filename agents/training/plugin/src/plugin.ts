@@ -16,15 +16,19 @@ import {
   getConditioningPrescription,
   getProgressionCandidate,
   getRecommendation,
+  getRelevantLearning,
   getSession,
   pauseSession,
   prescribeExercise,
   proposeProgramChange,
+  recordObservation,
+  recordTrainingFeedback,
   resumeExercise,
   resumeSession,
   skipExercise,
   startAdHocSession,
   startProgramSession,
+  upsertLearnedItem,
   voidSession,
   type ActualSet,
   type AdHocStrengthExercise,
@@ -434,6 +438,87 @@ const entry = defineToolPlugin({
             : { rir: params.value };
           return correctSetResult(db, params.session_set_id, patch, params.reason);
         }),
+    })),
+    tool(ownerTool({
+      name: "training_feedback_record",
+      label: "Record training feedback",
+      description: "Persist bounded user feedback for one training session or exercise.",
+      parameters: Type.Object({
+        training_session_id: sessionId,
+        session_exercise_id: Type.Optional(Type.Union([sessionExerciseId, Type.Null()])),
+        raw_text: Type.String({ minLength: 1, maxLength: 4000 }),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => recordTrainingFeedback(db, params)),
+    })),
+    tool(ownerTool({
+      name: "training_observation_record",
+      label: "Record training observation",
+      description: "Persist one structured training-domain observation with provenance.",
+      parameters: Type.Object({
+        kind: Type.String({ minLength: 1, maxLength: 100 }),
+        subject_type: Type.String({ minLength: 1, maxLength: 100 }),
+        subject_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()])),
+        statement: Type.String({ minLength: 1, maxLength: 4000 }),
+        structured_value: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+        persistence_class: Type.Union([
+          Type.Literal("SITUATIONAL"),
+          Type.Literal("POTENTIALLY_PERSISTENT"),
+          Type.Literal("EXPLICITLY_PERSISTENT"),
+        ]),
+        source_type: Type.Union([
+          Type.Literal("USER_CHAT"),
+          Type.Literal("PERFORMANCE"),
+          Type.Literal("AGENT_ANALYSIS"),
+          Type.Literal("MIGRATION"),
+        ]),
+        source_feedback_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()])),
+        source_session_id: Type.Optional(Type.Union([sessionId, Type.Null()])),
+        observed_at: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => recordObservation(db, params as Parameters<typeof recordObservation>[1])),
+    })),
+    tool(ownerTool({
+      name: "training_learning_get",
+      label: "Training learning",
+      description: "Read active learned training context and optionally current hypotheses for one subject.",
+      parameters: Type.Object({
+        subject_type: Type.String({ minLength: 1, maxLength: 100 }),
+        subject_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()])),
+        include_hypotheses: Type.Optional(Type.Boolean()),
+      }, { additionalProperties: false }),
+      execute: (params, config) =>
+        withDb(config, (db) => getRelevantLearning(db, params)),
+    })),
+    tool(ownerTool({
+      name: "training_learning_upsert",
+      label: "Update training learning",
+      description: "Create or revise a training-domain hypothesis/preference using explicit evidence links. ACTIVE state requires independent external evidence.",
+      parameters: Type.Object({
+        learned_item_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        kind: Type.String({ minLength: 1, maxLength: 100 }),
+        subject_type: Type.String({ minLength: 1, maxLength: 100 }),
+        subject_id: Type.Optional(Type.Union([Type.String({ minLength: 1, maxLength: 100 }), Type.Null()])),
+        statement: Type.String({ minLength: 1, maxLength: 4000 }),
+        value: Type.Optional(Type.Record(Type.String(), Type.Unknown())),
+        status: Type.Union([
+          Type.Literal("HYPOTHESIS"),
+          Type.Literal("ACTIVE"),
+          Type.Literal("SUPERSEDED"),
+          Type.Literal("REJECTED"),
+        ]),
+        promotion_basis: Type.Optional(Type.Union([Type.String({ maxLength: 1000 }), Type.Null()])),
+        evidence: Type.Array(Type.Object({
+          observation_id: Type.String({ minLength: 1, maxLength: 100 }),
+          relation: Type.Union([Type.Literal("SUPPORTS"), Type.Literal("CONTRADICTS")]),
+        }, { additionalProperties: false }), { minItems: 1, maxItems: 100 }),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => upsertLearnedItem(db, params as Parameters<typeof upsertLearnedItem>[1])),
     })),
     tool(ownerTool({
       name: "training_program_change_propose",
