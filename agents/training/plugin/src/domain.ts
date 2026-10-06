@@ -131,16 +131,35 @@ export function startProgramSession(
     );
 
     if (selected.workout_kind === "STRENGTH") {
-      const template = all<{template_exercise_id:string; exercise_id:string; sequence:number}>(
+      const template = all<{
+        template_exercise_id:string;
+        exercise_id:string;
+        sequence:number;
+        target_sets:number;
+        target_reps_min:SQLInputValue;
+        target_reps_max:SQLInputValue;
+        target_rir_min:SQLInputValue;
+        target_rir_max:SQLInputValue;
+        progression_policy_json:string;
+      }>(
         db,
-        "SELECT template_exercise_id,exercise_id,sequence FROM template_exercises WHERE workout_template_id=? ORDER BY sequence",
+        `SELECT template_exercise_id,exercise_id,sequence,target_sets,target_reps_min,target_reps_max,
+                target_rir_min,target_rir_max,progression_policy_json
+           FROM template_exercises
+          WHERE workout_template_id=?
+          ORDER BY sequence`,
         selected.workout_template_id
       );
       const insert = db.prepare(`INSERT INTO session_exercises(
-        session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,status
-      ) VALUES(?,?,?,?,?,'PENDING')`);
+        session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
+        planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,status
+      ) VALUES(?,?,?,?,?,?,?,?,?,?,?,'PENDING')`);
       for (const item of template) {
-        insert.run(newId("sex"), sessionId, item.template_exercise_id, item.exercise_id, item.sequence);
+        insert.run(
+          newId("sex"), sessionId, item.template_exercise_id, item.exercise_id, item.sequence,
+          item.target_sets,item.target_reps_min,item.target_reps_max,item.target_rir_min,item.target_rir_max,
+          item.progression_policy_json
+        );
       }
     }
 
@@ -259,14 +278,13 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
     db,
     `SELECT se.session_exercise_id,se.training_session_id,se.template_exercise_id,se.exercise_id,
             se.equipment_instance_id,ts.started_at,e.load_mode,e.load_progression_direction,
-            te.target_sets,te.target_reps_min,te.target_reps_max,te.target_rir_min,te.target_rir_max,
-            te.progression_policy_json AS exercise_policy,
-            pv.progression_policy_json AS program_policy
+            se.planned_sets AS target_sets,se.target_reps_min,se.target_reps_max,se.target_rir_min,se.target_rir_max,
+            se.progression_policy_json AS exercise_policy,
+            COALESCE(pv.progression_policy_json,'{}') AS program_policy
        FROM session_exercises se
        JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
        JOIN exercises e ON e.exercise_id=se.exercise_id
-       JOIN template_exercises te ON te.template_exercise_id=se.template_exercise_id
-       JOIN program_versions pv ON pv.program_version_id=ts.program_version_id
+       LEFT JOIN program_versions pv ON pv.program_version_id=ts.program_version_id
       WHERE se.session_exercise_id=?`,
     sessionExerciseId
   );
