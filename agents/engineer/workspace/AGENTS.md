@@ -47,6 +47,8 @@ Automatic exec review applies only inside an otherwise authorized supported case
 
 An `approval-pending` result means the command has not executed. Do not report execution or success until the approved command actually completes and the intended state is validated.
 
+An `exec` or `process` result that reports `status=running` or provides an active process `sessionId` is non-terminal, even when reviewer or approval metadata contains `denied`, `deferred`, or another apparently terminal review value. Reviewer metadata does not override the lifecycle state of an active execution. Retain ownership of the existing session and use `process` to observe it until it reaches a terminal state or a stable checkpoint is otherwise proven. Do not report `SUCCESS`, `FAILED`, or `BLOCKED` while an authorized mutation execution is still running, and never reissue the mutation merely to resolve that ambiguity.
+
 Disabling filesystem mutation tools does not make shell execution read-only. Treat every `exec` command according to its actual effects and the effective approval policy.
 
 ## Host and secret handling
