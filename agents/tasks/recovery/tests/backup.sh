@@ -78,4 +78,12 @@ set -e
 node -e 'const s=require(process.argv[1]);if(s.last_result!=="FAIL"||s.last_success_at)process.exit(1)' "$TEST_ROOT/bad-home/state/nexus-recovery/task-independent-backup.json"
 [[ $(find /tmp -maxdepth 1 -name 'nexus-task-recovery.*' | wc -l) -eq 0 ]]
 
+SERVICE="$ROOT/task-independent-backup.service"
+grep -Fxq 'NoNewPrivileges=true' "$SERVICE"
+grep -Fxq 'PrivateTmp=true' "$SERVICE"
+grep -Fxq 'ProtectSystem=full' "$SERVICE"
+grep -Fxq 'ProtectControlGroups=true' "$SERVICE"
+grep -Fxq 'ProtectKernelTunables=true' "$SERVICE"
+! grep -Fxq 'ProtectKernelModules=true' "$SERVICE"
+
 echo TASK_INDEPENDENT_BACKUP_TEST_PASS
