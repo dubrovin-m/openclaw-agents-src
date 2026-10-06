@@ -6,6 +6,7 @@
     "training_recommendation_get",
     "training_session_get",
     "training_session_start",
+    "training_session_start_ad_hoc",
     "training_progression_get",
     "training_exercise_prescribe",
     "training_exercise_complete",
