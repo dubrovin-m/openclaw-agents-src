@@ -87,6 +87,18 @@ jobs:
           npm run plugin:build
           npm run plugin:validate
 
+      - name: Qualify frozen Training release
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/agents/training/plugin/node_modules/.bin:$PATH"
+          bash agents/training/tests/release.sh
+
+      - name: Qualify staged Training deployment and rollback
+        run: |
+          set -euo pipefail
+          export PATH="$GITHUB_WORKSPACE/agents/training/plugin/node_modules/.bin:$PATH"
+          bash agents/training/tests/deploy.sh
+
       - name: Qualify normalized Training migration
         working-directory: agents/training/plugin
         run: |
