@@ -79,6 +79,15 @@ BASE="${BASE%/}/api/v4/projects/${GITLAB_PROJECT_ID}/packages/generic/training-s
 curl --config "$CURL_CONFIG" --output "$MANIFEST" "$BASE/manifest.json"
 curl --config "$CURL_CONFIG" --output "$CIPHERTEXT" "$BASE/training.sqlite3.age"
 
+MANIFEST_META=$(node - "$MANIFEST" "$PACKAGE_VERSION" <<'NODE'
+const fs=require('fs');
+const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+if(m.class!=='training-sqlite'||m.package_version!==process.argv[3]||typeof m.snapshot_at!=='string'||!m.snapshot_at)process.exit(2);
+process.stdout.write(JSON.stringify({snapshot_at:m.snapshot_at,package_version:m.package_version}));
+NODE
+)
+SNAPSHOT_AT=$(node -e 'process.stdout.write(JSON.parse(process.argv[1]).snapshot_at)' "$MANIFEST_META")
+
 bash "$ROOT/restore.sh"   --ciphertext "$CIPHERTEXT"   --manifest "$MANIFEST"   --identity "$IDENTITY"   --output "$RESTORED"   --apply >/dev/null
 
 ACTUAL=$(node - "$RESTORED" "$EXPECTED" <<'NODE'
@@ -97,6 +106,7 @@ try{
       FROM program_cursor pc
       JOIN program_versions pv ON pv.program_version_id=pc.program_version_id
       JOIN program_slots ps ON ps.program_slot_id=pc.next_program_slot_id
+                           AND ps.program_version_id=pc.program_version_id
      WHERE pv.status='ACTIVE'`);
   const actual={
     sqlite_schema:schema,
@@ -125,7 +135,6 @@ NODE
 
 END_EPOCH=$(date -u +%s)
 RTO_SEC=$((END_EPOCH-START_EPOCH))
-SNAPSHOT_AT=$(node -e 'const fs=require("fs"),m=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));if(m.class!=="training-sqlite"||!m.snapshot_at)process.exit(2);process.stdout.write(m.snapshot_at)' "$MANIFEST")
 SNAPSHOT_EPOCH=$(date -u -d "$SNAPSHOT_AT" +%s)
 RPO_SEC=$((START_EPOCH-SNAPSHOT_EPOCH))
 (( RPO_SEC >= 0 )) || { echo "Recovery point timestamp is in the future" >&2; exit 2; }

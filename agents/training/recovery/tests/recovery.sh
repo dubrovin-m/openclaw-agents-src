@@ -157,6 +157,51 @@ PATH="$TEST_ROOT/bin:$PATH" HOME="$TEST_ROOT/home" TEST_UPLOADS="$TEST_ROOT/uplo
 node -e 'const e=require(process.argv[1]);if(e.result!=="PASS"||e.structural_validation!=="PASS"||e.plaintext_cleanup!=="PASS"||e.sqlite_schema!==2)process.exit(1)' "$EVIDENCE"
 [[ $(find /tmp -maxdepth 1 -name 'training-restore-qualification.*' | wc -l) -eq 0 ]]
 
+MISMATCH_DOWNLOADS="$TEST_ROOT/mismatch-downloads"
+mkdir -p "$MISMATCH_DOWNLOADS"
+cp "$TEST_ROOT/uploads/training.sqlite3.age" "$MISMATCH_DOWNLOADS/training.sqlite3.age"
+node - "$TEST_ROOT/uploads/manifest.json" "$MISMATCH_DOWNLOADS/manifest.json" <<'NODE'
+const fs=require('fs');
+const m=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+m.package_version='19990101T000000Z';
+fs.writeFileSync(process.argv[3],JSON.stringify(m,null,2)+'\n');
+NODE
+set +e
+PATH="$TEST_ROOT/bin:$PATH" HOME="$TEST_ROOT/home" TEST_UPLOADS="$TEST_ROOT/uploads" TEST_DOWNLOADS="$MISMATCH_DOWNLOADS" TEST_CURL_LOG="$TEST_ROOT/mismatch-curl.log" \
+  GITLAB_PROJECT_ID=123 GITLAB_DEPLOY_TOKEN_FILE="$TEST_ROOT/token" GITLAB_BASE_URL=https://gitlab.test \
+  bash "$ROOT/qualify-restore.sh" --package-version "$version" --identity "$TEST_ROOT/identity" --expected "$EXPECTED" --evidence "$TEST_ROOT/mismatch-evidence.json" --apply >/dev/null 2>&1
+code=$?
+set -e
+[[ $code -ne 0 && ! -e "$TEST_ROOT/mismatch-evidence.json" ]]
+
+CROSS_DB="$TEST_ROOT/cross-version.sqlite3"
+cp "$GOOD_DB" "$CROSS_DB"
+node - "$CROSS_DB" <<'NODE'
+const {DatabaseSync}=require('node:sqlite');
+const db=new DatabaseSync(process.argv[2]);
+const now='2026-10-06T08:00:00.000Z';
+try{
+  db.prepare("INSERT INTO program_versions VALUES(?,?,?,?,?,?,?,?,?,?)")
+    .run('ver2','prog',2,'RETIRED','{}','MIGRATION',null,now,now,now);
+  db.prepare("INSERT INTO workout_templates VALUES(?,?,?,?,?)")
+    .run('tpl2','ver2','Other Strength A','STRENGTH',null);
+  db.prepare("INSERT INTO program_slots VALUES(?,?,?,?)").run('slot2','ver2',1,'tpl2');
+  db.prepare("UPDATE program_cursor SET next_program_slot_id='slot2' WHERE program_version_id='ver'").run();
+}finally{db.close();}
+NODE
+mkdir -p "$TEST_ROOT/cross-home" "$TEST_ROOT/cross-uploads"
+run_backup "$CROSS_DB" "$TEST_ROOT/cross-home" "$TEST_ROOT/cross-uploads" "$TEST_ROOT/cross-backup-curl.log" >/dev/null
+cross_status="$TEST_ROOT/cross-home/state/nexus-recovery/training-independent-backup.json"
+cross_version=$(node -e 'const s=require(process.argv[1]);if(s.last_result!=="PASS")process.exit(1);process.stdout.write(s.last_success_package_version)' "$cross_status")
+set +e
+PATH="$TEST_ROOT/bin:$PATH" HOME="$TEST_ROOT/cross-home" TEST_UPLOADS="$TEST_ROOT/cross-uploads" TEST_DOWNLOADS="$TEST_ROOT/cross-uploads" TEST_CURL_LOG="$TEST_ROOT/cross-qualify-curl.log" \
+  GITLAB_PROJECT_ID=123 GITLAB_DEPLOY_TOKEN_FILE="$TEST_ROOT/token" GITLAB_BASE_URL=https://gitlab.test \
+  bash "$ROOT/qualify-restore.sh" --package-version "$cross_version" --identity "$TEST_ROOT/identity" --expected "$EXPECTED" --evidence "$TEST_ROOT/cross-evidence.json" --apply >/dev/null 2>&1
+code=$?
+set -e
+[[ $code -ne 0 && ! -e "$TEST_ROOT/cross-evidence.json" ]]
+[[ $(find /tmp -maxdepth 1 -name 'training-restore-qualification.*' | wc -l) -eq 0 ]]
+
 CORRUPT="$TEST_ROOT/corrupt.sqlite3.age"
 cp "$TEST_ROOT/uploads/training.sqlite3.age" "$CORRUPT"
 printf 'x' >> "$CORRUPT"
