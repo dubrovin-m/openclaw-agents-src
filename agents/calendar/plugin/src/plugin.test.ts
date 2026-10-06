@@ -20,6 +20,15 @@ describe("Calendar plugin registration", () => {
     const registrations: Array<{ tool: unknown; options?: { name?: string; optional?: boolean } }> = [];
     const api = {
       pluginConfig: VALID_CONFIG,
+      runtime: {
+        state: {
+          openKeyedStore: vi.fn(() => ({
+            register: vi.fn(),
+            lookup: vi.fn(),
+            delete: vi.fn(),
+          })),
+        },
+      },
       registerTool(tool: unknown, options?: { name?: string; optional?: boolean }) {
         registrations.push({ tool, options });
       },

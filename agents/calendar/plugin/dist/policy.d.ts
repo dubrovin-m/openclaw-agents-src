@@ -1,4 +1,5 @@
 import "node-fetch";
+import { type RuleProposalStore } from "./rules.js";
 export declare const CALENDAR_AGENT_ID = "calendar";
 type ToolEvent = {
     toolName?: string;
@@ -7,7 +8,7 @@ type ToolEvent = {
 type ToolContext = {
     agentId?: string;
 };
-export declare function calendarToolPolicy(configValue: unknown, event: ToolEvent, context: ToolContext): {
+export declare function calendarToolPolicy(configValue: unknown, event: ToolEvent, context: ToolContext, proposalStore?: RuleProposalStore): Promise<{
     block: boolean;
     blockReason: string;
 } | {
@@ -19,5 +20,5 @@ export declare function calendarToolPolicy(configValue: unknown, event: ToolEven
         timeoutReason: string;
         allowedDecisions: Array<"allow-once" | "deny">;
     };
-} | undefined;
+} | undefined>;
 export {};

@@ -12,10 +12,14 @@ import {
   applyRuleProposal,
   deleteRuleProposal,
   getRuleProposal,
+  MAX_RULE_PROPOSALS,
   parseDurableRules,
   proposeRule,
+  RULE_PROPOSAL_TTL_MS,
   type DurableRules,
   type RuleProposalInput,
+  type RuleProposalStore,
+  type StoredRuleProposal,
 } from "./rules.js";
 
 const providerLabelSchema = Type.Object({
@@ -130,6 +134,16 @@ type MutableConfigRoot = {
 
 type EffectiveCalendarConfig = ReturnType<typeof parseCalendarConfig> & { durableRules: DurableRules };
 type CalendarPluginConfig = Static<typeof calendarConfigSchema>;
+type CalendarPluginApi = ToolPluginExecutionContext["api"];
+
+function ruleProposalStore(api: CalendarPluginApi): RuleProposalStore {
+  return api.runtime.state.openKeyedStore<StoredRuleProposal>({
+    namespace: "calendar-rule-proposals",
+    maxEntries: MAX_RULE_PROPOSALS,
+    overflowPolicy: "evict-oldest",
+    defaultTtlMs: RULE_PROPOSAL_TTL_MS,
+  });
+}
 
 type DirectOnlyToolSpec<TParamsSchema extends TSchema> = {
   name: string;
@@ -212,7 +226,8 @@ const entry = defineToolPlugin({
       description: "Normalize a create, replace, or delete proposal for one durable Calendar classification rule or meeting-hygiene exception without changing effective configuration.",
       parameters: ruleProposalParameters,
       optional: true,
-      execute: async (params, config) => proposeRule(operationalConfig(config).effective, params as RuleProposalInput),
+      execute: async (params, config, context) =>
+        proposeRule(operationalConfig(config).effective, params as RuleProposalInput, ruleProposalStore(context.api)),
     })),
     tool(directOnlyTool({
       name: "calendar_rule_commit",
@@ -221,7 +236,8 @@ const entry = defineToolPlugin({
       parameters: ruleCommitParameters,
       optional: true,
       execute: async (params, _config, context) => {
-        const proposal = getRuleProposal(params.proposal_id);
+        const store = ruleProposalStore(context.api);
+        const proposal = await getRuleProposal(params.proposal_id, store);
         if (!proposal) throw new Error("Calendar rule proposal is unknown or expired; create a fresh proposal");
         const mutation = await context.api.runtime.config.mutateConfigFile<{ durableRules: DurableRules }>({
           afterWrite: { mode: "auto" },
@@ -237,7 +253,7 @@ const entry = defineToolPlugin({
             return { durableRules };
           },
         });
-        deleteRuleProposal(params.proposal_id);
+        await deleteRuleProposal(params.proposal_id, store);
         return {
           applied: true,
           proposal_id: params.proposal_id,
@@ -310,7 +326,8 @@ const registerTools = entry.register;
 entry.register = (api) => {
   operationalConfig(api.pluginConfig);
   registerTools(api);
-  api.on("before_tool_call", (event, context) => calendarToolPolicy(api.pluginConfig, event, context), { priority: 100 });
+  const proposals = ruleProposalStore(api);
+  api.on("before_tool_call", (event, context) => calendarToolPolicy(api.pluginConfig, event, context, proposals), { priority: 100 });
 };
 
 export default entry;
