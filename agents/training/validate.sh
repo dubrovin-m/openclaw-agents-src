@@ -4,12 +4,14 @@ ROOT=$(cd "$(dirname "$0")" && pwd)
 python3 - "$ROOT" <<'PY'
 import json, pathlib, sys
 root=pathlib.Path(sys.argv[1])
-for rel in ["config/training-agent.fragment.json","config/training-tools.json","plugin/package.json","plugin/openclaw.plugin.json"]:
+for rel in ["config/training-agent.fragment.json","config/training-tools.json","plugin/package.json","plugin/openclaw.plugin.json","release.json"]:
     with (root/rel).open(encoding="utf-8") as f:
         json.load(f)
 required=[
   "README.md","ACCEPTANCE.md","workspace/AGENTS.md","workspace/IDENTITY.md","workspace/SOUL.md","workspace/USER.md","workspace/HEARTBEAT.md",
-  "plugin/src/store.ts","plugin/src/domain.ts","plugin/src/plugin.ts"
+  "plugin/src/store.ts","plugin/src/domain.ts","plugin/src/plugin.ts",
+  "deploy.sh","deploy-support.mjs","tests/deploy.sh","tests/release.sh",
+  "artifacts/openclaw-plugin-training-0.1.0.tgz","artifacts/openclaw-plugin-training-0.1.0.sha256"
 ]
 missing=[p for p in required if not (root/p).is_file()]
 if missing:
@@ -34,4 +36,25 @@ if set(actual)!=set(manifest) or len(actual)!=len(manifest):
 if set(actual)!=set(allow) or len(actual)!=len(allow):
     raise SystemExit(f'Training allow-list mismatch: actual={actual} allow={allow}')
 print('TRAINING_TOOL_CONTRACT_PASS')
+PY
+python3 - "$ROOT" <<'PY'
+import pathlib, sys
+root=pathlib.Path(sys.argv[1])
+text=(root/'deploy.sh').read_text()
+for forbidden in ['agents add','agents bind','plugins enable','systemctl','openclaw-gateway','telegram:training']:
+    if forbidden in text:
+        raise SystemExit('stage-only Training deploy contains forbidden activation operation: '+forbidden)
+for forbidden in ['config set plugins.entries.training']:
+    if forbidden in text:
+        raise SystemExit('stage-only Training deploy contains non-atomic Training config write: '+forbidden)
+for required in [
+    'plugins install --force --no-enable --accept-capabilities',
+    'config patch --stdin',
+    'enabled:false',
+    'databasePath',
+    'TRAINING_DEPLOY_STAGE_PASS',
+]:
+    if required not in text:
+        raise SystemExit('stage-only Training deploy missing required control: '+required)
+print('TRAINING_DEPLOY_STAGE_BOUNDARY_PASS')
 PY

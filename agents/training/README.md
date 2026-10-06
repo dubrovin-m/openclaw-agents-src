@@ -19,3 +19,13 @@ The first implementation slice intentionally uses the typed plugin directly over
 ## Acceptance evidence
 
 See [`ACCEPTANCE.md`](ACCEPTANCE.md) for the implementation evidence map.
+
+## Deployment staging
+
+The v1 release contains a reproducible frozen plugin archive and an implementation-owned stage-only deployment entrypoint.
+
+`deploy.sh --preflight` validates the exact OpenClaw/runtime contract, release identity, artifact checksum, workspace hashes, current config, and absence or exact staged state. `deploy.sh --apply` may then stage only the frozen plugin and Training workspace.
+
+The stage contract intentionally leaves the Training plugin disabled and does **not** register the Training agent, create a Training database, configure model/authentication, create a Telegram binding, restart the Gateway, or switch operational authority away from Fitness. A failed stage uses the OpenClaw plugin uninstall path and restores the exact predecessor config.
+
+Production activation remains a separate governed step after private Fitness migration/reconciliation, recovery qualification, runtime identity/authentication, owner-only Telegram routing, and live acceptance gates.

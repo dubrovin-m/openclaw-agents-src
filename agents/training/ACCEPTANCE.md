@@ -125,7 +125,7 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-REC-001 | SOURCE+PRODUCTION | Synthetic provider-independent encrypted backup/restore path passes, including corruption and FK fail-closed behavior; actual protected-provider restore remains a production gate. |
 | TRA-REC-002 | SOURCE+PRODUCTION | Synthetic restore verifies Program Version, cursor, and PAUSED session with open pause interval; actual recovery point restore remains a production gate. |
 | TRA-REC-003 | PRODUCTION-GATE | Fitness remains authoritative until an actual recovery exercise succeeds; source implementation alone cannot satisfy this gate. |
-| TRA-ACT-001 | PRODUCTION-GATE | Requires current production preflight, private migration/reconciliation, protected backup/restore, owner-only route, effective tool checks, and live conversational validation. |
+| TRA-ACT-001 | PRODUCTION-GATE | Frozen stage-only deployment/rollback is source-qualified and live read-only preflight reports Training ABSENT. Activation still requires private migration/reconciliation, protected backup/restore, model/authentication, owner-only route, effective tool checks, and live conversational validation. |
 | TRA-ACT-002 | PRODUCTION-GATE | Requires explicit operational activation plus Nexus/runtime source-registration reconciliation; Fitness must not remain a competing active training authority. |
 
 ## Source-freeze conclusion
