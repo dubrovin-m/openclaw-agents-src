@@ -76,8 +76,9 @@ try {
       'sess','ver','tpl','STRENGTH','PROGRAM',
       'slot','slot','PROGRAM_RECOMMENDATION',
       'slot',1,'slot',2,
-      'ACTIVE',?,NULL,'Europe/Moscow','2026-10-06','EXACT',NULL,?
+      'PAUSED',?,NULL,'Europe/Moscow','2026-10-06','EXACT',NULL,?
     )`).run(now,now);
+    db.prepare("INSERT INTO training_session_pauses VALUES('pause','sess',?,NULL)").run('2026-10-06T07:30:00.000Z');
   }
 } finally {
   db.close();
@@ -120,7 +121,8 @@ try{
   const schema=Number(db.prepare('PRAGMA user_version').get().user_version);
   const cursor=db.prepare("SELECT next_program_slot_id,cycle_number FROM program_cursor WHERE program_version_id='ver'").get();
   const session=db.prepare("SELECT status,training_session_id FROM training_sessions WHERE training_session_id='sess'").get();
-  if(schema!==1||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='ACTIVE')process.exit(1);
+  const pause=db.prepare("SELECT paused_at,resumed_at FROM training_session_pauses WHERE training_session_id='sess'").get();
+  if(schema!==1||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
 }finally{db.close();}
 NODE
 
@@ -160,4 +162,4 @@ PATH="$TEST_ROOT/bin:$PATH" bash "$ROOT/install.sh" --test-root "$TEST_ROOT/inst
 
 [[ $(find /tmp -maxdepth 1 \( -name 'nexus-training-recovery.*' -o -name 'nexus-training-restore.*' \) | wc -l) -eq 0 ]]
 
-echo TRAINING_RECOVERY_TEST_PASS
+echo 'TRA-REC-001 TRA-REC-002 TRAINING_RECOVERY_TEST_PASS'

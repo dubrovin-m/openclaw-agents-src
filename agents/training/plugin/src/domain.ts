@@ -1880,9 +1880,9 @@ export function recordTrainingFeedback(
   }
 ) {
   return withTransaction(db, () => {
-    const session = one(
+    const session = one<{training_session_id:string; status:string}>(
       db,
-      "SELECT training_session_id FROM training_sessions WHERE training_session_id=?",
+      "SELECT training_session_id,status FROM training_sessions WHERE training_session_id=?",
       params.training_session_id
     );
     if (!session) throw new Error("Training session not found");
@@ -1931,6 +1931,7 @@ export function recordObservation(
     if (params.source_type === "USER_CHAT" && !params.source_feedback_id) {
       throw new Error("USER_CHAT observation requires source feedback provenance");
     }
+    let provenanceSessionId = params.source_session_id ?? null;
     if (params.source_feedback_id) {
       const feedback = one<{training_session_id:string}>(
         db,
@@ -1941,14 +1942,18 @@ export function recordObservation(
       if (params.source_session_id && feedback.training_session_id !== params.source_session_id) {
         throw new Error("Observation feedback/session provenance mismatch");
       }
+      provenanceSessionId = feedback.training_session_id;
     }
-    if (params.source_session_id) {
-      const session = one(
+    if (provenanceSessionId) {
+      const session = one<{training_session_id:string; status:string}>(
         db,
-        "SELECT training_session_id FROM training_sessions WHERE training_session_id=?",
-        params.source_session_id
+        "SELECT training_session_id,status FROM training_sessions WHERE training_session_id=?",
+        provenanceSessionId
       );
       if (!session) throw new Error("Observation source session not found");
+      if (session.status === "VOIDED") {
+        throw new Error("VOIDED session cannot produce Training learning observations");
+      }
     }
     const observationId = newId("obs");
     const now = nowIso();
@@ -1987,13 +1992,24 @@ export function upsertLearnedItem(
         source_type:string;
         persistence_class:string;
         status:string;
+        source_session_status:SQLInputValue;
+        feedback_session_status:SQLInputValue;
       }>(
         db,
-        "SELECT observation_id,source_type,persistence_class,status FROM observations WHERE observation_id=?",
+        `SELECT o.observation_id,o.source_type,o.persistence_class,o.status,
+                direct.status AS source_session_status,feedback_session.status AS feedback_session_status
+           FROM observations o
+           LEFT JOIN training_sessions direct ON direct.training_session_id=o.source_session_id
+           LEFT JOIN training_feedback tf ON tf.feedback_id=o.source_feedback_id
+           LEFT JOIN training_sessions feedback_session ON feedback_session.training_session_id=tf.training_session_id
+          WHERE o.observation_id=?`,
         item.observation_id
       );
       if (!observation || observation.status !== "ACTIVE") {
         throw new Error(`Learning evidence unavailable: ${item.observation_id}`);
+      }
+      if (observation.source_session_status === "VOIDED" || observation.feedback_session_status === "VOIDED") {
+        throw new Error("VOIDED session evidence cannot be used for Training learning");
       }
       return {
         ...item,

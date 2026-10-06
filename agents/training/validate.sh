@@ -8,7 +8,7 @@ for rel in ["config/training-agent.fragment.json","config/training-tools.json","
     with (root/rel).open(encoding="utf-8") as f:
         json.load(f)
 required=[
-  "README.md","workspace/AGENTS.md","workspace/IDENTITY.md","workspace/SOUL.md","workspace/USER.md","workspace/HEARTBEAT.md",
+  "README.md","ACCEPTANCE.md","workspace/AGENTS.md","workspace/IDENTITY.md","workspace/SOUL.md","workspace/USER.md","workspace/HEARTBEAT.md",
   "plugin/src/store.ts","plugin/src/domain.ts","plugin/src/plugin.ts"
 ]
 missing=[p for p in required if not (root/p).is_file()]

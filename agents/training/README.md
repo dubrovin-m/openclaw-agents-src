@@ -15,3 +15,7 @@ Canonical purpose, behavior, authority, lifecycle, and acceptance scenarios are 
 Fitness remains authoritative until the canonical migration, recovery, and activation gates are completed.
 
 The first implementation slice intentionally uses the typed plugin directly over `node:sqlite`; it does not introduce a standalone generated Training CLI because no independent CLI requirement has been demonstrated.
+
+## Acceptance evidence
+
+See [`ACCEPTANCE.md`](ACCEPTANCE.md) for the implementation evidence map.

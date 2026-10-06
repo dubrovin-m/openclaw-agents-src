@@ -14,6 +14,7 @@ import {
   getProgressionCandidate,
   getProgramState,
   getRecommendation,
+  getSession,
   pauseSession,
   prescribeExercise,
   proposeProgramChange,
@@ -168,6 +169,31 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       const id = started.session.exercises[0].session_exercise_id;
       expect(prescribeExercise(db, id, fourSets(70)).replayed).toBe(false);
       expect(prescribeExercise(db, id, fourSets(70)).replayed).toBe(true);
+      expect(() => prescribeExercise(db, id, fourSets(72.5)))
+        .toThrow(/different durable prescription/);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-STR-002: persisted prescription survives SQLite close/reopen unchanged", () => {
+    let db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      const prescription = fourSets(70);
+      prescribeExercise(db, id, prescription);
+      const dbFile = (db.prepare("PRAGMA database_list").all() as any[])
+        .find((row) => row.name === "main").file as string;
+      db.close();
+      db = openTrainingStore(dbFile);
+      const restored: any = getSession(db, started.session.training_session_id);
+      expect(restored.exercises[0].sets).toHaveLength(4);
+      expect(restored.exercises[0].sets.every((set: any) => set.target_load_kg === 70)).toBe(true);
+      expect(prescribeExercise(db, id, prescription).replayed).toBe(true);
       expect(() => prescribeExercise(db, id, fourSets(72.5)))
         .toThrow(/different durable prescription/);
     } finally {
@@ -438,6 +464,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
           { sequence: 3, segment_type: "COOLDOWN", target_duration_sec: 300 },
         ],
       });
+      expect(prescription.prescription.recommended_modality_id).toBe("bike");
       expect(prescription.prescription.selected_modality_id).toBe("treadmill");
       completeConditioning(db, {
         conditioning_prescription_id: prescription.prescription.conditioning_prescription_id,
@@ -948,6 +975,215 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(replacement.replayed).toBe(false);
       const candidate = getProgressionCandidate(db, replacement.session.exercises[0].session_exercise_id);
       expect(candidate.recent_exposures).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-LIFE-005: VOIDED session feedback cannot become learning evidence", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const feedback: any = recordTrainingFeedback(db, {
+        training_session_id: started.session.training_session_id,
+        raw_text: "Synthetic feedback from a test session",
+      });
+      voidSession(db, started.session.training_session_id, "test session");
+      expect(() => recordObservation(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "Synthetic preference",
+        persistence_class: "EXPLICITLY_PERSISTENT",
+        source_type: "USER_CHAT",
+        source_feedback_id: feedback.feedback_id,
+        source_session_id: started.session.training_session_id,
+      })).toThrow(/VOIDED session/);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-VAL-001/003: load and repetition semantics remain attached to the canonical exercise", () => {
+    const db = fixture();
+    try {
+      const now = "2026-10-06T07:00:00.000Z";
+      db.prepare("INSERT INTO exercises VALUES(?,?,?,?,?,?,?,?,?)").run(
+        "ex_dumbbell","Dumbbell Split Squat","strength","dumbbell",
+        "PER_HAND","PER_SIDE","HIGHER_IS_HARDER",1,now
+      );
+      const row = db.prepare(
+        "SELECT load_mode,rep_mode,load_progression_direction FROM exercises WHERE exercise_id='ex_dumbbell'"
+      ).get() as any;
+      expect(row).toEqual({
+        load_mode: "PER_HAND",
+        rep_mode: "PER_SIDE",
+        load_progression_direction: "HIGHER_IS_HARDER",
+      });
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-VAL-002: assistance progression moves toward lower displayed assistance", () => {
+    const db = fixture();
+    try {
+      const now = "2026-10-06T07:00:00.000Z";
+      db.prepare("INSERT INTO exercises VALUES(?,?,?,?,?,?,?,?,?)").run(
+        "ex_assist","Assisted Pull-up","strength","machine",
+        "ASSISTANCE","TOTAL","LOWER_IS_HARDER",1,now
+      );
+      db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)").run(
+        "te_assist","tpl_a","ex_assist",2,1,6,6,2,2,
+        JSON.stringify({kind:"DOUBLE_SUCCESS_THEN_INCREMENT",initial_load_kg:40,increment_kg:5,successful_exposures_required:2}),null
+      );
+
+      for (const date of ["2026-10-04","2026-10-05"]) {
+        const sessionId=`hist_${date}`;
+        const sexId=`sex_${date}`;
+        db.prepare(`INSERT INTO training_sessions(
+          training_session_id,program_version_id,workout_template_id,session_kind,session_source,
+          recommended_program_slot_id,selected_program_slot_id,selection_source,
+          cursor_before_slot_id,cursor_before_cycle_number,cursor_on_complete_slot_id,cursor_on_complete_cycle_number,
+          status,started_at,ended_at,timezone_at_start,local_date,time_precision,overall_feedback,created_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          sessionId,"ver_test","tpl_a","STRENGTH","PROGRAM","slot_a","slot_a","PROGRAM_RECOMMENDATION",
+          "slot_a",1,"slot_cond_1",1,"COMPLETED",`${date}T07:00:00.000Z`,`${date}T08:00:00.000Z`,
+          "Europe/Moscow",date,"EXACT",null,`${date}T07:00:00.000Z`
+        );
+        db.prepare(`INSERT INTO session_exercises(
+          session_exercise_id,training_session_id,template_exercise_id,exercise_id,sequence,
+          planned_sets,target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,
+          status,prescribed_at,started_at,completed_at
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          sexId,sessionId,"te_assist","ex_assist",1,1,6,6,2,2,
+          JSON.stringify({kind:"DOUBLE_SUCCESS_THEN_INCREMENT",initial_load_kg:40,increment_kg:5,successful_exposures_required:2}),
+          "COMPLETED",`${date}T07:10:00.000Z`,`${date}T07:10:00.000Z`,`${date}T07:20:00.000Z`
+        );
+        db.prepare(`INSERT INTO session_sets(
+          session_set_id,session_exercise_id,set_number,candidate_reps,candidate_load_kg,candidate_rir,
+          target_reps,target_load_kg,target_rir,prescription_reason,actual_reps,actual_load_kg,actual_rir,status
+        ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)`).run(
+          `set_${date}`,sexId,1,6,40,2,6,40,2,"test",6,40,2,"COMPLETED"
+        );
+      }
+
+      const current: any = startAdHocSession(db, {
+        session_kind: "STRENGTH",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+        strength_exercises: [{
+          exercise_id: "ex_assist",
+          planned_sets: 1,
+          target_reps_min: 6,
+          target_reps_max: 6,
+          target_rir_min: 2,
+          target_rir_max: 2,
+          progression_policy_json: JSON.stringify({kind:"DOUBLE_SUCCESS_THEN_INCREMENT",initial_load_kg:40,increment_kg:5,successful_exposures_required:2}),
+        }],
+      });
+      const candidate = getProgressionCandidate(db, current.session.exercises[0].session_exercise_id);
+      expect(candidate.candidate_load_kg).toBe(35);
+      expect(candidate.basis).toBe("SUCCESS_STREAK_DECREMENT_ASSISTANCE");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-VAL-004: different machine instances are not used as comparable progression history", () => {
+    const db = fixture();
+    try {
+      const now = "2026-10-06T07:00:00.000Z";
+      db.prepare("INSERT INTO equipment_instances VALUES(?,?,?,?,?,?)").run("machine_a","Cable A","Gym","cable",1,now);
+      db.prepare("INSERT INTO equipment_instances VALUES(?,?,?,?,?,?)").run("machine_b","Cable B","Gym","cable",1,now);
+
+      const prior: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-05",
+      });
+      const priorId = prior.session.exercises[0].session_exercise_id;
+      db.prepare("UPDATE session_exercises SET equipment_instance_id='machine_a' WHERE session_exercise_id=?").run(priorId);
+      prescribeExercise(db, priorId, fourSets(70));
+      completeExercise(db, priorId, "AS_PRESCRIBED");
+      finishSession(db, prior.session.training_session_id);
+
+      const repeat: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const currentId = repeat.session.exercises[0].session_exercise_id;
+      db.prepare("UPDATE session_exercises SET equipment_instance_id='machine_b' WHERE session_exercise_id=?").run(currentId);
+      const candidate = getProgressionCandidate(db, currentId);
+      expect(candidate.recent_exposures).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-LRN-005: contradictory user evidence can supersede prior active learning", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const firstFeedback: any = recordTrainingFeedback(db, {
+        training_session_id: started.session.training_session_id,
+        raw_text: "Я вообще не люблю это упражнение",
+      });
+      const support: any = recordObservation(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User dislikes exercise",
+        persistence_class: "EXPLICITLY_PERSISTENT",
+        source_type: "USER_CHAT",
+        source_feedback_id: firstFeedback.feedback_id,
+        source_session_id: started.session.training_session_id,
+      });
+      const active: any = upsertLearnedItem(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User dislikes exercise",
+        status: "ACTIVE",
+        evidence: [{ observation_id: support.observation_id, relation: "SUPPORTS" }],
+      });
+
+      const secondFeedback: any = recordTrainingFeedback(db, {
+        training_session_id: started.session.training_session_id,
+        raw_text: "Сейчас это упражнение мне нормально",
+      });
+      const contradict: any = recordObservation(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User now considers exercise acceptable",
+        persistence_class: "EXPLICITLY_PERSISTENT",
+        source_type: "USER_CHAT",
+        source_feedback_id: secondFeedback.feedback_id,
+        source_session_id: started.session.training_session_id,
+      });
+      const superseded: any = upsertLearnedItem(db, {
+        learned_item_id: active.item.learned_item_id,
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "Prior dislike is superseded",
+        status: "SUPERSEDED",
+        evidence: [
+          { observation_id: support.observation_id, relation: "SUPPORTS" },
+          { observation_id: contradict.observation_id, relation: "CONTRADICTS" },
+        ],
+      });
+      expect(superseded.item.status).toBe("SUPERSEDED");
+      expect(superseded.evidence.some((e: any) => e.relation === "CONTRADICTS")).toBe(true);
     } finally {
       db.close();
     }
