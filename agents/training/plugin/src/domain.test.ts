@@ -16,6 +16,8 @@ import {
   pauseSession,
   prescribeExercise,
   proposeProgramChange,
+  recordObservation,
+  recordTrainingFeedback,
   resumeExercise,
   resumeSession,
   startAdHocSession,
