@@ -20,7 +20,7 @@ function block(reason) {
 function baseCalendarConfig(value) {
     if (value === null || typeof value !== "object" || Array.isArray(value))
         return value;
-    const { durableRules: _durableRules, ...base } = value;
+    const { durableRules: _durableRules, pendingRuleProposals: _pendingRuleProposals, ...base } = value;
     return base;
 }
 function writeAllowed(config, params) {

@@ -48,6 +48,7 @@ export type RuleProposalStore = {
     delete(key: string): Promise<boolean>;
 };
 export declare function parseDurableRules(value: unknown): DurableRules;
+export declare function parseStoredRuleProposals(value: unknown): StoredRuleProposal[];
 export declare function rulesDigest(rules: DurableRules): string;
 export declare function proposeRule(config: RuleConfigView, input: RuleProposalInput, store: RuleProposalStore): Promise<{
     rule_id?: string | undefined;

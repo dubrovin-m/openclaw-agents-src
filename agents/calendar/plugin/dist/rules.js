@@ -75,6 +75,79 @@ export function parseDurableRules(value) {
         throw new Error("durable rule ids must be unique");
     return { classification, hygiene };
 }
+function storedProposal(value, path) {
+    const object = asRecord(value);
+    if (!object)
+        throw new Error(`${path} must be an object`);
+    assertOnlyKeys(object, ["proposalId", "action", "kind", "targetDigest", "rule", "ruleId", "summary", "createdAt"], path);
+    const proposalId = typeof object.proposalId === "string" ? object.proposalId : "";
+    if (!PROPOSAL_ID_PATTERN.test(proposalId))
+        throw new Error(`${path}.proposalId is invalid`);
+    const action = object.action;
+    if (action !== "create" && action !== "replace" && action !== "delete") {
+        throw new Error(`${path}.action is invalid`);
+    }
+    const kind = object.kind;
+    if (kind !== "classification" && kind !== "hygiene_exception") {
+        throw new Error(`${path}.kind is invalid`);
+    }
+    const summary = typeof object.summary === "string" ? object.summary : "";
+    if (!summary || summary.length > MAX_APPROVAL_DESCRIPTION_LENGTH) {
+        throw new Error(`${path}.summary is invalid`);
+    }
+    const createdAt = object.createdAt;
+    if (!Number.isSafeInteger(createdAt) || createdAt <= 0) {
+        throw new Error(`${path}.createdAt is invalid`);
+    }
+    const targetDigest = object.targetDigest === undefined
+        ? undefined
+        : typeof object.targetDigest === "string" && /^[0-9a-f]{32}$/u.test(object.targetDigest)
+            ? object.targetDigest
+            : (() => { throw new Error(`${path}.targetDigest is invalid`); })();
+    const persistedRuleId = object.ruleId === undefined ? undefined : ruleId(object.ruleId, `${path}.ruleId`);
+    let rule;
+    if (object.rule !== undefined) {
+        rule = kind === "classification"
+            ? parseDurableRules({ classification: [object.rule], hygiene: [] }).classification[0]
+            : parseDurableRules({ classification: [], hygiene: [object.rule] }).hygiene[0];
+    }
+    if (action === "create" && (!rule || targetDigest !== undefined || persistedRuleId !== undefined)) {
+        throw new Error(`${path} create proposal is inconsistent`);
+    }
+    if (action === "replace" && (!rule || !targetDigest || persistedRuleId !== undefined)) {
+        throw new Error(`${path} replace proposal is inconsistent`);
+    }
+    if (action === "delete" && (rule !== undefined || !targetDigest || !persistedRuleId)) {
+        throw new Error(`${path} delete proposal is inconsistent`);
+    }
+    const normalized = {
+        action,
+        kind,
+        ...(targetDigest ? { targetDigest } : {}),
+        ...(rule ? { rule } : {}),
+        ...(persistedRuleId ? { ruleId: persistedRuleId } : {}),
+        summary,
+    };
+    const expectedProposalId = `proposal_${hash(normalized, 16)}`;
+    if (expectedProposalId !== proposalId) {
+        throw new Error(`${path}.proposalId does not match the normalized proposal`);
+    }
+    return { proposalId, ...normalized, createdAt: createdAt };
+}
+export function parseStoredRuleProposals(value) {
+    if (value === undefined)
+        return [];
+    if (!Array.isArray(value))
+        throw new Error("pendingRuleProposals must be an array");
+    if (value.length > MAX_RULE_PROPOSALS) {
+        throw new Error(`pendingRuleProposals must contain at most ${MAX_RULE_PROPOSALS} entries`);
+    }
+    const proposals = value.map((item, index) => storedProposal(item, `pendingRuleProposals[${index}]`));
+    if (new Set(proposals.map((proposal) => proposal.proposalId)).size !== proposals.length) {
+        throw new Error("pendingRuleProposals proposal ids must be unique");
+    }
+    return proposals;
+}
 export function rulesDigest(rules) {
     return hash(rules, 32);
 }

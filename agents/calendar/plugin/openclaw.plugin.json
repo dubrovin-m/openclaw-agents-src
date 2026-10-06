@@ -274,6 +274,133 @@
         },
         "additionalProperties": false
       },
+      "pendingRuleProposals": {
+        "type": "array",
+        "items": {
+          "type": "object",
+          "required": [
+            "proposalId",
+            "action",
+            "kind",
+            "summary",
+            "createdAt"
+          ],
+          "properties": {
+            "proposalId": {
+              "type": "string",
+              "pattern": "^proposal_[0-9a-f]{16}$"
+            },
+            "action": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "create"
+                },
+                {
+                  "type": "string",
+                  "const": "replace"
+                },
+                {
+                  "type": "string",
+                  "const": "delete"
+                }
+              ]
+            },
+            "kind": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "const": "classification"
+                },
+                {
+                  "type": "string",
+                  "const": "hygiene_exception"
+                }
+              ]
+            },
+            "targetDigest": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{32}$"
+            },
+            "rule": {
+              "anyOf": [
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "condition",
+                    "categoryId"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+                    },
+                    "condition": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320
+                    },
+                    "categoryId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "required": [
+                    "id",
+                    "condition",
+                    "requireLeader",
+                    "requireAgenda"
+                  ],
+                  "properties": {
+                    "id": {
+                      "type": "string",
+                      "minLength": 3,
+                      "maxLength": 64,
+                      "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+                    },
+                    "condition": {
+                      "type": "string",
+                      "minLength": 1,
+                      "maxLength": 320
+                    },
+                    "requireLeader": {
+                      "type": "boolean"
+                    },
+                    "requireAgenda": {
+                      "type": "boolean"
+                    }
+                  },
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "ruleId": {
+              "type": "string",
+              "minLength": 3,
+              "maxLength": 64,
+              "pattern": "^[a-z][a-z0-9_-]{2,63}$"
+            },
+            "summary": {
+              "type": "string",
+              "minLength": 1,
+              "maxLength": 512
+            },
+            "createdAt": {
+              "type": "number",
+              "minimum": 1
+            }
+          },
+          "additionalProperties": false
+        },
+        "maxItems": 100
+      },
       "targets": {
         "type": "object",
         "required": [
