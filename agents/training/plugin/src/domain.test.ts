@@ -507,6 +507,52 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
   });
 
 
+  it("migrated actuals without persisted targets do not satisfy a progression success streak", () => {
+    const db = fixture();
+    try {
+      db.prepare(
+        "UPDATE template_exercises SET progression_policy_json=? WHERE template_exercise_id='te_a'"
+      ).run(JSON.stringify({
+        kind: "DOUBLE_SUCCESS_THEN_INCREMENT",
+        initial_load_kg: 70,
+        increment_kg: 2.5,
+        successful_exposures_required: 2,
+      }));
+
+      for (const date of ["2026-10-04", "2026-10-05"]) {
+        const session: any = startProgramSession(db, {
+          selected_program_slot_id: "slot_a",
+          timezone_at_start: "Europe/Moscow",
+          local_date: date,
+        });
+        const id = session.session.exercises[0].session_exercise_id;
+        prescribeExercise(db, id, fourSets(70));
+        completeExercise(db, id, "AS_PRESCRIBED");
+        finishSession(db, session.session.training_session_id);
+      }
+      db.prepare(`UPDATE session_sets
+        SET target_reps=NULL,target_rir=NULL
+        WHERE session_exercise_id IN (
+          SELECT se.session_exercise_id
+          FROM session_exercises se
+          JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+          WHERE se.exercise_id='ex_a' AND ts.status='COMPLETED'
+        )`).run();
+
+      const current: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const candidate = getProgressionCandidate(db, current.session.exercises[0].session_exercise_id);
+      expect(candidate.candidate_load_kg).toBe(70);
+      expect(candidate.basis).toBe("HOLD_LAST_COMPARABLE_LOAD");
+      expect(candidate.recent_exposures.slice(0, 2).every((x: any) => x.success === false)).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
   it("TRA-CON-002/005: modality override stays in the Conditioning slot and Fitbit is not required", () => {
     const db = fixture();
     try {

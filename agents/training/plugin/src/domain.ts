@@ -814,8 +814,9 @@ function exposureSucceeded(sets: Row[]): boolean {
   return sets.every((set) => {
     if (set.status !== "COMPLETED" || set.actual_reps == null) return false;
     const targetReps = set.target_reps == null ? null : Number(set.target_reps);
+    if (targetReps === null) return false;
     const actualReps = Number(set.actual_reps);
-    if (targetReps !== null && actualReps < targetReps) return false;
+    if (actualReps < targetReps) return false;
     if (set.target_rir != null) {
       if (set.actual_rir == null || Number(set.actual_rir) < Number(set.target_rir)) return false;
     }
