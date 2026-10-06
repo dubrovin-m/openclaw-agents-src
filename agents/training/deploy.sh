@@ -86,7 +86,7 @@ assess(){
      [ "$TRAINING_PLUGIN_CONFIG_PRESENT" -eq 1 ] && [ "$TRAINING_PLUGIN_ENABLED" -eq 0 ] && \
      [ "$TRAINING_PLUGIN_DB_EXACT" -eq 1 ] && [ "$TRAINING_PLUGIN_COUNT" -eq 1 ] && \
      [ "$TRAINING_PLUGIN_EXACT" -eq 1 ] && [ "$workspace_exact" -eq 1 ] && [ "$db_present" -eq 0 ] && \
-     [ "$TRAINING_ALLOW_COUNT" -le 1 ]; then
+     [ "$TRAINING_ALLOW_COUNT" -eq 0 ]; then
     STATE="STAGED"
     return 0
   fi
@@ -148,7 +148,7 @@ set +e
   done
   mv "$WORKSPACE_TMP" "$WORKSPACE"
 
-  oc plugins install --force --accept-capabilities "$ARTIFACT"
+  oc plugins install --force --no-enable --accept-capabilities "$ARTIFACT"
   DB_JSON=$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$DB")
   oc config set plugins.entries.training.config.databasePath "$DB_JSON" --json
   oc config set plugins.entries.training.enabled false --json

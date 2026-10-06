@@ -53,10 +53,12 @@ assert_plugin_staged(){
 let s='';process.stdin.on('data',d=>s+=d).on('end',()=>{const x=JSON.parse(s),root=process.argv[2],m=(x.plugins||[]).filter(p=>p.id==='training');if(m.length!==1||m[0].version!=='0.1.0'||m[0].enabled!==false||m[0].status!=='disabled'||m[0].rootDir!==root)process.exit(1);});
 NODE
   node - "$r/state/openclaw.json" "$db" <<'NODE'
-const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),db=process.argv[3],p=c?.plugins?.entries?.training;
-if(!p||p.enabled!==false||p?.config?.databasePath!==db)process.exit(1);
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),db=process.argv[3],p=c?.plugins?.entries?.training,allow=Array.isArray(c?.plugins?.allow)?c.plugins.allow:[];
+if(!p||p.enabled!==false||p?.config?.databasePath!==db||allow.includes('training'))process.exit(1);
 NODE
 }
+
+grep -Fq 'plugins install --force --no-enable --accept-capabilities' "$DEPLOY" || fail "stage deploy does not use OpenClaw no-enable install"
 
 LEGACY_CONFIG="$TMP/legacy-array.json"
 cat > "$LEGACY_CONFIG" <<JSON
