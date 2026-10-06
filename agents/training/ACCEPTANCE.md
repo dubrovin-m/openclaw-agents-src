@@ -119,8 +119,8 @@ No row marked **GAP** is acceptable for source freeze.
 
 | ID | Status | Evidence / remaining gate |
 | --- | --- | --- |
-| TRA-MIG-001 | SOURCE+PRODUCTION | Synthetic normalized strength migration preserves actual historical facts and date-only precision; private Fitness export remains production work. |
-| TRA-MIG-002 | SOURCE+PRODUCTION | Synthetic Conditioning migration preserves known modality/result facts without inventing telemetry; private Fitness export remains production work. |
+| TRA-MIG-001 | SOURCE+PRODUCTION | Synthetic normalized strength migration preserves reps/load/RIR/duration/distance, including incomplete load-only historical completed sets, and date-only precision; private Fitness export remains production work. |
+| TRA-MIG-002 | SOURCE+PRODUCTION | Synthetic Conditioning migration preserves method, modality, duration, distance, RPE, notes, and aggregate average HR; average HR is stored as aggregate-only telemetry provenance without inventing raw samples. Private Fitness export remains production work. |
 | TRA-MIG-003 | SOURCE+PRODUCTION | Importer is replay-safe and SQLite integrity/FK checks pass; representative real records must reconcile against the private Fitness source before activation. |
 | TRA-REC-001 | SOURCE+PRODUCTION | Synthetic provider-independent encrypted backup/restore path passes, including corruption and FK fail-closed behavior; actual protected-provider restore remains a production gate. |
 | TRA-REC-002 | SOURCE+PRODUCTION | Synthetic restore verifies Program Version, cursor, and PAUSED session with open pause interval; actual recovery point restore remains a production gate. |
