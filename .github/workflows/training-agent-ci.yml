@@ -73,6 +73,10 @@ jobs:
         working-directory: agents/training/plugin
         run: npm ci
 
+      - name: Qualify pinned OpenClaw Telegram idempotency boundary
+        working-directory: agents/training/plugin
+        run: node ../tests/qualified-openclaw-idempotency.mjs ./node_modules/openclaw/dist
+
       - name: Test and build Training plugin
         working-directory: agents/training/plugin
         run: |
@@ -111,4 +115,7 @@ jobs:
       - name: Verify generated metadata remains frozen
         run: |
           set -euo pipefail
-          git diff --exit-code --             agents/training/plugin/package.json             agents/training/plugin/package-lock.json             agents/training/plugin/openclaw.plugin.json
+          git diff --exit-code -- \
+            agents/training/plugin/package.json \
+            agents/training/plugin/package-lock.json \
+            agents/training/plugin/openclaw.plugin.json
