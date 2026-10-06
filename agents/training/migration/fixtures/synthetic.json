@@ -102,6 +102,14 @@
               "actual_load_kg": 32,
               "actual_rir": null,
               "actual_distance_m": 40
+            },
+            {
+              "source_id": "synthetic-set-carry-load-only",
+              "set_number": 2,
+              "status": "COMPLETED",
+              "actual_reps": null,
+              "actual_load_kg": 32,
+              "actual_rir": null
             }
           ]
         }

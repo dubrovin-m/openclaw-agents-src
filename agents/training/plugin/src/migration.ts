@@ -111,8 +111,10 @@ export type NormalizedTrainingMigrationV1 = {
     conditioning?: {
       source_id: string;
       selected_modality: { source_id: string; name: string };
+      method?: string | null;
       actual_duration_sec?: number | null;
       actual_distance_m?: number | null;
+      actual_avg_hr?: number | null;
       actual_avg_power_w?: number | null;
       actual_avg_cadence?: number | null;
       rpe?: number | null;
@@ -459,8 +461,8 @@ export function importNormalizedTraining(
           const rir = status === "SKIPPED" ? null : nullableNumber(set.actual_rir, "actual_rir");
           const duration = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_duration_sec, "actual_duration_sec");
           const distance = status === "SKIPPED" ? null : nullablePositiveNumber(set.actual_distance_m, "actual_distance_m");
-          if (status === "COMPLETED" && reps == null && duration == null && distance == null) {
-            throw new Error("Completed migrated set requires reps, duration, or distance");
+          if (status === "COMPLETED" && reps == null && load == null && duration == null && distance == null) {
+            throw new Error("Completed migrated set requires reps, load, duration, or distance");
           }
           db.prepare(`INSERT INTO session_sets(
             session_set_id,session_exercise_id,set_number,
@@ -490,11 +492,12 @@ export function importNormalizedTraining(
           policyId = policy?.conditioning_policy_id ?? null;
         }
         const prescriptionId = newId("cond");
+        const method = conditioning.method == null ? null : requiredString(conditioning.method, "conditioning.method");
         db.prepare(`INSERT INTO conditioning_prescriptions(
           conditioning_prescription_id,training_session_id,conditioning_policy_id,
           recommended_modality_id,selected_modality_id,modality_selection_source,protocol_summary,created_at
-        ) VALUES(?,?,?,NULL,?,'MIGRATION',NULL,?)`).run(
-          prescriptionId, sessionId, policyId, modalityId, now
+        ) VALUES(?,?,?,NULL,?,'MIGRATION',?,?)`).run(
+          prescriptionId, sessionId, policyId, modalityId, method, now
         );
         db.prepare(`INSERT INTO conditioning_results(
           conditioning_prescription_id,actual_duration_sec,actual_distance_m,
@@ -508,6 +511,16 @@ export function importNormalizedTraining(
           nullableNumber(conditioning.rpe, "conditioning.rpe"),
           conditioning.notes ?? null
         );
+        const avgHr = nullableNumber(conditioning.actual_avg_hr, "conditioning.actual_avg_hr");
+        if (avgHr !== null) {
+          if (!Number.isInteger(avgHr) || avgHr <= 0) throw new Error("Invalid conditioning.actual_avg_hr");
+          db.prepare(`INSERT INTO external_telemetry_links(
+            telemetry_link_id,training_session_id,source,status,external_activity_id,
+            telemetry_started_at,telemetry_ended_at,avg_hr,max_hr,time_in_target_zone_sec,zones_json,data_quality,updated_at
+          ) VALUES(?,?,?,'AVAILABLE',NULL,NULL,NULL,?,NULL,NULL,'{}','AGGREGATE_ONLY',?)`).run(
+            newId("tel"), sessionId, sourceSystem, avgHr, now
+          );
+        }
         recordSource("conditioning_session", conditioning.source_id, "conditioning_prescription", prescriptionId);
       }
     }
@@ -526,6 +539,7 @@ export function importNormalizedTraining(
         session_exercises: count(db, "session_exercises"),
         session_sets: count(db, "session_sets"),
         conditioning_results: count(db, "conditioning_results"),
+        external_telemetry_links: count(db, "external_telemetry_links"),
       },
     };
     db.prepare("UPDATE migration_batches SET result_json=? WHERE migration_batch_id=?")

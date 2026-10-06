@@ -130,15 +130,25 @@ function payload(): NormalizedTrainingMigrationV1 {
             exercise_source_id: "legacy-ex-carry",
             sequence: 2,
             status: "COMPLETED",
-            actual_sets: [{
-              source_id: "legacy-set-carry-1",
-              set_number: 1,
-              status: "COMPLETED",
-              actual_reps: null,
-              actual_load_kg: 32,
-              actual_rir: null,
-              actual_distance_m: 40,
-            }],
+            actual_sets: [
+              {
+                source_id: "legacy-set-carry-1",
+                set_number: 1,
+                status: "COMPLETED",
+                actual_reps: null,
+                actual_load_kg: 32,
+                actual_rir: null,
+                actual_distance_m: 40,
+              },
+              {
+                source_id: "legacy-set-carry-2",
+                set_number: 2,
+                status: "COMPLETED",
+                actual_reps: null,
+                actual_load_kg: 32,
+                actual_rir: null,
+              },
+            ],
           },
         ],
       },
@@ -164,7 +174,9 @@ function payload(): NormalizedTrainingMigrationV1 {
         conditioning: {
           source_id: "legacy-conditioning-result",
           selected_modality: { source_id: "legacy-mod-bike", name: "Bike" },
+          method: "Zone 2",
           actual_duration_sec: 1800,
+          actual_avg_hr: 133,
           rpe: 4,
         },
       },
@@ -181,8 +193,9 @@ describe("Training normalized migration", () => {
       const result: any = importNormalizedTraining(db, payload(), "a".repeat(64));
       expect(result.replayed).toBe(false);
       expect(result.counts.training_sessions).toBe(2);
-      expect(result.counts.session_sets).toBe(3);
+      expect(result.counts.session_sets).toBe(4);
       expect(result.counts.conditioning_results).toBe(1);
+      expect(result.counts.external_telemetry_links).toBe(1);
       const conditioningMobility = Number((db.prepare(
         `SELECT count(*) n FROM template_exercises te
           JOIN workout_templates wt ON wt.workout_template_id=te.workout_template_id
@@ -208,19 +221,37 @@ describe("Training normalized migration", () => {
       expect(migrated.local_date).toBe("2026-09-30");
       expect(migrated.time_precision).toBe("DATE_ONLY");
 
-      const carry = db.prepare(
-        `SELECT ss.actual_reps,ss.actual_load_kg,ss.actual_rir,ss.actual_duration_sec,ss.actual_distance_m
+      const carries = db.prepare(
+        `SELECT ss.set_number,ss.actual_reps,ss.actual_load_kg,ss.actual_rir,ss.actual_duration_sec,ss.actual_distance_m
            FROM session_sets ss
            JOIN session_exercises se ON se.session_exercise_id=ss.session_exercise_id
            JOIN exercises e ON e.exercise_id=se.exercise_id
-          WHERE e.name='Farmer Carry'`
+          WHERE e.name='Farmer Carry' ORDER BY ss.set_number`
+      ).all() as any[];
+      expect(carries).toEqual([
+        {
+          set_number: 1, actual_reps: null, actual_load_kg: 32, actual_rir: null,
+          actual_duration_sec: null, actual_distance_m: 40,
+        },
+        {
+          set_number: 2, actual_reps: null, actual_load_kg: 32, actual_rir: null,
+          actual_duration_sec: null, actual_distance_m: null,
+        },
+      ]);
+
+      const conditioningFacts = db.prepare(
+        `SELECT cp.protocol_summary,etl.source,etl.status,etl.avg_hr,etl.data_quality
+           FROM conditioning_prescriptions cp
+           JOIN training_sessions ts ON ts.training_session_id=cp.training_session_id
+           LEFT JOIN external_telemetry_links etl ON etl.training_session_id=ts.training_session_id
+          WHERE ts.local_date='2026-10-01'`
       ).get() as any;
-      expect(carry).toEqual({
-        actual_reps: null,
-        actual_load_kg: 32,
-        actual_rir: null,
-        actual_duration_sec: null,
-        actual_distance_m: 40,
+      expect(conditioningFacts).toEqual({
+        protocol_summary: "Zone 2",
+        source: "fitness-workbook",
+        status: "AVAILABLE",
+        avg_hr: 133,
+        data_quality: "AGGREGATE_ONLY",
       });
 
       const started: any = startProgramSession(db, {
