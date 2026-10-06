@@ -5,12 +5,17 @@ import {
 } from "openclaw/plugin-sdk/tool-plugin";
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import {
+  abandonSession,
   completeExercise,
+  correctSetResult,
   deferExercise,
   finishSession,
   getRecommendation,
   getSession,
+  pauseSession,
   prescribeExercise,
+  resumeExercise,
+  resumeSession,
   skipExercise,
   startProgramSession,
   voidSession,
@@ -201,6 +206,17 @@ const entry = defineToolPlugin({
         withDb(config, (db) => deferExercise(db, params.session_exercise_id)),
     })),
     tool(ownerTool({
+      name: "training_exercise_resume",
+      label: "Resume exercise",
+      description: "Return one deferred exercise to ACTIVE state without changing its durable prescription.",
+      parameters: Type.Object({
+        session_exercise_id: sessionExerciseId,
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => resumeExercise(db, params.session_exercise_id)),
+    })),
+    tool(ownerTool({
       name: "training_exercise_skip",
       label: "Skip exercise",
       description: "Skip one exercise for the current session without changing the permanent program.",
@@ -212,6 +228,36 @@ const entry = defineToolPlugin({
       execute: (params, config) =>
         withDb(config, (db) =>
           skipExercise(db, params.session_exercise_id, params.reason)),
+    })),
+    tool(ownerTool({
+      name: "training_session_pause",
+      label: "Pause training session",
+      description: "Pause the current session without advancing the program cursor.",
+      parameters: Type.Object({ training_session_id: sessionId }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => pauseSession(db, params.training_session_id)),
+    })),
+    tool(ownerTool({
+      name: "training_session_resume",
+      label: "Resume training session",
+      description: "Resume a durable paused session.",
+      parameters: Type.Object({ training_session_id: sessionId }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => resumeSession(db, params.training_session_id)),
+    })),
+    tool(ownerTool({
+      name: "training_session_abandon",
+      label: "Abandon training session",
+      description: "End a real unfinished session without advancing the program cursor.",
+      parameters: Type.Object({
+        training_session_id: sessionId,
+        reason: Type.Optional(Type.String({ maxLength: 500 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => abandonSession(db, params.training_session_id, params.reason)),
     })),
     tool(ownerTool({
       name: "training_session_finish",
@@ -228,6 +274,30 @@ const entry = defineToolPlugin({
       execute: (params, config) =>
         withDb(config, (db) =>
           finishSession(db, params.training_session_id, params.overall_feedback)),
+    })),
+    tool(ownerTool({
+      name: "training_set_correct",
+      label: "Correct set result",
+      description: "Correct exactly one field on a completed working set and preserve an audit record.",
+      parameters: Type.Object({
+        session_set_id: Type.String({ minLength: 1, maxLength: 100 }),
+        field: Type.Union([
+          Type.Literal("reps"),
+          Type.Literal("load_kg"),
+          Type.Literal("rir"),
+        ]),
+        value: Type.Union([Type.Number({ minimum: 0, maximum: 1000 }), Type.Null()]),
+        reason: Type.Optional(Type.String({ maxLength: 500 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => {
+          const patch =
+            params.field === "reps" ? { reps: Number(params.value) }
+            : params.field === "load_kg" ? { load_kg: params.value }
+            : { rir: params.value };
+          return correctSetResult(db, params.session_set_id, patch, params.reason);
+        }),
     })),
     tool(ownerTool({
       name: "training_session_void",
