@@ -6,7 +6,7 @@ Canonical purpose, behavior, authority, lifecycle, time model, review cadence, a
 
 ## v1 implementation boundary
 
-Calendar v1 has no independent durable state store. Durable operational rules live only in the validated Calendar plugin configuration; pending approval proposals are short-lived in-process interaction state and disappear on restart. The package contains:
+Calendar v1 has no independent Calendar state database or operational source. Durable operational rules live only in the validated Calendar plugin configuration; pending approval proposals are short-lived, non-authoritative interaction state stored in the OpenClaw plugin-state keyed store with a bounded TTL so exact proposals remain resolvable across plugin/runtime instance boundaries. The package contains:
 
 - `workspace/` — persistent runtime instructions and identity files;
 - `config/calendar-agent.fragment.json` — non-secret agent identity and workspace paths;
@@ -46,7 +46,7 @@ The plugin validates that:
 - the label-administration path can synchronize only configured analytical label definitions and accepts no model-supplied mutation payload;
 - all other model-visible tool calls for the `calendar` agent fail closed unless explicitly admitted.
 
-Pending rule proposals are intentionally ephemeral and bounded. A runtime restart between proposal and approval requires a fresh proposal; this is not loss of authoritative state because an unapproved proposal is not an effective rule.
+Pending rule proposals are intentionally ephemeral and bounded. They use OpenClaw plugin-scoped keyed state with a 30-minute TTL and a bounded entry count so the exact proposal can survive ordinary plugin/runtime instance changes without becoming authoritative operational state. Expired or missing proposals require a fresh proposal; an unapproved proposal is never an effective rule.
 
 ## Google integration boundary
 

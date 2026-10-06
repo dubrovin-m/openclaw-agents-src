@@ -33,7 +33,7 @@ type RuleConfigView = {
   durableRules: DurableRules;
 };
 
-type StoredRuleProposal = {
+export type StoredRuleProposal = {
   proposalId: string;
   action: RuleProposalInput["action"];
   kind: RuleProposalInput["kind"];
@@ -49,9 +49,14 @@ const RULE_ID_PATTERN = /^[a-z][a-z0-9_-]{2,63}$/u;
 const PROPOSAL_ID_PATTERN = /^proposal_[0-9a-f]{16}$/u;
 const MAX_CONDITION_LENGTH = 320;
 const MAX_APPROVAL_DESCRIPTION_LENGTH = 512;
-const PROPOSAL_TTL_MS = 30 * 60 * 1000;
-const MAX_PROPOSALS = 100;
-const proposals = new Map<string, StoredRuleProposal>();
+export const RULE_PROPOSAL_TTL_MS = 30 * 60 * 1000;
+export const MAX_RULE_PROPOSALS = 100;
+
+export type RuleProposalStore = {
+  register(key: string, value: StoredRuleProposal, opts?: { ttlMs?: number }): Promise<void>;
+  lookup(key: string): Promise<StoredRuleProposal | undefined>;
+  delete(key: string): Promise<boolean>;
+};
 
 const asRecord = (value: unknown): JsonObject | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
@@ -123,17 +128,6 @@ export function parseDurableRules(value: unknown): DurableRules {
 
 export function rulesDigest(rules: DurableRules) {
   return hash(rules, 32);
-}
-
-function sweepProposals(now = Date.now()) {
-  for (const [id, proposal] of proposals) {
-    if (now - proposal.createdAt > PROPOSAL_TTL_MS) proposals.delete(id);
-  }
-  while (proposals.size >= MAX_PROPOSALS) {
-    const oldest = proposals.keys().next().value as string | undefined;
-    if (!oldest) break;
-    proposals.delete(oldest);
-  }
 }
 
 function findRule(rules: DurableRules, kind: RuleProposalInput["kind"], id: string) {
@@ -218,15 +212,18 @@ function normalizeProposal(config: RuleConfigView, input: RuleProposalInput): Om
   };
 }
 
-export function proposeRule(config: RuleConfigView, input: RuleProposalInput) {
-  sweepProposals();
+export async function proposeRule(
+  config: RuleConfigView,
+  input: RuleProposalInput,
+  store: RuleProposalStore,
+) {
   const normalized = normalizeProposal(config, input);
   if (normalized.summary.length > MAX_APPROVAL_DESCRIPTION_LENGTH) {
     throw new Error(`Rule approval summary must be <= ${MAX_APPROVAL_DESCRIPTION_LENGTH} characters`);
   }
   const proposalId = `proposal_${hash(normalized, 16)}`;
   const stored: StoredRuleProposal = { proposalId, ...normalized, createdAt: Date.now() };
-  proposals.set(proposalId, stored);
+  await store.register(proposalId, stored, { ttlMs: RULE_PROPOSAL_TTL_MS });
   return {
     proposal_id: proposalId,
     action: stored.action,
@@ -237,14 +234,13 @@ export function proposeRule(config: RuleConfigView, input: RuleProposalInput) {
   };
 }
 
-export function getRuleProposal(proposalId: string) {
-  sweepProposals();
+export async function getRuleProposal(proposalId: string, store: RuleProposalStore) {
   if (!PROPOSAL_ID_PATTERN.test(proposalId)) return undefined;
-  return proposals.get(proposalId);
+  return store.lookup(proposalId);
 }
 
-export function deleteRuleProposal(proposalId: string) {
-  proposals.delete(proposalId);
+export async function deleteRuleProposal(proposalId: string, store: RuleProposalStore) {
+  return store.delete(proposalId);
 }
 
 export function applyRuleProposal(rules: DurableRules, proposal: StoredRuleProposal): DurableRules {
