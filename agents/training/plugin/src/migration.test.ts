@@ -18,13 +18,23 @@ function payload(): NormalizedTrainingMigrationV1 {
     source_export_id: "synthetic-export-1",
     exercises: [
       {
-        source_id: "legacy-ex-squat",
+        source_id: "current-ex-squat",
         name: "Back Squat",
         category: "strength",
         equipment_type: "barbell",
         load_mode: "TOTAL_EXTERNAL",
         rep_mode: "TOTAL",
         load_progression_direction: "HIGHER_IS_HARDER",
+      },
+      {
+        source_id: "legacy-ex-squat-source",
+        name: "Back Squat — legacy Fitness load",
+        category: "legacy_strength",
+        equipment_type: "fitness-workbook",
+        load_mode: "LEGACY_SOURCE_RECORDED",
+        active: false,
+        rep_mode: "TOTAL",
+        load_progression_direction: "NOT_APPLICABLE",
       },
       {
         source_id: "legacy-ex-carry",
@@ -60,7 +70,7 @@ function payload(): NormalizedTrainingMigrationV1 {
           workout_kind: "STRENGTH",
           strength_exercises: [{
             source_id: "legacy-template-ex-squat",
-            exercise_source_id: "legacy-ex-squat",
+            exercise_source_id: "current-ex-squat",
             sequence: 1,
             target_sets: 1,
             target_reps_min: 6,
@@ -113,7 +123,7 @@ function payload(): NormalizedTrainingMigrationV1 {
         strength_exercises: [
           {
             source_id: "legacy-session-ex-squat",
-            exercise_source_id: "legacy-ex-squat",
+            exercise_source_id: "legacy-ex-squat-source",
             sequence: 1,
             status: "COMPLETED",
             actual_sets: [{
@@ -254,14 +264,53 @@ describe("Training normalized migration", () => {
         data_quality: "AGGREGATE_ONLY",
       });
 
+      const legacySquat = db.prepare(
+        "SELECT load_mode,load_progression_direction,active FROM exercises WHERE name='Back Squat — legacy Fitness load'"
+      ).get() as any;
+      expect(legacySquat).toEqual({
+        load_mode: "LEGACY_SOURCE_RECORDED",
+        load_progression_direction: "NOT_APPLICABLE",
+        active: 0,
+      });
+
       const started: any = startProgramSession(db, {
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-06",
       });
       const currentExercise = started.session.exercises[0];
       const candidate = getProgressionCandidate(db, currentExercise.session_exercise_id);
-      expect(candidate.candidate_load_kg).toBe(67.5);
-      expect(candidate.basis).toBe("HOLD_LAST_COMPARABLE_LOAD");
+      expect(candidate.candidate_load_kg).toBeNull();
+      expect(candidate.basis).toBe("NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD");
+      expect(candidate.recent_exposures).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects inactive legacy exercise in an active Program template", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "training-migration-"));
+    roots.push(root);
+    const db = openTrainingStore(path.join(root, "training.sqlite3"));
+    try {
+      const broken = payload();
+      broken.program_versions[0]!.templates[0]!.strength_exercises![0]!.exercise_source_id = "legacy-ex-squat-source";
+      expect(() => importNormalizedTraining(db, broken, "f".repeat(64)))
+        .toThrow(/Program template cannot reference an inactive migrated exercise/);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("rejects active or progressing legacy source-recorded exercises", () => {
+    const root = fs.mkdtempSync(path.join(os.tmpdir(), "training-migration-"));
+    roots.push(root);
+    const db = openTrainingStore(path.join(root, "training.sqlite3"));
+    try {
+      const broken = payload();
+      const legacy = broken.exercises.find((x) => x.source_id === "legacy-ex-squat-source")!;
+      legacy.active = true;
+      expect(() => importNormalizedTraining(db, broken, "e".repeat(64)))
+        .toThrow(/LEGACY_SOURCE_RECORDED exercise must be inactive and non-progressing/);
     } finally {
       db.close();
     }

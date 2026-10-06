@@ -19,7 +19,7 @@ afterEach(() => {
 });
 
 describe("Training Store", () => {
-  it("creates schema v1 with SQLite integrity", () => {
+  it("creates the current Training schema with SQLite integrity", () => {
     const root = fs.mkdtempSync(path.join(os.tmpdir(), "training-store-"));
     roots.push(root);
     const db = openTrainingStore(path.join(root, "training.sqlite3"));

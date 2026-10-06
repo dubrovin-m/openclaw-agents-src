@@ -4,13 +4,23 @@
   "source_export_id": "synthetic-cli-fixture-v1",
   "exercises": [
     {
-      "source_id": "ex-squat",
+      "source_id": "synthetic-ex-squat-current",
       "name": "Synthetic Back Squat",
       "category": "strength",
       "equipment_type": "barbell",
       "load_mode": "TOTAL_EXTERNAL",
       "rep_mode": "TOTAL",
       "load_progression_direction": "HIGHER_IS_HARDER"
+    },
+    {
+      "source_id": "synthetic-ex-squat-legacy",
+      "name": "Synthetic Back Squat — legacy source load",
+      "category": "legacy_strength",
+      "equipment_type": "fitness-workbook",
+      "load_mode": "LEGACY_SOURCE_RECORDED",
+      "active": false,
+      "rep_mode": "TOTAL",
+      "load_progression_direction": "NOT_APPLICABLE"
     },
     {
       "source_id": "ex-carry",
@@ -39,7 +49,7 @@
           "strength_exercises": [
             {
               "source_id": "template-ex-squat",
-              "exercise_source_id": "ex-squat",
+              "exercise_source_id": "synthetic-ex-squat-current",
               "sequence": 1,
               "target_sets": 1,
               "target_reps_min": 6,
@@ -74,7 +84,7 @@
       "strength_exercises": [
         {
           "source_id": "session-ex-squat",
-          "exercise_source_id": "ex-squat",
+          "exercise_source_id": "synthetic-ex-squat-legacy",
           "sequence": 1,
           "status": "COMPLETED",
           "actual_sets": [
