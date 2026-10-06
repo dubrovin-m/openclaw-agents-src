@@ -3,7 +3,7 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DEPLOY="$ROOT/deploy.sh"
-OPENCLAW_BIN=$(command -v openclaw)
+OPENCLAW_BIN=${OPENCLAW_BIN:-$(command -v openclaw)}
 TARGET_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.plugin.version)' "$ROOT/release.json")
 PREDECESSOR_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.predecessor.plugin.version)' "$ROOT/release.json")
 PREDECESSOR_SOURCE=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.predecessor.source_revision)' "$ROOT/release.json")
@@ -82,6 +82,7 @@ stage_predecessor(){
 }
 
 grep -Fq 'plugins install --force --no-enable --accept-capabilities' "$DEPLOY" || fail "stage deploy does not use OpenClaw no-enable install"
+grep -Fq 'OPENCLAW_BIN=${OPENCLAW_BIN:-$(command -v openclaw || true)}' "$DEPLOY" || fail "deploy entrypoint does not honor explicit qualified host binary"
 grep -Fq 'config patch --stdin' "$DEPLOY" || fail "stage deploy does not atomically patch disabled plugin config"
 ! grep -Fq 'config set plugins.entries.training' "$DEPLOY" || fail "stage deploy uses non-atomic Training config writes"
 

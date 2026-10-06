@@ -32,8 +32,9 @@ EXPECTED_OPENCLAW_VERSION=$(node "$RUNTIME_HELPER" openclaw-version "$RUNTIME_CO
 node "$RUNTIME_HELPER" check-node "$RUNTIME_CONTRACT" "$(node --version)" >/dev/null || fail "Unsupported Node runtime"
 eval "$(node "$SUPPORT" release-env "$REPO_ROOT" "$RELEASE_FILE" "$EXPECTED_OPENCLAW_VERSION")" || fail "Invalid Training release"
 
-OPENCLAW_BIN=$(command -v openclaw || true)
+OPENCLAW_BIN=${OPENCLAW_BIN:-$(command -v openclaw || true)}
 [ -n "$OPENCLAW_BIN" ] || fail "Required command unavailable: openclaw"
+[ -x "$OPENCLAW_BIN" ] || fail "OpenClaw binary is not executable: $OPENCLAW_BIN"
 
 if [ -n "$TEST_ROOT" ]; then
   case "$TEST_ROOT" in /*) ;; *) fail "--test-root must be absolute" ;; esac
