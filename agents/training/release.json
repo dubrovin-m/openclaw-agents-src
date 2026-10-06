@@ -16,7 +16,7 @@
     "runtime_entry_sha256": "8bcbbbc1b4cc138007c48940525193386b746827cec93dad136894dbf18531b5"
   },
   "source": {
-    "source_revision": "713355bee04f6518a934a5d7f5570a421eaa7b06",
+    "source_revision": "24cfce3b0c7b42980e33b2576182ce40099032cd",
     "workspace_sha256": {
       "AGENTS.md": "98ed4a57c24d6257c9d06199885ecbd8b0876c8e9aace4e49ae9b1e915e63ea5",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
