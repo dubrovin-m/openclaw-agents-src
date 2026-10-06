@@ -1340,13 +1340,17 @@ function cloneProgramVersion(db: DatabaseSync, baseVersionId: string, createdBy:
   );
   if (!base || base.status !== "ACTIVE") throw new Error("Program change base must be the active version");
 
+  const versionNumber = Number((
+    db.prepare("SELECT COALESCE(MAX(version_number),0)+1 AS n FROM program_versions WHERE program_id=?")
+      .get(base.program_id) as { n:number }
+  ).n);
   const newVersionId = newId("ver");
   const now = nowIso();
   db.prepare(`INSERT INTO program_versions(
     program_version_id,program_id,version_number,status,progression_policy_json,created_by,
     decision_reason,activated_at,retired_at,created_at
   ) VALUES(?,?,?,'DRAFT',?,?,?,NULL,NULL,?)`).run(
-    newVersionId, base.program_id, base.version_number + 1,
+    newVersionId, base.program_id, versionNumber,
     base.progression_policy_json, createdBy, reason, now
   );
 
