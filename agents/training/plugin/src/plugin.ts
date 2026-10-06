@@ -23,8 +23,6 @@ import {
   proposeProgramChange,
   recordObservation,
   recordTrainingFeedback,
-  recordObservation,
-  recordTrainingFeedback,
   resumeExercise,
   resumeSession,
   skipExercise,
