@@ -1,12 +1,12 @@
-import type { DatabaseSync } from "node:sqlite";
+import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { newId, nowIso, withTransaction } from "./store.js";
 
-type Row = Record<string, unknown>;
+type Row = Record<string, SQLInputValue>;
 
-function one<T extends Row>(db: DatabaseSync, sql: string, ...params: unknown[]): T | undefined {
+function one<T extends Row>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T | undefined {
   return db.prepare(sql).get(...params) as T | undefined;
 }
-function all<T extends Row>(db: DatabaseSync, sql: string, ...params: unknown[]): T[] {
+function all<T extends Row>(db: DatabaseSync, sql: string, ...params: SQLInputValue[]): T[] {
   return db.prepare(sql).all(...params) as T[];
 }
 
