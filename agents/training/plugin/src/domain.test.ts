@@ -6,6 +6,7 @@ import {
   abandonSession,
   completeExercise,
   correctSetResult,
+  deferExercise,
   finishSession,
   getRecommendation,
   pauseSession,
@@ -241,7 +242,6 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       });
       const id = started.session.exercises[0].session_exercise_id;
       prescribeExercise(db, id, fourSets(70));
-      const { deferExercise } = require("./domain.js");
       deferExercise(db, id);
       const resumed: any = resumeExercise(db, id);
       expect(resumed.exercise.status).toBe("ACTIVE");
