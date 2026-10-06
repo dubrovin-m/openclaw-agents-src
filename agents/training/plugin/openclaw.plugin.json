@@ -24,8 +24,11 @@
     "tools": [
       "training_status",
       "training_recommendation_get",
+      "training_program_get",
+      "training_exercise_search",
       "training_session_get",
       "training_session_start",
+      "training_program_cycle_restart",
       "training_progression_get",
       "training_session_start_ad_hoc",
       "training_conditioning_get",
@@ -35,6 +38,7 @@
       "training_exercise_complete",
       "training_exercise_defer",
       "training_exercise_resume",
+      "training_exercise_substitute",
       "training_exercise_skip",
       "training_session_pause",
       "training_session_resume",
@@ -57,10 +61,19 @@
     "training_recommendation_get": {
       "optional": true
     },
+    "training_program_get": {
+      "optional": true
+    },
+    "training_exercise_search": {
+      "optional": true
+    },
     "training_session_get": {
       "optional": true
     },
     "training_session_start": {
+      "optional": true
+    },
+    "training_program_cycle_restart": {
       "optional": true
     },
     "training_progression_get": {
@@ -88,6 +101,9 @@
       "optional": true
     },
     "training_exercise_resume": {
+      "optional": true
+    },
+    "training_exercise_substitute": {
       "optional": true
     },
     "training_exercise_skip": {

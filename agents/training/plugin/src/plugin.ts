@@ -15,6 +15,7 @@ import {
   finishSession,
   getConditioningPrescription,
   getProgressionCandidate,
+  getProgramState,
   getRecommendation,
   getRelevantLearning,
   getSession,
@@ -24,8 +25,11 @@ import {
   recordObservation,
   recordTrainingFeedback,
   resumeExercise,
+  restartProgramCycle,
   resumeSession,
+  searchExercises,
   skipExercise,
+  substituteExercise,
   startAdHocSession,
   startProgramSession,
   upsertLearnedItem,
@@ -148,6 +152,24 @@ const entry = defineToolPlugin({
       execute: (_params, config) => withDb(config, getRecommendation),
     })),
     tool(ownerTool({
+      name: "training_program_get",
+      label: "Training program state",
+      description: "Read the active Program Version, cursor, ordered slots, and template details for deterministic program-slot selection.",
+      parameters: empty,
+      execute: (_params, config) => withDb(config, getProgramState),
+    })),
+    tool(ownerTool({
+      name: "training_exercise_search",
+      label: "Search training exercises",
+      description: "Search the canonical exercise catalog by exercise name or alias for ad-hoc sessions and temporary substitutions.",
+      parameters: Type.Object({
+        query: Type.String({ minLength: 1, maxLength: 200 }),
+        limit: Type.Optional(Type.Integer({ minimum: 1, maximum: 50 })),
+      }, { additionalProperties: false }),
+      execute: (params, config) =>
+        withDb(config, (db) => searchExercises(db, params.query, params.limit ?? 20)),
+    })),
+    tool(ownerTool({
       name: "training_session_get",
       label: "Training session",
       description: "Read the current open session or one named session.",
@@ -169,6 +191,14 @@ const entry = defineToolPlugin({
       mutate: true,
       execute: (params, config) =>
         withDb(config, (db) => startProgramSession(db, params)),
+    })),
+    tool(ownerTool({
+      name: "training_program_cycle_restart",
+      label: "Restart training program cycle",
+      description: "Explicitly start a new cycle at Strength A without rewriting prior slot outcomes. Requires no open session.",
+      parameters: empty,
+      mutate: true,
+      execute: (_params, config) => withDb(config, restartProgramCycle),
     })),
     tool(ownerTool({
       name: "training_progression_get",
@@ -352,6 +382,29 @@ const entry = defineToolPlugin({
       mutate: true,
       execute: (params, config) =>
         withDb(config, (db) => resumeExercise(db, params.session_exercise_id)),
+    })),
+    tool(ownerTool({
+      name: "training_exercise_substitute",
+      label: "Substitute exercise",
+      description: "Replace one not-yet-completed exercise for the current session only, preserving the original exercise and any superseded prescription in audit events.",
+      parameters: Type.Object({
+        session_exercise_id: sessionExerciseId,
+        replacement_exercise_id: Type.String({ minLength: 1, maxLength: 100 }),
+        equipment_instance_id: Type.Optional(Type.Union([
+          Type.String({ minLength: 1, maxLength: 100 }),
+          Type.Null(),
+        ])),
+        reason: Type.Optional(Type.String({ maxLength: 500 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => substituteExercise(
+          db,
+          params.session_exercise_id,
+          params.replacement_exercise_id,
+          params.reason,
+          params.equipment_instance_id,
+        )),
     })),
     tool(ownerTool({
       name: "training_exercise_skip",

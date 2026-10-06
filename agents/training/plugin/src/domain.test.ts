@@ -12,16 +12,20 @@ import {
   deferExercise,
   finishSession,
   getProgressionCandidate,
+  getProgramState,
   getRecommendation,
   pauseSession,
   prescribeExercise,
   proposeProgramChange,
   recordObservation,
   recordTrainingFeedback,
+  restartProgramCycle,
   resumeExercise,
+  searchExercises,
   resumeSession,
   startAdHocSession,
   startProgramSession,
+  substituteExercise,
   upsertLearnedItem,
 } from "./domain.js";
 import { nowIso, openTrainingStore } from "./store.js";
@@ -701,6 +705,79 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
           relation: "SUPPORTS",
         }],
       })).toThrow(/explicit persistent user evidence/);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-SEL-007 support: program state exposes all ordered slots for deterministic override selection", () => {
+    const db = fixture();
+    try {
+      const state: any = getProgramState(db);
+      expect(state.cursor.next_program_slot_id).toBe("slot_a");
+      expect(state.slots.map((slot: any) => [slot.sequence, slot.name])).toEqual([
+        [1, "Strength A"],
+        [2, "Conditioning"],
+        [3, "Strength B"],
+        [4, "Conditioning"],
+        [5, "Strength C"],
+      ]);
+      expect(state.slots[1].conditioning.modalities.map((x: any) => x.modality_id).sort())
+        .toEqual(["bike", "swim", "treadmill"]);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-SEL-008: explicit cycle restart starts a new cycle at Strength A", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE program_cursor SET next_program_slot_id='slot_b' WHERE program_version_id='ver_test'").run();
+      const restarted: any = restartProgramCycle(db);
+      expect(restarted.recommendation.recommendation.program_slot_id).toBe("slot_a");
+      const cursor = db.prepare(
+        "SELECT cycle_number,next_program_slot_id FROM program_cursor WHERE program_version_id='ver_test'"
+      ).get() as any;
+      expect(cursor.cycle_number).toBe(2);
+      expect(cursor.next_program_slot_id).toBe("slot_a");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-STR-009: session substitution preserves original exercise and does not mutate program", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      const substituted: any = substituteExercise(db, id, "ex_b", "equipment unavailable");
+      expect(substituted.exercise.exercise_id).toBe("ex_b");
+      expect(substituted.exercise.substituted_from_exercise_id).toBe("ex_a");
+      expect(substituted.exercise.status).toBe("PENDING");
+      expect(substituted.exercise.sets).toHaveLength(0);
+
+      const template = db.prepare("SELECT exercise_id FROM template_exercises WHERE template_exercise_id='te_a'").get() as any;
+      expect(template.exercise_id).toBe("ex_a");
+      const event = db.prepare(
+        "SELECT payload_json FROM training_events WHERE event_type='EXERCISE_SUBSTITUTED' AND aggregate_id=?"
+      ).get(id) as any;
+      expect(JSON.parse(event.payload_json).superseded_prescription).toHaveLength(4);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("exercise search resolves the canonical catalog for ad-hoc and substitution flows", () => {
+    const db = fixture();
+    try {
+      db.prepare("INSERT INTO exercise_aliases VALUES('alias_press','ex_b','OHP')").run();
+      expect((searchExercises(db, "press") as any[]).map((x) => x.exercise_id)).toContain("ex_b");
+      expect((searchExercises(db, "ohp") as any[]).map((x) => x.exercise_id)).toEqual(["ex_b"]);
     } finally {
       db.close();
     }

@@ -73,6 +73,140 @@ export function getRecommendation(db: DatabaseSync) {
   };
 }
 
+export function getProgramState(db: DatabaseSync) {
+  const active = one<{program_version_id:string; program_id:string; version_number:number}>(
+    db,
+    "SELECT program_version_id,program_id,version_number FROM program_versions WHERE status='ACTIVE'"
+  );
+  if (!active) return { active_program: null, cursor: null, slots: [] };
+  const cursor = one<{next_program_slot_id:string; cycle_number:number}>(
+    db,
+    "SELECT next_program_slot_id,cycle_number FROM program_cursor WHERE program_version_id=?",
+    active.program_version_id
+  );
+  if (!cursor) throw new Error("Active program is missing a cursor");
+
+  const slots = all<{
+    program_slot_id:string;
+    sequence:number;
+    workout_template_id:string;
+    name:string;
+    workout_kind:string;
+  }>(
+    db,
+    `SELECT ps.program_slot_id,ps.sequence,ps.workout_template_id,wt.name,wt.workout_kind
+       FROM program_slots ps
+       JOIN workout_templates wt ON wt.workout_template_id=ps.workout_template_id
+      WHERE ps.program_version_id=?
+      ORDER BY ps.sequence`,
+    active.program_version_id
+  ).map((slot) => {
+    if (slot.workout_kind === "STRENGTH") {
+      return {
+        ...slot,
+        exercises: all(
+          db,
+          `SELECT te.template_exercise_id,te.sequence,e.exercise_id,e.name,e.load_mode,e.rep_mode,
+                  e.load_progression_direction,te.target_sets,te.target_reps_min,te.target_reps_max,
+                  te.target_rir_min,te.target_rir_max
+             FROM template_exercises te
+             JOIN exercises e ON e.exercise_id=te.exercise_id
+            WHERE te.workout_template_id=?
+            ORDER BY te.sequence`,
+          slot.workout_template_id
+        ),
+        conditioning: null,
+      };
+    }
+    const policy = one<Row>(
+      db,
+      "SELECT * FROM conditioning_policies WHERE workout_template_id=?",
+      slot.workout_template_id
+    );
+    return {
+      ...slot,
+      exercises: [],
+      conditioning: policy ? {
+        ...policy,
+        modalities: all(
+          db,
+          `SELECT cm.modality_id,cm.name
+             FROM conditioning_policy_modalities cpm
+             JOIN conditioning_modalities cm ON cm.modality_id=cpm.modality_id
+            WHERE cpm.conditioning_policy_id=? AND cm.active=1
+            ORDER BY cm.name`,
+          policy.conditioning_policy_id
+        ),
+      } : null,
+    };
+  });
+
+  return {
+    active_program: active,
+    cursor,
+    slots,
+  };
+}
+
+export function searchExercises(db: DatabaseSync, query: string, limit = 20) {
+  const q = query.trim();
+  if (!q || q.length > 200) throw new Error("Invalid exercise search query");
+  if (!Number.isInteger(limit) || limit < 1 || limit > 50) throw new Error("Invalid exercise search limit");
+  const like = `%${q.toLowerCase().replaceAll('\\', '\\\\').replaceAll('%', '\\%').replaceAll('_', '\\_')}%`;
+  return all(
+    db,
+    `SELECT DISTINCT e.exercise_id,e.name,e.category,e.equipment_type,e.load_mode,e.rep_mode,
+            e.load_progression_direction,e.active
+       FROM exercises e
+       LEFT JOIN exercise_aliases a ON a.exercise_id=e.exercise_id
+      WHERE e.active=1
+        AND (lower(e.name) LIKE ? ESCAPE '\\' OR lower(COALESCE(a.alias,'')) LIKE ? ESCAPE '\\')
+      ORDER BY CASE WHEN lower(e.name)=lower(?) THEN 0 ELSE 1 END,e.name
+      LIMIT ?`,
+    like, like, q, limit
+  );
+}
+
+export function restartProgramCycle(db: DatabaseSync) {
+  return withTransaction(db, () => {
+    if (getOpenSession(db)) throw new Error("Program cycle cannot restart while a session is open");
+    const active = one<{program_version_id:string}>(
+      db,
+      "SELECT program_version_id FROM program_versions WHERE status='ACTIVE'"
+    );
+    if (!active) throw new Error("No active training program");
+    const cursor = one<{cycle_number:number}>(
+      db,
+      "SELECT cycle_number FROM program_cursor WHERE program_version_id=?",
+      active.program_version_id
+    );
+    if (!cursor) throw new Error("Active program is missing a cursor");
+    const first = one<{program_slot_id:string; sequence:number; name:string}>(
+      db,
+      `SELECT ps.program_slot_id,ps.sequence,wt.name
+         FROM program_slots ps
+         JOIN workout_templates wt ON wt.workout_template_id=ps.workout_template_id
+        WHERE ps.program_version_id=?
+        ORDER BY ps.sequence LIMIT 1`,
+      active.program_version_id
+    );
+    if (!first || first.sequence !== 1 || first.name !== "Strength A") {
+      throw new Error("Active Program Version does not start with Strength A");
+    }
+    const nextCycle = cursor.cycle_number + 1;
+    const now = nowIso();
+    db.prepare(
+      "UPDATE program_cursor SET next_program_slot_id=?,cycle_number=?,updated_at=? WHERE program_version_id=?"
+    ).run(first.program_slot_id, nextCycle, now, active.program_version_id);
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "PROGRAM_CYCLE_RESTARTED", "program_version", active.program_version_id,
+      JSON.stringify({ previous_cycle_number: cursor.cycle_number, cycle_number: nextCycle, next_program_slot_id: first.program_slot_id }),
+      now
+    );
+    return { replayed: false, recommendation: getRecommendation(db) };
+  });
+}
+
 function nextSlot(db: DatabaseSync, versionId: string, sequence: number, cycle: number) {
   const next = one<{program_slot_id:string; sequence:number}>(
     db,
@@ -1080,6 +1214,89 @@ export function abandonSession(db: DatabaseSync, sessionId: string, reason?: str
       "UPDATE training_sessions SET status='ABANDONED',ended_at=?,overall_feedback=COALESCE(?,overall_feedback) WHERE training_session_id=?"
     ).run(now, reason ?? null, sessionId);
     return { replayed: false, session: getSession(db, sessionId) };
+  });
+}
+
+export function substituteExercise(
+  db: DatabaseSync,
+  sessionExerciseId: string,
+  replacementExerciseId: string,
+  reason?: string,
+  equipmentInstanceId?: string | null,
+) {
+  return withTransaction(db, () => {
+    const current = one<{
+      training_session_id:string;
+      exercise_id:string;
+      substituted_from_exercise_id:SQLInputValue;
+      status:string;
+    }>(
+      db,
+      "SELECT training_session_id,exercise_id,substituted_from_exercise_id,status FROM session_exercises WHERE session_exercise_id=?",
+      sessionExerciseId
+    );
+    if (!current) throw new Error("Session exercise not found");
+    const session = one<{status:string}>(
+      db,
+      "SELECT status FROM training_sessions WHERE training_session_id=?",
+      current.training_session_id
+    );
+    if (!session || session.status !== "ACTIVE") throw new Error("Training session is not ACTIVE");
+    if (!["PENDING","ACTIVE","DEFERRED"].includes(current.status)) {
+      throw new Error("Exercise cannot be substituted from current state");
+    }
+    if (current.exercise_id === replacementExerciseId) {
+      return { replayed: true, exercise: getSessionExercise(db, sessionExerciseId) };
+    }
+    const replacement = one<{exercise_id:string; active:number}>(
+      db,
+      "SELECT exercise_id,active FROM exercises WHERE exercise_id=?",
+      replacementExerciseId
+    );
+    if (!replacement || replacement.active !== 1) throw new Error("Replacement exercise is unavailable");
+    if (equipmentInstanceId) {
+      const equipment = one<{active:number}>(
+        db,
+        "SELECT active FROM equipment_instances WHERE equipment_instance_id=?",
+        equipmentInstanceId
+      );
+      if (!equipment || equipment.active !== 1) throw new Error("Replacement equipment instance is unavailable");
+    }
+
+    const sets = all<Row>(
+      db,
+      "SELECT * FROM session_sets WHERE session_exercise_id=? ORDER BY set_number",
+      sessionExerciseId
+    );
+    if (sets.some((set) => set.status === "COMPLETED" || set.actual_reps != null || set.actual_load_kg != null || set.actual_rir != null)) {
+      throw new Error("Exercise with completed work cannot be substituted");
+    }
+
+    const now = nowIso();
+    const originalExerciseId = current.substituted_from_exercise_id == null
+      ? current.exercise_id
+      : String(current.substituted_from_exercise_id);
+    db.prepare("DELETE FROM session_sets WHERE session_exercise_id=?").run(sessionExerciseId);
+    db.prepare(`UPDATE session_exercises
+      SET exercise_id=?,substituted_from_exercise_id=?,equipment_instance_id=?,status='PENDING',
+          progression_policy_json='{}',adaptation_reason=?,prescribed_at=NULL,started_at=NULL
+      WHERE session_exercise_id=?`).run(
+      replacementExerciseId, originalExerciseId, equipmentInstanceId ?? null,
+      reason ?? "SESSION_SUBSTITUTION", sessionExerciseId
+    );
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "EXERCISE_SUBSTITUTED", "session_exercise", sessionExerciseId,
+      JSON.stringify({
+        original_exercise_id: current.exercise_id,
+        canonical_original_exercise_id: originalExerciseId,
+        replacement_exercise_id: replacementExerciseId,
+        equipment_instance_id: equipmentInstanceId ?? null,
+        reason: reason ?? null,
+        superseded_prescription: sets,
+      }),
+      now
+    );
+    return { replayed: false, exercise: getSessionExercise(db, sessionExerciseId) };
   });
 }
 
