@@ -5,13 +5,21 @@
   "version": "0.1.0",
   "configSchema": {
     "type": "object",
-    "required": ["databasePath"],
+    "required": [
+      "databasePath"
+    ],
     "properties": {
-      "databasePath": {"type":"string","minLength":1,"pattern":"^/"}
+      "databasePath": {
+        "type": "string",
+        "minLength": 1,
+        "pattern": "^/"
+      }
     },
     "additionalProperties": false
   },
-  "activation": {"onStartup": true},
+  "activation": {
+    "onStartup": true
+  },
   "contracts": {
     "tools": [
       "training_status",
@@ -27,15 +35,35 @@
     ]
   },
   "toolMetadata": {
-    "training_status": {"optional": true},
-    "training_recommendation_get": {"optional": true},
-    "training_session_get": {"optional": true},
-    "training_session_start": {"optional": true},
-    "training_exercise_prescribe": {"optional": true},
-    "training_exercise_complete": {"optional": true},
-    "training_exercise_defer": {"optional": true},
-    "training_exercise_skip": {"optional": true},
-    "training_session_finish": {"optional": true},
-    "training_session_void": {"optional": true}
+    "training_status": {
+      "optional": true
+    },
+    "training_recommendation_get": {
+      "optional": true
+    },
+    "training_session_get": {
+      "optional": true
+    },
+    "training_session_start": {
+      "optional": true
+    },
+    "training_exercise_prescribe": {
+      "optional": true
+    },
+    "training_exercise_complete": {
+      "optional": true
+    },
+    "training_exercise_defer": {
+      "optional": true
+    },
+    "training_exercise_skip": {
+      "optional": true
+    },
+    "training_session_finish": {
+      "optional": true
+    },
+    "training_session_void": {
+      "optional": true
+    }
   }
 }
