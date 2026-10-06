@@ -118,6 +118,8 @@ for required_text in \
   'Personal VPN work is limited to the registered Personal VPN hosted on the Personal VPS.' \
   'Workstation/Arch Linux work, autonomous OS updates, general VPS administration outside the admitted scheduled-maintenance, OpenClaw, and Personal VPN cases' \
   'Do not automatically retry a failed material mutation.' \
+  'An `exec` or `process` result that reports `status=running`' \
+  'Do not report `SUCCESS`, `FAILED`, or `BLOCKED` while an authorized mutation execution is still running' \
   'A registered scheduled VPS maintenance run is read-only.' \
   'If a weekly exception review finds no material exception, return exactly `NO_REPLY`.'
 do
