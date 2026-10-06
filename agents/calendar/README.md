@@ -6,7 +6,7 @@ Canonical purpose, behavior, authority, lifecycle, time model, review cadence, a
 
 ## v1 implementation boundary
 
-Calendar v1 has no independent durable state store. Durable operational rules live only in the validated Calendar plugin configuration; pending approval proposals are short-lived in-process interaction state and disappear on restart. The package contains:
+Calendar v1 has no independent Calendar state database or operational source. Durable operational rules live only in the validated Calendar plugin configuration; pending approval proposals are short-lived, non-authoritative interaction state staged in the same Calendar plugin configuration with a bounded TTL and entry count so exact proposals remain resolvable across plugin/runtime instance boundaries without requiring trusted-plugin storage. The package contains:
 
 - `workspace/` — persistent runtime instructions and identity files;
 - `config/calendar-agent.fragment.json` — non-secret agent identity and workspace paths;
@@ -46,7 +46,7 @@ The plugin validates that:
 - the label-administration path can synchronize only configured analytical label definitions and accepts no model-supplied mutation payload;
 - all other model-visible tool calls for the `calendar` agent fail closed unless explicitly admitted.
 
-Pending rule proposals are intentionally ephemeral and bounded. A runtime restart between proposal and approval requires a fresh proposal; this is not loss of authoritative state because an unapproved proposal is not an effective rule.
+Pending rule proposals are intentionally ephemeral and bounded. They are staged under the Calendar plugin's runtime configuration with a 30-minute TTL and bounded entry count, remain excluded from effective durable rules, and are removed on successful commit or pruned by later proposal operations. This keeps the proposal available across ordinary plugin/runtime instance changes for the current external plugin installation without adding another operational source. Expired, missing, or changed proposals require a fresh proposal; an unapproved proposal is never an effective rule.
 
 ## Google integration boundary
 

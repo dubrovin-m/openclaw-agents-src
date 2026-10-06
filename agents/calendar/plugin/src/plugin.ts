@@ -10,12 +10,16 @@ import { calendarToolPolicy } from "./policy.js";
 import { createGoogleCalendarProvider } from "./provider.js";
 import {
   applyRuleProposal,
-  deleteRuleProposal,
   getRuleProposal,
+  MAX_RULE_PROPOSALS,
   parseDurableRules,
+  parseStoredRuleProposals,
   proposeRule,
+  RULE_PROPOSAL_TTL_MS,
   type DurableRules,
   type RuleProposalInput,
+  type RuleProposalStore,
+  type StoredRuleProposal,
 } from "./rules.js";
 
 const providerLabelSchema = Type.Object({
@@ -68,6 +72,16 @@ const calendarConfigSchema = Type.Object({
   unclassifiedLabel: providerLabelSchema,
   classificationRules: Type.Array(Type.String({ minLength: 1 }), { minItems: 1, uniqueItems: true }),
   durableRules: Type.Optional(durableRulesSchema),
+  pendingRuleProposals: Type.Optional(Type.Array(Type.Object({
+    proposalId: Type.String({ pattern: "^proposal_[0-9a-f]{16}$" }),
+    action: Type.Union([Type.Literal("create"), Type.Literal("replace"), Type.Literal("delete")]),
+    kind: Type.Union([Type.Literal("classification"), Type.Literal("hygiene_exception")]),
+    targetDigest: Type.Optional(Type.String({ pattern: "^[0-9a-f]{32}$" })),
+    rule: Type.Optional(Type.Union([durableClassificationRuleSchema, durableHygieneRuleSchema])),
+    ruleId: Type.Optional(Type.String({ minLength: 3, maxLength: 64, pattern: "^[a-z][a-z0-9_-]{2,63}$" })),
+    summary: Type.String({ minLength: 1, maxLength: 512 }),
+    createdAt: Type.Number({ minimum: 1 }),
+  }, { additionalProperties: false }), { maxItems: MAX_RULE_PROPOSALS })),
   targets: Type.Object({
     parents: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
     leaves: Type.Record(Type.String({ minLength: 1 }), Type.Number({ minimum: 0, maximum: 100 })),
@@ -130,6 +144,73 @@ type MutableConfigRoot = {
 
 type EffectiveCalendarConfig = ReturnType<typeof parseCalendarConfig> & { durableRules: DurableRules };
 type CalendarPluginConfig = Static<typeof calendarConfigSchema>;
+type CalendarPluginApi = ToolPluginExecutionContext["api"];
+
+function proposalIsLive(proposal: StoredRuleProposal, now = Date.now()) {
+  return proposal.createdAt <= now && now - proposal.createdAt < RULE_PROPOSAL_TTL_MS;
+}
+
+function pluginConfigFromRoot(root: unknown): Record<string, unknown> {
+  const mutable = root as MutableConfigRoot;
+  const config = mutable.plugins?.entries?.["calendar-analytics"]?.config;
+  if (!config) throw new Error("Calendar plugin configuration is unavailable");
+  return config;
+}
+
+export function ruleProposalStore(api: CalendarPluginApi): RuleProposalStore {
+  return {
+    async register(key, value, opts) {
+      if (key !== value.proposalId) throw new Error("Calendar proposal key does not match proposal identity");
+      if (opts?.ttlMs !== undefined && opts.ttlMs !== RULE_PROPOSAL_TTL_MS) {
+        throw new Error("Calendar proposal TTL is fixed by the implementation contract");
+      }
+      const mutation = await api.runtime.config.mutateConfigFile<void>({
+        afterWrite: { mode: "auto" },
+        mutate(draft) {
+          const pluginEntry = (draft as unknown as MutableConfigRoot).plugins?.entries?.["calendar-analytics"];
+          if (!pluginEntry?.config) throw new Error("Calendar plugin configuration is unavailable");
+          const current = operationalConfig(pluginEntry.config);
+          const now = Date.now();
+          const pending = current.pendingRuleProposals
+            .filter((proposal) => proposalIsLive(proposal, now) && proposal.proposalId !== key);
+          pending.push(structuredClone(value));
+          pending.sort((left, right) => left.createdAt - right.createdAt || left.proposalId.localeCompare(right.proposalId));
+          const bounded = pending.slice(-MAX_RULE_PROPOSALS);
+          const { pendingRuleProposals: _oldPending, ...rest } = pluginEntry.config;
+          const nextConfig = { ...rest, ...(bounded.length > 0 ? { pendingRuleProposals: bounded } : {}) };
+          operationalConfig(nextConfig);
+          pluginEntry.config = nextConfig;
+        },
+      });
+      void mutation;
+    },
+    async lookup(key) {
+      const current = operationalConfig(pluginConfigFromRoot(api.runtime.config.current()));
+      const proposal = current.pendingRuleProposals.find((item) => item.proposalId === key);
+      return proposal && proposalIsLive(proposal) ? structuredClone(proposal) : undefined;
+    },
+    async delete(key) {
+      const mutation = await api.runtime.config.mutateConfigFile<{ deleted: boolean }>({
+        afterWrite: { mode: "auto" },
+        mutate(draft) {
+          const pluginEntry = (draft as unknown as MutableConfigRoot).plugins?.entries?.["calendar-analytics"];
+          if (!pluginEntry?.config) throw new Error("Calendar plugin configuration is unavailable");
+          const current = operationalConfig(pluginEntry.config);
+          const now = Date.now();
+          const deleted = current.pendingRuleProposals.some((proposal) => proposal.proposalId === key && proposalIsLive(proposal, now));
+          const pending = current.pendingRuleProposals
+            .filter((proposal) => proposal.proposalId !== key && proposalIsLive(proposal, now));
+          const { pendingRuleProposals: _oldPending, ...rest } = pluginEntry.config;
+          const nextConfig = { ...rest, ...(pending.length > 0 ? { pendingRuleProposals: pending } : {}) };
+          operationalConfig(nextConfig);
+          pluginEntry.config = nextConfig;
+          return { deleted };
+        },
+      });
+      return mutation.result?.deleted ?? false;
+    },
+  };
+}
 
 type DirectOnlyToolSpec<TParamsSchema extends TSchema> = {
   name: string;
@@ -174,20 +255,29 @@ function directOnlyTool<TParamsSchema extends TSchema>(
   };
 }
 
-function operationalConfig(value: unknown): { baseValue: Record<string, unknown>; effective: EffectiveCalendarConfig } {
+function operationalConfig(value: unknown): {
+  baseValue: Record<string, unknown>;
+  effective: EffectiveCalendarConfig;
+  pendingRuleProposals: StoredRuleProposal[];
+} {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new Error("Calendar configuration must be an object");
   }
-  const { durableRules: durableRulesValue, ...baseValue } = value as Record<string, unknown>;
+  const {
+    durableRules: durableRulesValue,
+    pendingRuleProposals: pendingRuleProposalsValue,
+    ...baseValue
+  } = value as Record<string, unknown>;
   const base = parseCalendarConfig(baseValue);
   const durableRules = parseDurableRules(durableRulesValue);
+  const pendingRuleProposals = parseStoredRuleProposals(pendingRuleProposalsValue);
   const leafIds = new Set(base.leaves.map((leaf) => leaf.id));
   for (const rule of durableRules.classification) {
     if (!leafIds.has(rule.categoryId)) {
       throw new Error(`durable classification rule ${rule.id} references an unknown category`);
     }
   }
-  return { baseValue, effective: { ...base, durableRules } };
+  return { baseValue, effective: { ...base, durableRules }, pendingRuleProposals };
 }
 
 const provider = createGoogleCalendarProvider();
@@ -209,10 +299,11 @@ const entry = defineToolPlugin({
     tool(directOnlyTool({
       name: "calendar_rule_propose",
       label: "Propose Calendar durable rule",
-      description: "Normalize a create, replace, or delete proposal for one durable Calendar classification rule or meeting-hygiene exception without changing effective configuration.",
+      description: "Normalize and stage one bounded Calendar durable-rule proposal without changing effective durable rules.",
       parameters: ruleProposalParameters,
       optional: true,
-      execute: async (params, config) => proposeRule(operationalConfig(config).effective, params as RuleProposalInput),
+      execute: async (params, config, context) =>
+        proposeRule(operationalConfig(config).effective, params as RuleProposalInput, ruleProposalStore(context.api)),
     })),
     tool(directOnlyTool({
       name: "calendar_rule_commit",
@@ -221,7 +312,8 @@ const entry = defineToolPlugin({
       parameters: ruleCommitParameters,
       optional: true,
       execute: async (params, _config, context) => {
-        const proposal = getRuleProposal(params.proposal_id);
+        const store = ruleProposalStore(context.api);
+        const proposal = await getRuleProposal(params.proposal_id, store);
         if (!proposal) throw new Error("Calendar rule proposal is unknown or expired; create a fresh proposal");
         const mutation = await context.api.runtime.config.mutateConfigFile<{ durableRules: DurableRules }>({
           afterWrite: { mode: "auto" },
@@ -229,15 +321,26 @@ const entry = defineToolPlugin({
             const mutable = draft as unknown as MutableConfigRoot;
             const pluginEntry = mutable.plugins?.entries?.["calendar-analytics"];
             if (!pluginEntry?.config) throw new Error("Calendar plugin configuration is unavailable");
-            const current = operationalConfig(pluginEntry.config).effective;
-            const durableRules = applyRuleProposal(current.durableRules, proposal);
-            const nextConfig = { ...pluginEntry.config, durableRules };
+            const current = operationalConfig(pluginEntry.config);
+            const now = Date.now();
+            const stored = current.pendingRuleProposals.find((item) => item.proposalId === params.proposal_id);
+            if (!stored || !proposalIsLive(stored, now) || JSON.stringify(stored) !== JSON.stringify(proposal)) {
+              throw new Error("Calendar rule proposal changed, expired, or disappeared; create a fresh proposal");
+            }
+            const durableRules = applyRuleProposal(current.effective.durableRules, stored);
+            const pending = current.pendingRuleProposals
+              .filter((item) => item.proposalId !== params.proposal_id && proposalIsLive(item, now));
+            const { pendingRuleProposals: _oldPending, ...rest } = pluginEntry.config;
+            const nextConfig = {
+              ...rest,
+              durableRules,
+              ...(pending.length > 0 ? { pendingRuleProposals: pending } : {}),
+            };
             operationalConfig(nextConfig);
             pluginEntry.config = nextConfig;
             return { durableRules };
           },
         });
-        deleteRuleProposal(params.proposal_id);
         return {
           applied: true,
           proposal_id: params.proposal_id,
@@ -310,7 +413,8 @@ const registerTools = entry.register;
 entry.register = (api) => {
   operationalConfig(api.pluginConfig);
   registerTools(api);
-  api.on("before_tool_call", (event, context) => calendarToolPolicy(api.pluginConfig, event, context), { priority: 100 });
+  const proposals = ruleProposalStore(api);
+  api.on("before_tool_call", (event, context) => calendarToolPolicy(api.pluginConfig, event, context, proposals), { priority: 100 });
 };
 
 export default entry;

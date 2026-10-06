@@ -20,7 +20,7 @@ function block(reason) {
 function baseCalendarConfig(value) {
     if (value === null || typeof value !== "object" || Array.isArray(value))
         return value;
-    const { durableRules: _durableRules, ...base } = value;
+    const { durableRules: _durableRules, pendingRuleProposals: _pendingRuleProposals, ...base } = value;
     return base;
 }
 function writeAllowed(config, params) {
@@ -53,7 +53,7 @@ function writeAllowed(config, params) {
     }
     return undefined;
 }
-export function calendarToolPolicy(configValue, event, context) {
+export async function calendarToolPolicy(configValue, event, context, proposalStore) {
     const config = parseCalendarConfig(baseCalendarConfig(configValue));
     const toolName = event.toolName ?? "";
     const isNativeCalendarTool = toolName.startsWith(config.providerTools.prefix);
@@ -68,7 +68,9 @@ export function calendarToolPolicy(configValue, event, context) {
             || !RULE_PROPOSAL_PATTERN.test(event.params.proposal_id)) {
             return block("Calendar rule commit accepts exactly one valid proposal_id.");
         }
-        const proposal = getRuleProposal(event.params.proposal_id);
+        if (!proposalStore)
+            return block("Calendar rule proposal store is unavailable; fail closed.");
+        const proposal = await getRuleProposal(event.params.proposal_id, proposalStore);
         if (!proposal)
             return block("Calendar rule proposal is unknown or expired; create a fresh proposal.");
         return {

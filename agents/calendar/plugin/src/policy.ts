@@ -1,6 +1,6 @@
 import "node-fetch";
 import { parseCalendarConfig, type CalendarConfig } from "./core.js";
-import { getRuleProposal } from "./rules.js";
+import { getRuleProposal, type RuleProposalStore } from "./rules.js";
 
 export const CALENDAR_AGENT_ID = "calendar";
 const OWNED_TOOLS = new Set([
@@ -24,7 +24,7 @@ function block(reason: string) {
 }
 function baseCalendarConfig(value: unknown) {
   if (value === null || typeof value !== "object" || Array.isArray(value)) return value;
-  const { durableRules: _durableRules, ...base } = value as Record<string, unknown>;
+  const { durableRules: _durableRules, pendingRuleProposals: _pendingRuleProposals, ...base } = value as Record<string, unknown>;
   return base;
 }
 function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | undefined) {
@@ -58,10 +58,11 @@ function writeAllowed(config: CalendarConfig, params: Record<string, unknown> | 
   return undefined;
 }
 
-export function calendarToolPolicy(
+export async function calendarToolPolicy(
   configValue: unknown,
   event: ToolEvent,
   context: ToolContext,
+  proposalStore?: RuleProposalStore,
 ) {
   const config = parseCalendarConfig(baseCalendarConfig(configValue));
   const toolName = event.toolName ?? "";
@@ -79,7 +80,8 @@ export function calendarToolPolicy(
       || !RULE_PROPOSAL_PATTERN.test(event.params.proposal_id)) {
       return block("Calendar rule commit accepts exactly one valid proposal_id.");
     }
-    const proposal = getRuleProposal(event.params.proposal_id);
+    if (!proposalStore) return block("Calendar rule proposal store is unavailable; fail closed.");
+    const proposal = await getRuleProposal(event.params.proposal_id, proposalStore);
     if (!proposal) return block("Calendar rule proposal is unknown or expired; create a fresh proposal.");
     return {
       requireApproval: {

@@ -52,7 +52,9 @@ For an unclassified event, interpret its substantive purpose using the configure
 - A human correction applies only to the identified event unless the human explicitly states or approves a broader rule.
 - A recurring series does not create a binding classification rule by itself.
 
-When the human states a reusable rule such as "такие встречи всегда относятся к Команде", normalize it with `calendar_rule_propose`. Present the returned summary as the exact proposed durable rule. Do not treat it as effective state yet. Invoke `calendar_rule_commit` only for that proposal; native approval is the human control point. If the proposal is denied, expires, becomes stale, or the tool rejects it, no rule was saved and effective behavior must remain unchanged.
+When the human states a reusable rule such as "такие встречи всегда относятся к Команде", normalize it with `calendar_rule_propose`, then immediately invoke `calendar_rule_commit` for the returned `proposal_id` in the same agent turn. Do not ask for a separate conversational confirmation or wait for another Telegram message: the native approval raised by `calendar_rule_commit` is the human control point and presents the exact normalized proposal. Do not treat the rule as effective state until that commit succeeds. If the proposal is denied, expires, becomes stale, or the tool rejects it, no rule was saved and effective behavior must remain unchanged.
+
+When one human reply contains both identified-event category corrections and a reusable classification rule, complete both responsibilities: apply each unambiguous event correction to the identified event and separately normalize the reusable rule proposal. A successful event-label write does not persist the broader rule, and the broader rule must not be described as saved until `calendar_rule_commit` succeeds.
 
 Never write the technical Unclassified label merely because the model cannot resolve classification. Absence of a configured category label is sufficient analytical Unclassified state until a clear automatic classification or authoritative human correction is applied.
 
@@ -84,7 +86,9 @@ Report one of:
 
 Classification ambiguity and meeting-hygiene exceptions are separate findings.
 
-When the human states a reusable hygiene exception, normalize it with `calendar_rule_propose`; do not apply it to future meetings until `calendar_rule_commit` succeeds after native explicit human approval.
+When the human states a reusable hygiene exception, normalize it with `calendar_rule_propose`, then immediately invoke `calendar_rule_commit` for the returned `proposal_id` in the same agent turn. Do not ask for a separate conversational confirmation or carry the proposal into a later Telegram turn; the native approval is the human control point. Do not apply the exception to future meetings until `calendar_rule_commit` succeeds.
+
+A human statement that leader or agenda is unnecessary for one identified event is not itself durable operational state. If the statement clearly describes a reusable event class, title, series, or other bounded condition, normalize a durable hygiene proposal in the same turn. If it is only event-specific, state that Calendar v1 has no per-event hygiene-override store. Do not claim a hygiene exception was applied, saved, or will affect future reviews unless the corresponding durable-rule commit succeeded.
 
 ## Daily Review
 

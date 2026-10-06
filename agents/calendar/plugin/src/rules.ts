@@ -33,7 +33,7 @@ type RuleConfigView = {
   durableRules: DurableRules;
 };
 
-type StoredRuleProposal = {
+export type StoredRuleProposal = {
   proposalId: string;
   action: RuleProposalInput["action"];
   kind: RuleProposalInput["kind"];
@@ -49,9 +49,14 @@ const RULE_ID_PATTERN = /^[a-z][a-z0-9_-]{2,63}$/u;
 const PROPOSAL_ID_PATTERN = /^proposal_[0-9a-f]{16}$/u;
 const MAX_CONDITION_LENGTH = 320;
 const MAX_APPROVAL_DESCRIPTION_LENGTH = 512;
-const PROPOSAL_TTL_MS = 30 * 60 * 1000;
-const MAX_PROPOSALS = 100;
-const proposals = new Map<string, StoredRuleProposal>();
+export const RULE_PROPOSAL_TTL_MS = 30 * 60 * 1000;
+export const MAX_RULE_PROPOSALS = 100;
+
+export type RuleProposalStore = {
+  register(key: string, value: StoredRuleProposal, opts?: { ttlMs?: number }): Promise<void>;
+  lookup(key: string): Promise<StoredRuleProposal | undefined>;
+  delete(key: string): Promise<boolean>;
+};
 
 const asRecord = (value: unknown): JsonObject | null =>
   value !== null && typeof value === "object" && !Array.isArray(value) ? value as JsonObject : null;
@@ -121,19 +126,88 @@ export function parseDurableRules(value: unknown): DurableRules {
   return { classification, hygiene };
 }
 
-export function rulesDigest(rules: DurableRules) {
-  return hash(rules, 32);
+
+function storedProposal(value: unknown, path: string): StoredRuleProposal {
+  const object = asRecord(value);
+  if (!object) throw new Error(`${path} must be an object`);
+  assertOnlyKeys(
+    object,
+    ["proposalId", "action", "kind", "targetDigest", "rule", "ruleId", "summary", "createdAt"],
+    path,
+  );
+
+  const proposalId = typeof object.proposalId === "string" ? object.proposalId : "";
+  if (!PROPOSAL_ID_PATTERN.test(proposalId)) throw new Error(`${path}.proposalId is invalid`);
+  const action = object.action;
+  if (action !== "create" && action !== "replace" && action !== "delete") {
+    throw new Error(`${path}.action is invalid`);
+  }
+  const kind = object.kind;
+  if (kind !== "classification" && kind !== "hygiene_exception") {
+    throw new Error(`${path}.kind is invalid`);
+  }
+  const summary = typeof object.summary === "string" ? object.summary : "";
+  if (!summary || summary.length > MAX_APPROVAL_DESCRIPTION_LENGTH) {
+    throw new Error(`${path}.summary is invalid`);
+  }
+  const createdAt = object.createdAt;
+  if (!Number.isSafeInteger(createdAt) || (createdAt as number) <= 0) {
+    throw new Error(`${path}.createdAt is invalid`);
+  }
+
+  const targetDigest = object.targetDigest === undefined
+    ? undefined
+    : typeof object.targetDigest === "string" && /^[0-9a-f]{32}$/u.test(object.targetDigest)
+      ? object.targetDigest
+      : (() => { throw new Error(`${path}.targetDigest is invalid`); })();
+  const persistedRuleId = object.ruleId === undefined ? undefined : ruleId(object.ruleId, `${path}.ruleId`);
+  let rule: DurableClassificationRule | DurableHygieneException | undefined;
+  if (object.rule !== undefined) {
+    rule = kind === "classification"
+      ? parseDurableRules({ classification: [object.rule], hygiene: [] }).classification[0]
+      : parseDurableRules({ classification: [], hygiene: [object.rule] }).hygiene[0];
+  }
+
+  if (action === "create" && (!rule || targetDigest !== undefined || persistedRuleId !== undefined)) {
+    throw new Error(`${path} create proposal is inconsistent`);
+  }
+  if (action === "replace" && (!rule || !targetDigest || persistedRuleId !== undefined)) {
+    throw new Error(`${path} replace proposal is inconsistent`);
+  }
+  if (action === "delete" && (rule !== undefined || !targetDigest || !persistedRuleId)) {
+    throw new Error(`${path} delete proposal is inconsistent`);
+  }
+
+  const normalized: Omit<StoredRuleProposal, "proposalId" | "createdAt"> = {
+    action,
+    kind,
+    ...(targetDigest ? { targetDigest } : {}),
+    ...(rule ? { rule } : {}),
+    ...(persistedRuleId ? { ruleId: persistedRuleId } : {}),
+    summary,
+  };
+  const expectedProposalId = `proposal_${hash(normalized, 16)}`;
+  if (expectedProposalId !== proposalId) {
+    throw new Error(`${path}.proposalId does not match the normalized proposal`);
+  }
+  return { proposalId, ...normalized, createdAt: createdAt as number };
 }
 
-function sweepProposals(now = Date.now()) {
-  for (const [id, proposal] of proposals) {
-    if (now - proposal.createdAt > PROPOSAL_TTL_MS) proposals.delete(id);
+export function parseStoredRuleProposals(value: unknown): StoredRuleProposal[] {
+  if (value === undefined) return [];
+  if (!Array.isArray(value)) throw new Error("pendingRuleProposals must be an array");
+  if (value.length > MAX_RULE_PROPOSALS) {
+    throw new Error(`pendingRuleProposals must contain at most ${MAX_RULE_PROPOSALS} entries`);
   }
-  while (proposals.size >= MAX_PROPOSALS) {
-    const oldest = proposals.keys().next().value as string | undefined;
-    if (!oldest) break;
-    proposals.delete(oldest);
+  const proposals = value.map((item, index) => storedProposal(item, `pendingRuleProposals[${index}]`));
+  if (new Set(proposals.map((proposal) => proposal.proposalId)).size !== proposals.length) {
+    throw new Error("pendingRuleProposals proposal ids must be unique");
   }
+  return proposals;
+}
+
+export function rulesDigest(rules: DurableRules) {
+  return hash(rules, 32);
 }
 
 function findRule(rules: DurableRules, kind: RuleProposalInput["kind"], id: string) {
@@ -218,15 +292,18 @@ function normalizeProposal(config: RuleConfigView, input: RuleProposalInput): Om
   };
 }
 
-export function proposeRule(config: RuleConfigView, input: RuleProposalInput) {
-  sweepProposals();
+export async function proposeRule(
+  config: RuleConfigView,
+  input: RuleProposalInput,
+  store: RuleProposalStore,
+) {
   const normalized = normalizeProposal(config, input);
   if (normalized.summary.length > MAX_APPROVAL_DESCRIPTION_LENGTH) {
     throw new Error(`Rule approval summary must be <= ${MAX_APPROVAL_DESCRIPTION_LENGTH} characters`);
   }
   const proposalId = `proposal_${hash(normalized, 16)}`;
   const stored: StoredRuleProposal = { proposalId, ...normalized, createdAt: Date.now() };
-  proposals.set(proposalId, stored);
+  await store.register(proposalId, stored, { ttlMs: RULE_PROPOSAL_TTL_MS });
   return {
     proposal_id: proposalId,
     action: stored.action,
@@ -237,14 +314,13 @@ export function proposeRule(config: RuleConfigView, input: RuleProposalInput) {
   };
 }
 
-export function getRuleProposal(proposalId: string) {
-  sweepProposals();
+export async function getRuleProposal(proposalId: string, store: RuleProposalStore) {
   if (!PROPOSAL_ID_PATTERN.test(proposalId)) return undefined;
-  return proposals.get(proposalId);
+  return store.lookup(proposalId);
 }
 
-export function deleteRuleProposal(proposalId: string) {
-  proposals.delete(proposalId);
+export async function deleteRuleProposal(proposalId: string, store: RuleProposalStore) {
+  return store.delete(proposalId);
 }
 
 export function applyRuleProposal(rules: DurableRules, proposal: StoredRuleProposal): DurableRules {
