@@ -7,15 +7,35 @@ root=pathlib.Path(sys.argv[1])
 for rel in ["config/training-agent.fragment.json","config/training-tools.json","plugin/package.json","plugin/openclaw.plugin.json","release.json"]:
     with (root/rel).open(encoding="utf-8") as f:
         json.load(f)
+release=json.load((root/"release.json").open())
+artifact=release.get("plugin",{}).get("artifact")
+if not isinstance(artifact,str) or not artifact.endswith(".tgz"):
+    raise SystemExit("invalid Training release artifact path")
+sidecar=artifact[:-4]+".sha256"
+predecessor=release.get("predecessor") or {}
+pred_artifact=(predecessor.get("plugin") or {}).get("artifact")
+if predecessor and (not isinstance(pred_artifact,str) or not pred_artifact.endswith(".tgz")):
+    raise SystemExit("invalid Training predecessor artifact path")
+pred_sidecar=pred_artifact[:-4]+".sha256" if pred_artifact else None
 required=[
   "README.md","ACCEPTANCE.md","workspace/AGENTS.md","workspace/IDENTITY.md","workspace/SOUL.md","workspace/USER.md","workspace/HEARTBEAT.md",
   "plugin/src/store.ts","plugin/src/domain.ts","plugin/src/plugin.ts",
   "deploy.sh","deploy-support.mjs","tests/deploy.sh","tests/release.sh",
-  "artifacts/openclaw-plugin-training-0.1.0.tgz","artifacts/openclaw-plugin-training-0.1.0.sha256"
+  artifact,sidecar
 ]
+if pred_artifact:
+    required.extend([pred_artifact,pred_sidecar])
 missing=[p for p in required if not (root/p).is_file()]
 if missing:
     raise SystemExit("missing Training files: "+", ".join(missing))
+def check_sidecar(artifact_path,sidecar_path,expected,label):
+    sidecar_text=(root/sidecar_path).read_text().strip()
+    want=f"{expected}  {pathlib.Path(artifact_path).name}"
+    if sidecar_text != want:
+        raise SystemExit(f"{label} checksum sidecar mismatch")
+check_sidecar(artifact,sidecar,release.get("plugin",{}).get("sha256"),"Training release")
+if pred_artifact:
+    check_sidecar(pred_artifact,pred_sidecar,(predecessor.get("plugin") or {}).get("sha256"),"Training predecessor")
 text=(root/"config/training-tools.json").read_text()
 for forbidden in ['"exec"','"write"','"gateway"','"sessions_spawn"']:
     if forbidden not in text:
