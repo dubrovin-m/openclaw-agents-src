@@ -10,6 +10,7 @@ import {
   correctSetResult,
   deferExercise,
   finishSession,
+  getProgressionCandidate,
   getRecommendation,
   getSession,
   pauseSession,
@@ -156,6 +157,16 @@ const entry = defineToolPlugin({
         withDb(config, (db) => startProgramSession(db, params)),
     })),
     tool(ownerTool({
+      name: "training_progression_get",
+      label: "Training progression candidate",
+      description: "Calculate a deterministic working-load candidate from the approved progression policy and comparable history.",
+      parameters: Type.Object({
+        session_exercise_id: sessionExerciseId,
+      }, { additionalProperties: false }),
+      execute: (params, config) =>
+        withDb(config, (db) => getProgressionCandidate(db, params.session_exercise_id)),
+    })),
+    tool(ownerTool({
       name: "training_exercise_prescribe",
       label: "Prescribe exercise",
       description: "Persist the final working-set prescription before presenting it to the user.",
@@ -292,6 +303,9 @@ const entry = defineToolPlugin({
       mutate: true,
       execute: (params, config) =>
         withDb(config, (db) => {
+          if (params.field === "reps" && params.value === null) {
+            throw new Error("reps correction cannot be null");
+          }
           const patch =
             params.field === "reps" ? { reps: Number(params.value) }
             : params.field === "load_kg" ? { load_kg: params.value }
