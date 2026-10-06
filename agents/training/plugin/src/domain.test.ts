@@ -8,6 +8,7 @@ import {
   correctSetResult,
   deferExercise,
   finishSession,
+  getProgressionCandidate,
   getRecommendation,
   pauseSession,
   prescribeExercise,
@@ -330,6 +331,54 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       ).all() as any[];
       expect(outcomes).toHaveLength(1);
       expect(outcomes[0].training_session_id).toBe(first.session.training_session_id);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("calculates progression from two successful comparable exposures", () => {
+    const db = fixture();
+    try {
+      db.prepare(
+        "UPDATE template_exercises SET progression_policy_json=? WHERE template_exercise_id='te_a'"
+      ).run(JSON.stringify({
+        kind: "DOUBLE_SUCCESS_THEN_INCREMENT",
+        initial_load_kg: 70,
+        increment_kg: 2.5,
+        successful_exposures_required: 2,
+      }));
+
+      const first: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      let id = first.session.exercises[0].session_exercise_id;
+      expect(getProgressionCandidate(db, id).candidate_load_kg).toBe(70);
+      prescribeExercise(db, id, fourSets(70));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      finishSession(db, first.session.training_session_id);
+
+      const second: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-07",
+      });
+      id = second.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      finishSession(db, second.session.training_session_id);
+
+      const third: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-08",
+      });
+      id = third.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db, id);
+      expect(candidate.candidate_load_kg).toBe(72.5);
+      expect(candidate.basis).toBe("SUCCESS_STREAK_INCREMENT");
+      expect(candidate.recent_exposures.slice(0, 2).every((x) => x.success)).toBe(true);
     } finally {
       db.close();
     }
