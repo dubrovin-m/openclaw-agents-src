@@ -122,7 +122,7 @@ try{
   const cursor=db.prepare("SELECT next_program_slot_id,cycle_number FROM program_cursor WHERE program_version_id='ver'").get();
   const session=db.prepare("SELECT status,training_session_id FROM training_sessions WHERE training_session_id='sess'").get();
   const pause=db.prepare("SELECT paused_at,resumed_at FROM training_session_pauses WHERE training_session_id='sess'").get();
-  if(schema!==1||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
+  if(schema!==2||cursor.next_program_slot_id!=='slot'||cursor.cycle_number!==1||session.status!=='PAUSED'||!pause||pause.paused_at!=='2026-10-06T07:30:00.000Z'||pause.resumed_at!==null)process.exit(1);
 }finally{db.close();}
 NODE
 
