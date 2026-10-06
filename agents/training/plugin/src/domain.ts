@@ -47,15 +47,29 @@ export function getRecommendation(db: DatabaseSync) {
     slot.workout_template_id
   ) : [];
 
-  const conditioning = slot.workout_kind === "CONDITIONING" ? one(
+  const conditioningPolicy = slot.workout_kind === "CONDITIONING" ? one(
     db,
     "SELECT * FROM conditioning_policies WHERE workout_template_id=?",
     slot.workout_template_id
   ) : undefined;
+  const conditioning = conditioningPolicy
+    ? {
+        ...conditioningPolicy,
+        modalities: all(
+          db,
+          `SELECT cm.modality_id,cm.name
+             FROM conditioning_policy_modalities cpm
+             JOIN conditioning_modalities cm ON cm.modality_id=cpm.modality_id
+            WHERE cpm.conditioning_policy_id=? AND cm.active=1
+            ORDER BY cm.name`,
+          conditioningPolicy.conditioning_policy_id
+        ),
+      }
+    : null;
 
   return {
     active_program: { ...active, cycle_number: cursor.cycle_number },
-    recommendation: { ...slot, exercises, conditioning: conditioning ?? null },
+    recommendation: { ...slot, exercises, conditioning },
   };
 }
 
@@ -281,6 +295,286 @@ export function getSession(db: DatabaseSync, sessionId?: string) {
   }));
 
   return { ...session, exercises };
+}
+
+export type ConditioningSegmentInput = {
+  sequence: number;
+  segment_type: "WARMUP" | "WORK" | "RECOVERY" | "COOLDOWN";
+  target_duration_sec?: number | null;
+  target_distance_m?: number | null;
+  target_hr_min?: number | null;
+  target_hr_max?: number | null;
+  target_hr_zone?: number | null;
+  target_power_w?: number | null;
+  target_cadence?: number | null;
+  notes?: string | null;
+};
+
+export function createConditioningPrescription(
+  db: DatabaseSync,
+  params: {
+    training_session_id: string;
+    recommended_modality_id?: string | null;
+    selected_modality_id: string;
+    modality_selection_source: "AGENT_RECOMMENDATION" | "USER_OVERRIDE" | "USER_AD_HOC";
+    protocol_summary?: string | null;
+    segments: ConditioningSegmentInput[];
+  }
+) {
+  return withTransaction(db, () => {
+    const session = one<{
+      status:string;
+      session_kind:string;
+      session_source:string;
+      workout_template_id:SQLInputValue;
+    }>(
+      db,
+      "SELECT status,session_kind,session_source,workout_template_id FROM training_sessions WHERE training_session_id=?",
+      params.training_session_id
+    );
+    if (!session) throw new Error("Training session not found");
+    if (session.status !== "ACTIVE") throw new Error("Conditioning session must be ACTIVE");
+    if (session.session_kind !== "CONDITIONING") throw new Error("Session is not Conditioning");
+    if (!params.segments.length) throw new Error("Conditioning prescription requires at least one segment");
+
+    const existing = one<Row>(
+      db,
+      "SELECT * FROM conditioning_prescriptions WHERE training_session_id=?",
+      params.training_session_id
+    );
+    if (existing) {
+      if (
+        existing.selected_modality_id !== params.selected_modality_id ||
+        existing.recommended_modality_id !== (params.recommended_modality_id ?? null)
+      ) {
+        throw new Error("Conditioning session already has a different durable prescription");
+      }
+      return { replayed: true, prescription: getConditioningPrescription(db, String(existing.conditioning_prescription_id)) };
+    }
+
+    const selected = one<{modality_id:string; active:number}>(
+      db,
+      "SELECT modality_id,active FROM conditioning_modalities WHERE modality_id=?",
+      params.selected_modality_id
+    );
+    if (!selected || selected.active !== 1) throw new Error("Selected Conditioning modality is unavailable");
+
+    let policyId: string | null = null;
+    if (session.workout_template_id != null) {
+      const policy = one<{conditioning_policy_id:string}>(
+        db,
+        "SELECT conditioning_policy_id FROM conditioning_policies WHERE workout_template_id=?",
+        session.workout_template_id
+      );
+      if (!policy) throw new Error("Program Conditioning template is missing a policy");
+      policyId = policy.conditioning_policy_id;
+
+      const selectedAllowed = one(
+        db,
+        "SELECT 1 AS ok FROM conditioning_policy_modalities WHERE conditioning_policy_id=? AND modality_id=?",
+        policyId, params.selected_modality_id
+      );
+      if (!selectedAllowed) throw new Error("Selected modality is outside the active Conditioning policy");
+      if (params.recommended_modality_id) {
+        const recommendedAllowed = one(
+          db,
+          "SELECT 1 AS ok FROM conditioning_policy_modalities WHERE conditioning_policy_id=? AND modality_id=?",
+          policyId, params.recommended_modality_id
+        );
+        if (!recommendedAllowed) throw new Error("Recommended modality is outside the active Conditioning policy");
+      }
+    } else if (params.modality_selection_source !== "USER_AD_HOC") {
+      throw new Error("Ad-hoc Conditioning must use USER_AD_HOC modality source");
+    }
+
+    const now = nowIso();
+    const prescriptionId = newId("cond");
+    db.prepare(`INSERT INTO conditioning_prescriptions(
+      conditioning_prescription_id,training_session_id,conditioning_policy_id,
+      recommended_modality_id,selected_modality_id,modality_selection_source,protocol_summary,created_at
+    ) VALUES(?,?,?,?,?,?,?,?)`).run(
+      prescriptionId, params.training_session_id, policyId,
+      params.recommended_modality_id ?? null, params.selected_modality_id,
+      params.modality_selection_source, params.protocol_summary ?? null, now
+    );
+
+    const insert = db.prepare(`INSERT INTO conditioning_segments(
+      conditioning_segment_id,conditioning_prescription_id,sequence,segment_type,
+      target_duration_sec,target_distance_m,target_hr_min,target_hr_max,target_hr_zone,
+      target_power_w,target_cadence,notes
+    ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)`);
+    const seen = new Set<number>();
+    for (const segment of params.segments) {
+      if (!Number.isInteger(segment.sequence) || segment.sequence < 1 || seen.has(segment.sequence)) {
+        throw new Error("Conditioning segment sequence must be unique positive integers");
+      }
+      seen.add(segment.sequence);
+      if (
+        segment.target_hr_min != null &&
+        segment.target_hr_max != null &&
+        segment.target_hr_min > segment.target_hr_max
+      ) {
+        throw new Error("Conditioning target HR minimum exceeds maximum");
+      }
+      insert.run(
+        newId("cseg"), prescriptionId, segment.sequence, segment.segment_type,
+        segment.target_duration_sec ?? null, segment.target_distance_m ?? null,
+        segment.target_hr_min ?? null, segment.target_hr_max ?? null,
+        segment.target_hr_zone ?? null, segment.target_power_w ?? null,
+        segment.target_cadence ?? null, segment.notes ?? null
+      );
+    }
+
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "CONDITIONING_PRESCRIBED", "training_session", params.training_session_id,
+      JSON.stringify({
+        recommended_modality_id: params.recommended_modality_id ?? null,
+        selected_modality_id: params.selected_modality_id,
+        modality_selection_source: params.modality_selection_source,
+      }),
+      now
+    );
+    return { replayed: false, prescription: getConditioningPrescription(db, prescriptionId) };
+  });
+}
+
+export function getConditioningPrescription(db: DatabaseSync, prescriptionId: string) {
+  const prescription = one<Row>(
+    db,
+    "SELECT * FROM conditioning_prescriptions WHERE conditioning_prescription_id=?",
+    prescriptionId
+  );
+  if (!prescription) return null;
+  return {
+    ...prescription,
+    segments: all(
+      db,
+      "SELECT * FROM conditioning_segments WHERE conditioning_prescription_id=? ORDER BY sequence",
+      prescriptionId
+    ),
+    result: one(
+      db,
+      "SELECT * FROM conditioning_results WHERE conditioning_prescription_id=?",
+      prescriptionId
+    ) ?? null,
+  };
+}
+
+export type ConditioningSegmentActual = {
+  sequence: number;
+  actual_duration_sec?: number | null;
+  actual_distance_m?: number | null;
+  actual_avg_hr?: number | null;
+  actual_max_hr?: number | null;
+  actual_power_w?: number | null;
+  actual_cadence?: number | null;
+  notes?: string | null;
+};
+
+export function completeConditioning(
+  db: DatabaseSync,
+  params: {
+    conditioning_prescription_id: string;
+    mode: "AS_PRESCRIBED" | "ACTUALS";
+    actual_duration_sec?: number | null;
+    actual_distance_m?: number | null;
+    actual_avg_power_w?: number | null;
+    actual_avg_cadence?: number | null;
+    rpe?: number | null;
+    notes?: string | null;
+    segments?: ConditioningSegmentActual[];
+  }
+) {
+  return withTransaction(db, () => {
+    const prescription = one<{training_session_id:string}>(
+      db,
+      "SELECT training_session_id FROM conditioning_prescriptions WHERE conditioning_prescription_id=?",
+      params.conditioning_prescription_id
+    );
+    if (!prescription) throw new Error("Conditioning prescription not found");
+    const session = one<{status:string}>(
+      db,
+      "SELECT status FROM training_sessions WHERE training_session_id=?",
+      prescription.training_session_id
+    );
+    if (!session || session.status !== "ACTIVE") throw new Error("Conditioning session must be ACTIVE");
+
+    const existing = one(
+      db,
+      "SELECT conditioning_prescription_id FROM conditioning_results WHERE conditioning_prescription_id=?",
+      params.conditioning_prescription_id
+    );
+    if (existing) {
+      return { replayed: true, prescription: getConditioningPrescription(db, params.conditioning_prescription_id) };
+    }
+
+    const segments = all<Row>(
+      db,
+      "SELECT * FROM conditioning_segments WHERE conditioning_prescription_id=? ORDER BY sequence",
+      params.conditioning_prescription_id
+    );
+    if (!segments.length) throw new Error("Conditioning prescription has no segments");
+
+    if (params.rpe != null && (params.rpe < 0 || params.rpe > 10)) throw new Error("INVALID Conditioning RPE");
+
+    if (params.mode === "AS_PRESCRIBED") {
+      const update = db.prepare(`UPDATE conditioning_segments
+        SET actual_duration_sec=target_duration_sec,
+            actual_distance_m=target_distance_m,
+            actual_power_w=target_power_w,
+            actual_cadence=target_cadence
+        WHERE conditioning_segment_id=?`);
+      for (const segment of segments) update.run(segment.conditioning_segment_id);
+    } else if (params.segments) {
+      const bySequence = new Map(segments.map((row) => [Number(row.sequence), row]));
+      const update = db.prepare(`UPDATE conditioning_segments
+        SET actual_duration_sec=?,actual_distance_m=?,actual_avg_hr=?,actual_max_hr=?,
+            actual_power_w=?,actual_cadence=?,notes=COALESCE(?,notes)
+        WHERE conditioning_segment_id=?`);
+      for (const actual of params.segments) {
+        const target = bySequence.get(actual.sequence);
+        if (!target) throw new Error(`Unknown Conditioning segment: ${actual.sequence}`);
+        update.run(
+          actual.actual_duration_sec ?? null, actual.actual_distance_m ?? null,
+          actual.actual_avg_hr ?? null, actual.actual_max_hr ?? null,
+          actual.actual_power_w ?? null, actual.actual_cadence ?? null,
+          actual.notes ?? null, target.conditioning_segment_id
+        );
+      }
+    }
+
+    const refreshed = all<Row>(
+      db,
+      "SELECT * FROM conditioning_segments WHERE conditioning_prescription_id=? ORDER BY sequence",
+      params.conditioning_prescription_id
+    );
+    const summedDuration = refreshed.every((x) => x.actual_duration_sec != null)
+      ? refreshed.reduce((sum, x) => sum + Number(x.actual_duration_sec), 0)
+      : null;
+    const summedDistance = refreshed.every((x) => x.actual_distance_m != null)
+      ? refreshed.reduce((sum, x) => sum + Number(x.actual_distance_m), 0)
+      : null;
+
+    db.prepare(`INSERT INTO conditioning_results(
+      conditioning_prescription_id,actual_duration_sec,actual_distance_m,
+      actual_avg_power_w,actual_avg_cadence,rpe,notes
+    ) VALUES(?,?,?,?,?,?,?)`).run(
+      params.conditioning_prescription_id,
+      params.actual_duration_sec ?? summedDuration,
+      params.actual_distance_m ?? summedDistance,
+      params.actual_avg_power_w ?? null,
+      params.actual_avg_cadence ?? null,
+      params.rpe ?? null,
+      params.notes ?? null
+    );
+
+    const now = nowIso();
+    db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+      newId("evt"), "CONDITIONING_COMPLETED", "training_session", prescription.training_session_id,
+      JSON.stringify({ mode: params.mode }), now
+    );
+    return { replayed: false, prescription: getConditioningPrescription(db, params.conditioning_prescription_id) };
+  });
 }
 
 type ProgressionPolicy = {
@@ -773,6 +1067,17 @@ export function abandonSession(db: DatabaseSync, sessionId: string, reason?: str
       throw new Error("Session cannot be abandoned from current state");
     }
     const now = nowIso();
+    if (session.session_kind === "CONDITIONING") {
+      const result = one(
+        db,
+        `SELECT cr.conditioning_prescription_id
+           FROM conditioning_prescriptions cp
+           JOIN conditioning_results cr ON cr.conditioning_prescription_id=cp.conditioning_prescription_id
+          WHERE cp.training_session_id=?`,
+        sessionId
+      );
+      if (!result) throw new Error("Conditioning result must be recorded before session completion");
+    }
     if (session.status === "PAUSED") {
       db.prepare(
         "UPDATE training_session_pauses SET resumed_at=? WHERE training_session_id=? AND resumed_at IS NULL"
