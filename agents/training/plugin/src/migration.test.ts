@@ -24,6 +24,14 @@ function payload(): NormalizedTrainingMigrationV1 {
       load_mode: "TOTAL_EXTERNAL",
       rep_mode: "TOTAL",
       load_progression_direction: "HIGHER_IS_HARDER",
+    }, {
+      source_id: "legacy-ex-mobility",
+      name: "Ankle rocks",
+      category: "mobility",
+      equipment_type: null,
+      load_mode: "NONE",
+      rep_mode: "TOTAL",
+      load_progression_direction: "NOT_APPLICABLE",
     }],
     program_versions: [{
       source_id: "legacy-version-active",
@@ -54,6 +62,16 @@ function payload(): NormalizedTrainingMigrationV1 {
           source_id: "legacy-template-cond",
           name: "Conditioning",
           workout_kind: "CONDITIONING",
+          strength_exercises: [{
+            source_id: "legacy-template-ex-mobility",
+            exercise_source_id: "legacy-ex-mobility",
+            sequence: 1,
+            target_sets: 2,
+            target_reps_min: 10,
+            target_reps_max: 10,
+            target_rir_min: null,
+            target_rir_max: null,
+          }],
           conditioning_policy: {
             source_id: "legacy-cond-policy",
             objective: "Aerobic base",
@@ -122,6 +140,12 @@ describe("Training normalized migration", () => {
       expect(result.counts.training_sessions).toBe(2);
       expect(result.counts.session_sets).toBe(1);
       expect(result.counts.conditioning_results).toBe(1);
+      const conditioningMobility = Number((db.prepare(
+        `SELECT count(*) n FROM template_exercises te
+          JOIN workout_templates wt ON wt.workout_template_id=te.workout_template_id
+         WHERE wt.workout_kind='CONDITIONING'`
+      ).get() as any).n);
+      expect(conditioningMobility).toBe(1);
 
       const migrated = db.prepare(
         "SELECT started_at,ended_at,timezone_at_start,local_date,time_precision FROM training_sessions WHERE local_date='2026-09-30'"

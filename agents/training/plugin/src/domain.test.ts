@@ -61,11 +61,16 @@ function fixture() {
         "TOTAL_EXTERNAL", "TOTAL", "HIGHER_IS_HARDER", 1, now,
       );
   }
+  for (const [id, name] of [["ex_mob_a", "Ankle rocks"], ["ex_mob_b", "Thoracic Rotation"]] as const) {
+    db.prepare("INSERT INTO exercises VALUES(?,?,?,?,?,?,?,?,?)")
+      .run(id, name, "mobility", null, "NONE", "TOTAL", "NOT_APPLICABLE", 1, now);
+  }
 
   const templates = [
     ["tpl_a", "Strength A", "STRENGTH"],
-    ["tpl_cond", "Conditioning", "CONDITIONING"],
+    ["tpl_cond_a", "Conditioning A", "CONDITIONING"],
     ["tpl_b", "Strength B", "STRENGTH"],
+    ["tpl_cond_b", "Conditioning B", "CONDITIONING"],
     ["tpl_c", "Strength C", "STRENGTH"],
   ] as const;
   for (const [id, name, kind] of templates) {
@@ -75,9 +80,9 @@ function fixture() {
 
   const slots = [
     ["slot_a", 1, "tpl_a"],
-    ["slot_cond_1", 2, "tpl_cond"],
+    ["slot_cond_1", 2, "tpl_cond_a"],
     ["slot_b", 3, "tpl_b"],
-    ["slot_cond_2", 4, "tpl_cond"],
+    ["slot_cond_2", 4, "tpl_cond_b"],
     ["slot_c", 5, "tpl_c"],
   ] as const;
   for (const [id, sequence, template] of slots) {
@@ -91,15 +96,21 @@ function fixture() {
     .run("te_a", "tpl_a", "ex_a", 1, 4, 6, 6, 2, 2, "{}", null);
   db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
     .run("te_b", "tpl_b", "ex_b", 1, 4, 6, 6, 2, 2, "{}", null);
+  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run("te_mob_a", "tpl_cond_a", "ex_mob_a", 1, 2, 10, 10, null, null, "{}", null);
+  db.prepare("INSERT INTO template_exercises VALUES(?,?,?,?,?,?,?,?,?,?,?)")
+    .run("te_mob_b", "tpl_cond_b", "ex_mob_b", 1, 2, 8, 8, null, null, "{}", null);
 
   for (const [id, name] of [["bike", "Bike"], ["treadmill", "Treadmill"], ["swim", "Swim"]] as const) {
     db.prepare("INSERT INTO conditioning_modalities VALUES(?,?,1)").run(id, name);
   }
-  db.prepare("INSERT INTO conditioning_policies VALUES(?,?,?,?,?,?,?)")
-    .run("cp_base", "tpl_cond", "aerobic base", 1800, 2400, "HR_ZONE", null);
-  for (const modality of ["bike", "treadmill", "swim"]) {
-    db.prepare("INSERT INTO conditioning_policy_modalities VALUES(?,?)")
-      .run("cp_base", modality);
+  for (const [policyId, templateId] of [["cp_a", "tpl_cond_a"], ["cp_b", "tpl_cond_b"]] as const) {
+    db.prepare("INSERT INTO conditioning_policies VALUES(?,?,?,?,?,?,?)")
+      .run(policyId, templateId, "aerobic base", 1800, 2400, "HR_ZONE", null);
+    for (const modality of ["bike", "treadmill", "swim"]) {
+      db.prepare("INSERT INTO conditioning_policy_modalities VALUES(?,?)")
+        .run(policyId, modality);
+    }
   }
 
   return db;
@@ -446,12 +457,27 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       prescribeExercise(db, strengthExercise, fourSets(70));
       completeExercise(db, strengthExercise, "AS_PRESCRIBED");
       finishSession(db, strength.session.training_session_id);
-      expect(getRecommendation(db).recommendation?.program_slot_id).toBe("slot_cond_1");
+      const conditioningRecommendation: any = getRecommendation(db).recommendation;
+      expect(conditioningRecommendation?.program_slot_id).toBe("slot_cond_1");
+      expect(conditioningRecommendation.exercises.map((x: any) => x.exercise_id)).toEqual(["ex_mob_a"]);
 
       const conditioning: any = startProgramSession(db, {
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-07",
       });
+      expect(conditioning.session.exercises.map((x: any) => x.exercise_id)).toEqual(["ex_mob_a"]);
+      const mobilityExercise = conditioning.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, mobilityExercise, [1, 2].map((set_number) => ({
+        set_number,
+        candidate_reps: 10,
+        candidate_load_kg: null,
+        candidate_rir: null,
+        target_reps: 10,
+        target_load_kg: null,
+        target_rir: null,
+      })));
+      completeExercise(db, mobilityExercise, "AS_PRESCRIBED");
+
       const prescription: any = createConditioningPrescription(db, {
         training_session_id: conditioning.session.training_session_id,
         recommended_modality_id: "bike",
@@ -747,23 +773,25 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(state.cursor.next_program_slot_id).toBe("slot_a");
       expect(state.slots.map((slot: any) => [slot.sequence, slot.name])).toEqual([
         [1, "Strength A"],
-        [2, "Conditioning"],
+        [2, "Conditioning A"],
         [3, "Strength B"],
-        [4, "Conditioning"],
+        [4, "Conditioning B"],
         [5, "Strength C"],
       ]);
       expect(state.slots[1].conditioning.modalities.map((x: any) => x.modality_id).sort())
         .toEqual(["bike", "swim", "treadmill"]);
+      expect(state.slots[1].exercises.map((x: any) => x.exercise_id)).toEqual(["ex_mob_a"]);
+      expect(state.slots[3].exercises.map((x: any) => x.exercise_id)).toEqual(["ex_mob_b"]);
     } finally {
       db.close();
     }
   });
 
-  it("TRA-SEL-007: duplicate Conditioning template resolves to nearest not-yet-passed slot", () => {
+  it("TRA-SEL-007: generic Conditioning resolves to nearest not-yet-passed slot across distinct templates", () => {
     const db1 = fixture();
     try {
       const first: any = startProgramSession(db1, {
-        selected_workout_template_id: "tpl_cond",
+        selected_workout_kind: "CONDITIONING",
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-06",
       });
@@ -777,7 +805,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     try {
       db2.prepare("UPDATE program_cursor SET next_program_slot_id='slot_b' WHERE program_version_id='ver_test'").run();
       const second: any = startProgramSession(db2, {
-        selected_workout_template_id: "tpl_cond",
+        selected_workout_kind: "CONDITIONING",
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-07",
       });
@@ -791,7 +819,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     try {
       db3.prepare("UPDATE program_cursor SET next_program_slot_id='slot_c' WHERE program_version_id='ver_test'").run();
       expect(() => startProgramSession(db3, {
-        selected_workout_template_id: "tpl_cond",
+        selected_workout_kind: "CONDITIONING",
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-08",
       })).toThrow(/No unpassed matching Program Slot/);
