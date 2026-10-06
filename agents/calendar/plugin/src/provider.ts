@@ -28,6 +28,16 @@ export type ProviderEvent = {
   extendedProperties?: unknown;
 };
 
+export type CalendarClassificationView = {
+  categoryId: string;
+  leafName: string;
+  kind: "management" | "service";
+  providerLabelId: string;
+  displayName: string;
+  parentId?: string;
+  parentName?: string;
+};
+
 export type CalendarEventView = {
   id: string;
   etag?: string;
@@ -47,6 +57,7 @@ export type CalendarEventView = {
   originalStartTime?: string;
   eventType?: string;
   eventLabelId?: string;
+  classification: CalendarClassificationView | null;
 };
 
 export type CalendarLabels = {
@@ -135,7 +146,39 @@ function eventReferenceWindow(value: string) {
   };
 }
 
-function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
+function classificationView(
+  config: CalendarConfig,
+  eventLabelId: string | undefined,
+): CalendarClassificationView | null {
+  if (!eventLabelId) return null;
+  const leaf = config.leaves.find((candidate) => candidate.providerLabel.id === eventLabelId);
+  if (!leaf) return null;
+
+  const base = {
+    categoryId: leaf.id,
+    leafName: leaf.name,
+    kind: leaf.kind,
+    providerLabelId: leaf.providerLabel.id,
+  } as const;
+
+  if (leaf.parentId) {
+    const parent = config.parents.find((candidate) => candidate.id === leaf.parentId);
+    if (!parent) throw new Error(`Configured Calendar category ${leaf.id} references an unknown parent.`);
+    return {
+      ...base,
+      parentId: parent.id,
+      parentName: parent.name,
+      displayName: `${parent.name} · ${leaf.name}`,
+    };
+  }
+
+  return {
+    ...base,
+    displayName: leaf.name,
+  };
+}
+
+function normalizeProviderEvent(config: CalendarConfig, event: ProviderEvent): CalendarEventView {
   const start = eventTime(event.start);
   const end = eventTime(event.end);
   const originalStart = eventTime(event.originalStartTime);
@@ -164,6 +207,7 @@ function normalizeProviderEvent(event: ProviderEvent): CalendarEventView {
     originalStartTime: originalStart.value,
     eventType: event.eventType,
     eventLabelId: event.eventLabelId,
+    classification: classificationView(config, event.eventLabelId),
   };
 }
 
@@ -285,7 +329,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
       const items = await listProviderEvents(deps, config, timeMin, timeMax);
       return {
         calendarId: config.designatedCalendar,
-        events: items.map(normalizeProviderEvent),
+        events: items.map((event) => normalizeProviderEvent(config, event)),
       };
     },
 
@@ -294,7 +338,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
       const resolved = await resolveEventReference(deps, config, params.event_id);
       const url = apiUrl(eventPath(config, resolved.id));
       const event = await requestJson<ProviderEvent>(deps, url);
-      return normalizeProviderEvent(event);
+      return normalizeProviderEvent(config, event);
     },
 
     async getLabels(configValue: unknown) {
@@ -418,6 +462,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
           changed: false,
           event_id: eventReference(current),
           label_id: labelId,
+          classification: classificationView(config, current.eventLabelId),
           etag: current.etag,
         };
       }
@@ -440,6 +485,7 @@ export function createGoogleCalendarProvider(deps: GoogleCalendarProviderDeps = 
         changed: true,
         event_id: eventReference(updated),
         label_id: updated.eventLabelId ?? labelId,
+        classification: classificationView(config, updated.eventLabelId ?? labelId),
         etag: updated.etag,
       };
     },
