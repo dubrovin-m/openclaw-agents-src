@@ -160,7 +160,7 @@ CREATE TABLE session_exercises(
   substituted_from_exercise_id TEXT REFERENCES exercises(exercise_id),
   equipment_instance_id TEXT REFERENCES equipment_instances(equipment_instance_id),
   sequence INTEGER NOT NULL CHECK(sequence>0),
-  planned_sets INTEGER NOT NULL CHECK(planned_sets>0),
+  planned_sets INTEGER CHECK(planned_sets IS NULL OR planned_sets>0),
   target_reps_min INTEGER CHECK(target_reps_min IS NULL OR target_reps_min>=0),
   target_reps_max INTEGER CHECK(target_reps_max IS NULL OR target_reps_max>=0),
   target_rir_min REAL CHECK(target_rir_min IS NULL OR target_rir_min>=0),
@@ -326,6 +326,24 @@ CREATE TABLE data_corrections(
   source_kind TEXT,
   created_at TEXT NOT NULL
 ) STRICT;
+CREATE TABLE migration_batches(
+  migration_batch_id TEXT PRIMARY KEY,
+  source_system TEXT NOT NULL,
+  source_export_id TEXT NOT NULL,
+  input_sha256 TEXT NOT NULL,
+  imported_at TEXT NOT NULL,
+  result_json TEXT NOT NULL,
+  UNIQUE(source_system,source_export_id)
+) STRICT;
+CREATE TABLE migration_records(
+  migration_batch_id TEXT NOT NULL REFERENCES migration_batches(migration_batch_id) ON DELETE CASCADE,
+  source_record_type TEXT NOT NULL,
+  source_record_id TEXT NOT NULL,
+  target_type TEXT NOT NULL,
+  target_id TEXT NOT NULL,
+  PRIMARY KEY(migration_batch_id,source_record_type,source_record_id)
+) STRICT;
+
 CREATE TABLE training_events(
   event_id TEXT PRIMARY KEY,
   event_type TEXT NOT NULL,
