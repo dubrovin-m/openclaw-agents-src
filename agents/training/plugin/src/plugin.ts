@@ -6,10 +6,13 @@ import {
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import {
   abandonSession,
+  completeConditioning,
   completeExercise,
+  createConditioningPrescription,
   correctSetResult,
   deferExercise,
   finishSession,
+  getConditioningPrescription,
   getProgressionCandidate,
   getRecommendation,
   getSession,
@@ -23,6 +26,8 @@ import {
   voidSession,
   type ActualSet,
   type AdHocStrengthExercise,
+  type ConditioningSegmentActual,
+  type ConditioningSegmentInput,
   type PrescribedSet,
 } from "./domain.js";
 import { healthSnapshot, openTrainingStore } from "./store.js";
@@ -193,6 +198,92 @@ const entry = defineToolPlugin({
             ...params,
             strength_exercises: params.strength_exercises as AdHocStrengthExercise[] | undefined,
           })),
+    })),
+    tool(ownerTool({
+      name: "training_conditioning_get",
+      label: "Conditioning prescription",
+      description: "Read one persisted Conditioning prescription, segments, and result.",
+      parameters: Type.Object({
+        conditioning_prescription_id: Type.String({ minLength: 1, maxLength: 100 }),
+      }, { additionalProperties: false }),
+      execute: (params, config) =>
+        withDb(config, (db) => getConditioningPrescription(db, params.conditioning_prescription_id)),
+    })),
+    tool(ownerTool({
+      name: "training_conditioning_prescribe",
+      label: "Prescribe Conditioning",
+      description: "Persist the complete modality-specific Conditioning protocol before presenting it to the user.",
+      parameters: Type.Object({
+        training_session_id: sessionId,
+        recommended_modality_id: Type.Optional(Type.Union([
+          Type.String({ minLength: 1, maxLength: 100 }),
+          Type.Null(),
+        ])),
+        selected_modality_id: Type.String({ minLength: 1, maxLength: 100 }),
+        modality_selection_source: Type.Union([
+          Type.Literal("AGENT_RECOMMENDATION"),
+          Type.Literal("USER_OVERRIDE"),
+          Type.Literal("USER_AD_HOC"),
+        ]),
+        protocol_summary: Type.Optional(Type.Union([
+          Type.String({ maxLength: 2000 }),
+          Type.Null(),
+        ])),
+        segments: Type.Array(Type.Object({
+          sequence: Type.Integer({ minimum: 1, maximum: 100 }),
+          segment_type: Type.Union([
+            Type.Literal("WARMUP"),
+            Type.Literal("WORK"),
+            Type.Literal("RECOVERY"),
+            Type.Literal("COOLDOWN"),
+          ]),
+          target_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 86400 }), Type.Null()])),
+          target_distance_m: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1000000 }), Type.Null()])),
+          target_hr_min: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 250 }), Type.Null()])),
+          target_hr_max: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 250 }), Type.Null()])),
+          target_hr_zone: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 5 }), Type.Null()])),
+          target_power_w: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 5000 }), Type.Null()])),
+          target_cadence: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 500 }), Type.Null()])),
+          notes: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+        }, { additionalProperties: false }), { minItems: 1, maxItems: 100 }),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => createConditioningPrescription(db, {
+          ...params,
+          segments: params.segments as ConditioningSegmentInput[],
+        })),
+    })),
+    tool(ownerTool({
+      name: "training_conditioning_complete",
+      label: "Complete Conditioning",
+      description: "Record Conditioning completion without requiring Fitbit telemetry.",
+      parameters: Type.Object({
+        conditioning_prescription_id: Type.String({ minLength: 1, maxLength: 100 }),
+        mode: Type.Union([Type.Literal("AS_PRESCRIBED"), Type.Literal("ACTUALS")]),
+        actual_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 86400 }), Type.Null()])),
+        actual_distance_m: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1000000 }), Type.Null()])),
+        actual_avg_power_w: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 5000 }), Type.Null()])),
+        actual_avg_cadence: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 500 }), Type.Null()])),
+        rpe: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()])),
+        notes: Type.Optional(Type.Union([Type.String({ maxLength: 2000 }), Type.Null()])),
+        segments: Type.Optional(Type.Array(Type.Object({
+          sequence: Type.Integer({ minimum: 1, maximum: 100 }),
+          actual_duration_sec: Type.Optional(Type.Union([Type.Integer({ minimum: 0, maximum: 86400 }), Type.Null()])),
+          actual_distance_m: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 1000000 }), Type.Null()])),
+          actual_avg_hr: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 250 }), Type.Null()])),
+          actual_max_hr: Type.Optional(Type.Union([Type.Integer({ minimum: 1, maximum: 250 }), Type.Null()])),
+          actual_power_w: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 5000 }), Type.Null()])),
+          actual_cadence: Type.Optional(Type.Union([Type.Number({ minimum: 0, maximum: 500 }), Type.Null()])),
+          notes: Type.Optional(Type.Union([Type.String({ maxLength: 500 }), Type.Null()])),
+        }, { additionalProperties: false }), { minItems: 1, maxItems: 100 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) => completeConditioning(db, {
+          ...params,
+          segments: params.segments as ConditioningSegmentActual[] | undefined,
+        })),
     })),
     tool(ownerTool({
       name: "training_exercise_prescribe",
