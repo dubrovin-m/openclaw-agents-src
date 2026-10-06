@@ -35,4 +35,3 @@ if set(actual)!=set(allow) or len(actual)!=len(allow):
     raise SystemExit(f'Training allow-list mismatch: actual={actual} allow={allow}')
 print('TRAINING_TOOL_CONTRACT_PASS')
 PY
-

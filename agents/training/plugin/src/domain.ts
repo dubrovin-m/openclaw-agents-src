@@ -2097,4 +2097,3 @@ export function getRelevantLearning(
     params.subject_type, params.subject_id ?? null, params.subject_id ?? null
   );
 }
-
