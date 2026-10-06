@@ -20,6 +20,7 @@ import {
   resumeSession,
   startAdHocSession,
   startProgramSession,
+  upsertLearnedItem,
 } from "./domain.js";
 import { nowIso, openTrainingStore } from "./store.js";
 
@@ -560,6 +561,144 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(() => applyApprovedProgramChange(db, proposal.proposal_id, "USER"))
         .toThrow(/while a session is open/);
       expect((db.prepare("SELECT count(*) n FROM program_versions").get() as any).n).toBe(1);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-LRN-003: explicitly persistent user feedback can become ACTIVE learning", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const feedback: any = recordTrainingFeedback(db, {
+        training_session_id: started.session.training_session_id,
+        raw_text: "Я вообще не люблю Pec Deck",
+      });
+      const observation: any = recordObservation(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User explicitly dislikes this exercise",
+        persistence_class: "EXPLICITLY_PERSISTENT",
+        source_type: "USER_CHAT",
+        source_feedback_id: feedback.feedback_id,
+        source_session_id: started.session.training_session_id,
+      });
+      const learned: any = upsertLearnedItem(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User dislikes this exercise",
+        status: "ACTIVE",
+        evidence: [{
+          observation_id: observation.observation_id,
+          relation: "SUPPORTS",
+        }],
+      });
+      expect(learned.item.status).toBe("ACTIVE");
+      expect(learned.evidence).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-LRN-002/004: situational or performance inference cannot auto-promote to ACTIVE", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      const feedback: any = recordTrainingFeedback(db, {
+        training_session_id: started.session.training_session_id,
+        raw_text: "Сегодня не хочу приседать",
+      });
+      const situational: any = recordObservation(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User does not want this exercise today",
+        persistence_class: "SITUATIONAL",
+        source_type: "USER_CHAT",
+        source_feedback_id: feedback.feedback_id,
+        source_session_id: started.session.training_session_id,
+      });
+      expect(() => upsertLearnedItem(db, {
+        kind: "EXERCISE_PREFERENCE",
+        subject_type: "EXERCISE",
+        subject_id: "ex_a",
+        statement: "User dislikes this exercise",
+        status: "ACTIVE",
+        evidence: [{
+          observation_id: situational.observation_id,
+          relation: "SUPPORTS",
+        }],
+      })).toThrow(/explicit persistent user evidence/);
+
+      const performance: any = recordObservation(db, {
+        kind: "ADHERENCE_PATTERN",
+        subject_type: "PROGRAM",
+        subject_id: "prog_test",
+        statement: "User shortened one observed session",
+        persistence_class: "POTENTIALLY_PERSISTENT",
+        source_type: "PERFORMANCE",
+        source_session_id: started.session.training_session_id,
+      });
+      expect(() => upsertLearnedItem(db, {
+        kind: "ADHERENCE_PATTERN",
+        subject_type: "PROGRAM",
+        subject_id: "prog_test",
+        statement: "User tends to shorten sessions",
+        status: "ACTIVE",
+        evidence: [{
+          observation_id: performance.observation_id,
+          relation: "SUPPORTS",
+        }],
+      })).toThrow(/explicit persistent user evidence/);
+
+      const hypothesis: any = upsertLearnedItem(db, {
+        kind: "ADHERENCE_PATTERN",
+        subject_type: "PROGRAM",
+        subject_id: "prog_test",
+        statement: "User may tend to shorten sessions",
+        status: "HYPOTHESIS",
+        evidence: [{
+          observation_id: performance.observation_id,
+          relation: "SUPPORTS",
+        }],
+      });
+      expect(hypothesis.item.status).toBe("HYPOTHESIS");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-LRN-006: agent analysis alone cannot self-confirm ACTIVE learning", () => {
+    const db = fixture();
+    try {
+      const observation: any = recordObservation(db, {
+        kind: "AGENT_HYPOTHESIS",
+        subject_type: "PROGRAM",
+        subject_id: "prog_test",
+        statement: "Agent thinks Friday sessions may be harder",
+        persistence_class: "POTENTIALLY_PERSISTENT",
+        source_type: "AGENT_ANALYSIS",
+      });
+      expect(() => upsertLearnedItem(db, {
+        kind: "AGENT_HYPOTHESIS",
+        subject_type: "PROGRAM",
+        subject_id: "prog_test",
+        statement: "Friday sessions are harder",
+        status: "ACTIVE",
+        evidence: [{
+          observation_id: observation.observation_id,
+          relation: "SUPPORTS",
+        }],
+      })).toThrow(/explicit persistent user evidence/);
     } finally {
       db.close();
     }
