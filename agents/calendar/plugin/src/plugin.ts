@@ -157,7 +157,7 @@ function pluginConfigFromRoot(root: unknown): Record<string, unknown> {
   return config;
 }
 
-function ruleProposalStore(api: CalendarPluginApi): RuleProposalStore {
+export function ruleProposalStore(api: CalendarPluginApi): RuleProposalStore {
   return {
     async register(key, value, opts) {
       if (key !== value.proposalId) throw new Error("Calendar proposal key does not match proposal identity");
