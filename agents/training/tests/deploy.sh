@@ -59,6 +59,8 @@ NODE
 }
 
 grep -Fq 'plugins install --force --no-enable --accept-capabilities' "$DEPLOY" || fail "stage deploy does not use OpenClaw no-enable install"
+grep -Fq 'config patch --stdin' "$DEPLOY" || fail "stage deploy does not atomically patch disabled plugin config"
+! grep -Fq 'config set plugins.entries.training' "$DEPLOY" || fail "stage deploy uses non-atomic Training config writes"
 
 LEGACY_CONFIG="$TMP/legacy-array.json"
 cat > "$LEGACY_CONFIG" <<JSON

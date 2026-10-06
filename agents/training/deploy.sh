@@ -149,9 +149,8 @@ set +e
   mv "$WORKSPACE_TMP" "$WORKSPACE"
 
   oc plugins install --force --no-enable --accept-capabilities "$ARTIFACT"
-  DB_JSON=$(node -e 'process.stdout.write(JSON.stringify(process.argv[1]))' "$DB")
-  oc config set plugins.entries.training.config.databasePath "$DB_JSON" --json
-  oc config set plugins.entries.training.enabled false --json
+  PLUGIN_PATCH=$(node -e 'process.stdout.write(JSON.stringify({plugins:{entries:{training:{enabled:false,config:{databasePath:process.argv[1]}}}}}))' "$DB")
+  printf '%s\n' "$PLUGIN_PATCH" | oc config patch --stdin >/dev/null
   oc config validate >/dev/null
 
   if [ -n "$TEST_ROOT" ] && [ "${TRAINING_DEPLOY_TEST_FAIL_STAGE:-}" = "after-config" ]; then
