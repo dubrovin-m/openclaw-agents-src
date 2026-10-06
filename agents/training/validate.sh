@@ -44,7 +44,16 @@ text=(root/'deploy.sh').read_text()
 for forbidden in ['agents add','agents bind','plugins enable','systemctl','openclaw-gateway','telegram:training']:
     if forbidden in text:
         raise SystemExit('stage-only Training deploy contains forbidden activation operation: '+forbidden)
-for required in ['plugins install --force --accept-capabilities','plugins.entries.training.enabled false','TRAINING_DEPLOY_STAGE_PASS']:
+for forbidden in ['config set plugins.entries.training']:
+    if forbidden in text:
+        raise SystemExit('stage-only Training deploy contains non-atomic Training config write: '+forbidden)
+for required in [
+    'plugins install --force --no-enable --accept-capabilities',
+    'config patch --stdin',
+    'enabled:false',
+    'databasePath',
+    'TRAINING_DEPLOY_STAGE_PASS',
+]:
     if required not in text:
         raise SystemExit('stage-only Training deploy missing required control: '+required)
 print('TRAINING_DEPLOY_STAGE_BOUNDARY_PASS')
