@@ -228,6 +228,7 @@ const entry = defineToolPlugin({
       parameters: Type.Object({
         selected_program_slot_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
         selected_workout_template_id: Type.Optional(Type.String({ minLength: 1, maxLength: 100 })),
+        selected_workout_kind: Type.Optional(Type.Literal("CONDITIONING")),
         timezone_at_start: Type.String({ minLength: 1, maxLength: 100 }),
         local_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
       }, { additionalProperties: false }),

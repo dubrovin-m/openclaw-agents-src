@@ -10,15 +10,15 @@
   "plugin": {
     "id": "training",
     "name": "openclaw-plugin-training",
-    "version": "0.1.0",
-    "artifact": "artifacts/openclaw-plugin-training-0.1.0.tgz",
-    "sha256": "c70e5678ff2995ecee659bb09395e2d0981972eafc2720e280988160d3826d7c",
-    "runtime_entry_sha256": "0ec0c012851d5f7620236a6d7d11e7763213bf259fe1e0a515e7e3541af9d38b"
+    "version": "0.1.1",
+    "artifact": "artifacts/openclaw-plugin-training-0.1.1.tgz",
+    "sha256": "85d93f276d0bac13e0dff4a7705801a97b8ac6f107b7c98b319827a1ac9ab74c",
+    "runtime_entry_sha256": "84f351e2eb01796617d61ba8266f41f2919d1470bd9a606ada1209a2c831c68d"
   },
   "source": {
-    "source_revision": "3f47c8fc41e9c94ca88aac07d87e85108112a6cc",
+    "source_revision": "c7446339ed0e81e879d8fb3196e22a18278b94dd",
     "workspace_sha256": {
-      "AGENTS.md": "1790339b5a48bf69da3b748576aeb5ed4d4c145317974164516ad039d2ae1cfe",
+      "AGENTS.md": "98ed4a57c24d6257c9d06199885ecbd8b0876c8e9aace4e49ae9b1e915e63ea5",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
       "IDENTITY.md": "5ae138cd5f900dccf7cc93d3a741b0f284d8d4f6be1fa7280e22e1cd1d02d513",
       "SOUL.md": "34121b15d258c5952ec8e8ab8579cc74d693d19d6a9a29e806326d34faa08266",
@@ -26,7 +26,7 @@
     },
     "tools_sha256": "8a4f5c5a238421f32ab7afec991f6ff2e94a3104bd682376e92c678e1950961f",
     "agent_fragment_sha256": "413d33f137a3cccc58851d39881c58ce54d50989ccf2f7dd0fc7ee555c9600f9",
-    "plugin_manifest_sha256": "278fa0d1e8bbcbf2480fd3aea0b7a3dd21269abcc830343aa4f0e54aac4cccfc"
+    "plugin_manifest_sha256": "f29db45352b5f2c6a1542efc58dcf355be979a73cc7f3a871206094083abaf80"
   },
   "stage_contract": {
     "plugin_enabled": false,
@@ -34,5 +34,24 @@
     "telegram_binding": false,
     "database_created": false,
     "training_authority_switch": false
+  },
+  "predecessor": {
+    "source_revision": "3f47c8fc41e9c94ca88aac07d87e85108112a6cc",
+    "plugin": {
+      "id": "training",
+      "name": "openclaw-plugin-training",
+      "version": "0.1.0",
+      "artifact": "artifacts/openclaw-plugin-training-0.1.0.tgz",
+      "sha256": "c70e5678ff2995ecee659bb09395e2d0981972eafc2720e280988160d3826d7c",
+      "runtime_entry_sha256": "0ec0c012851d5f7620236a6d7d11e7763213bf259fe1e0a515e7e3541af9d38b"
+    },
+    "workspace_sha256": {
+      "AGENTS.md": "1790339b5a48bf69da3b748576aeb5ed4d4c145317974164516ad039d2ae1cfe",
+      "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
+      "IDENTITY.md": "5ae138cd5f900dccf7cc93d3a741b0f284d8d4f6be1fa7280e22e1cd1d02d513",
+      "SOUL.md": "34121b15d258c5952ec8e8ab8579cc74d693d19d6a9a29e806326d34faa08266",
+      "USER.md": "52f2f1f431459a773e6281edcbeaeeb4e431ae03ec75cd3f540b2d6cf2066da0"
+    },
+    "plugin_manifest_sha256": "278fa0d1e8bbcbf2480fd3aea0b7a3dd21269abcc830343aa4f0e54aac4cccfc"
   }
 }

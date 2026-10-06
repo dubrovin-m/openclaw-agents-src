@@ -128,6 +128,10 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-ACT-001 | PRODUCTION-GATE | Frozen stage-only deployment/rollback is source-qualified and live read-only preflight reports Training ABSENT. Activation still requires private migration/reconciliation, protected backup/restore, model/authentication, owner-only route, effective tool checks, and live conversational validation. |
 | TRA-ACT-002 | PRODUCTION-GATE | Requires explicit operational activation plus Nexus/runtime source-registration reconciliation; Fitness must not remain a competing active training authority. |
 
+## Migration-source regression: Conditioning mobility blocks
+
+The authoritative pre-cutover Fitness cycle states that each between-strength Conditioning session includes its applicable mobility block while retaining the existing exercise selection. Training therefore supports planned `template_exercises` on `CONDITIONING` templates. The two program positions use distinct `Conditioning A` / `Conditioning B` templates so Mobility A and Mobility B remain distinct, while generic user selection of “Conditioning” resolves deterministically to the nearest not-yet-passed Conditioning slot by workout kind. This regression is qualified in the domain and normalized-migration test suites.
+
 ## Source-freeze conclusion
 
 At source freeze:

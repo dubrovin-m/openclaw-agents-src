@@ -295,28 +295,27 @@ export function importNormalizedTraining(
         );
         recordSource("workout_template", templateSourceId, "workout_template", templateId);
 
-        if (template.workout_kind === "STRENGTH") {
-          for (const exercise of template.strength_exercises ?? []) {
-            const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "template exercise exercise_source_id"));
-            if (!exerciseId) throw new Error("Template exercise references unknown migrated exercise");
-            const targetId = newId("te");
-            db.prepare(`INSERT INTO template_exercises(
-              template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
-              target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,notes
-            ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
-              targetId, templateId, exerciseId,
-              positiveInt(exercise.sequence, "template exercise sequence"),
-              positiveInt(exercise.target_sets, "template exercise target_sets"),
-              nullableNumber(exercise.target_reps_min, "target_reps_min"),
-              nullableNumber(exercise.target_reps_max, "target_reps_max"),
-              nullableNumber(exercise.target_rir_min, "target_rir_min"),
-              nullableNumber(exercise.target_rir_max, "target_rir_max"),
-              validateJsonObject(exercise.progression_policy_json, "exercise progression_policy_json"),
-              exercise.notes ?? null
-            );
-            recordSource("template_exercise", exercise.source_id, "template_exercise", targetId);
-          }
-        } else {
+        for (const exercise of template.strength_exercises ?? []) {
+          const exerciseId = exerciseMap.get(requiredString(exercise.exercise_source_id, "template exercise exercise_source_id"));
+          if (!exerciseId) throw new Error("Template exercise references unknown migrated exercise");
+          const targetId = newId("te");
+          db.prepare(`INSERT INTO template_exercises(
+            template_exercise_id,workout_template_id,exercise_id,sequence,target_sets,
+            target_reps_min,target_reps_max,target_rir_min,target_rir_max,progression_policy_json,notes
+          ) VALUES(?,?,?,?,?,?,?,?,?,?,?)`).run(
+            targetId, templateId, exerciseId,
+            positiveInt(exercise.sequence, "template exercise sequence"),
+            positiveInt(exercise.target_sets, "template exercise target_sets"),
+            nullableNumber(exercise.target_reps_min, "target_reps_min"),
+            nullableNumber(exercise.target_reps_max, "target_reps_max"),
+            nullableNumber(exercise.target_rir_min, "target_rir_min"),
+            nullableNumber(exercise.target_rir_max, "target_rir_max"),
+            validateJsonObject(exercise.progression_policy_json, "exercise progression_policy_json"),
+            exercise.notes ?? null
+          );
+          recordSource("template_exercise", exercise.source_id, "template_exercise", targetId);
+        }
+        if (template.workout_kind === "CONDITIONING") {
           const cp = template.conditioning_policy;
           if (!cp) throw new Error("Conditioning template requires a normalized policy");
           const policyId = newId("cp");
