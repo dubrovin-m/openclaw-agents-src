@@ -1742,24 +1742,41 @@ export function upsertLearnedItem(
   return withTransaction(db, () => {
     if (!params.evidence.length) throw new Error("Learned item requires evidence");
     const evidenceRows = params.evidence.map((item) => {
-      const observation = one<{observation_id:string; source_type:string; status:string}>(
+      const observation = one<{
+        observation_id:string;
+        source_type:string;
+        persistence_class:string;
+        status:string;
+      }>(
         db,
-        "SELECT observation_id,source_type,status FROM observations WHERE observation_id=?",
+        "SELECT observation_id,source_type,persistence_class,status FROM observations WHERE observation_id=?",
         item.observation_id
       );
       if (!observation || observation.status !== "ACTIVE") {
         throw new Error(`Learning evidence unavailable: ${item.observation_id}`);
       }
-      return { ...item, source_type: observation.source_type };
+      return {
+        ...item,
+        source_type: observation.source_type,
+        persistence_class: observation.persistence_class,
+      };
     });
-    if (
-      params.status === "ACTIVE" &&
-      !evidenceRows.some((item) =>
+    if (params.status === "ACTIVE") {
+      const explicitUserSupport = evidenceRows.some((item) =>
         item.relation === "SUPPORTS" &&
-        ["USER_CHAT","PERFORMANCE","MIGRATION"].includes(item.source_type)
-      )
-    ) {
-      throw new Error("ACTIVE learning requires independent supporting evidence");
+        item.source_type === "USER_CHAT" &&
+        item.persistence_class === "EXPLICITLY_PERSISTENT"
+      );
+      const migratedDurableSupport = evidenceRows.some((item) =>
+        item.relation === "SUPPORTS" &&
+        item.source_type === "MIGRATION" &&
+        item.persistence_class === "EXPLICITLY_PERSISTENT"
+      );
+      if (!explicitUserSupport && !migratedDurableSupport) {
+        throw new Error(
+          "ACTIVE learning requires explicit persistent user evidence; inferred performance remains HYPOTHESIS"
+        );
+      }
     }
 
     const now = nowIso();
