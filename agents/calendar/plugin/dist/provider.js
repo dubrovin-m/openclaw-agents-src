@@ -72,7 +72,35 @@ function eventReferenceWindow(value) {
         timeMax: new Date(parsed.dayStart + 2 * DAY_MS).toISOString(),
     };
 }
-function normalizeProviderEvent(event) {
+function classificationView(config, eventLabelId) {
+    if (!eventLabelId)
+        return null;
+    const leaf = config.leaves.find((candidate) => candidate.providerLabel.id === eventLabelId);
+    if (!leaf)
+        return null;
+    const base = {
+        categoryId: leaf.id,
+        leafName: leaf.name,
+        kind: leaf.kind,
+        providerLabelId: leaf.providerLabel.id,
+    };
+    if (leaf.parentId) {
+        const parent = config.parents.find((candidate) => candidate.id === leaf.parentId);
+        if (!parent)
+            throw new Error(`Configured Calendar category ${leaf.id} references an unknown parent.`);
+        return {
+            ...base,
+            parentId: parent.id,
+            parentName: parent.name,
+            displayName: `${parent.name} · ${leaf.name}`,
+        };
+    }
+    return {
+        ...base,
+        displayName: leaf.name,
+    };
+}
+function normalizeProviderEvent(config, event) {
     const start = eventTime(event.start);
     const end = eventTime(event.end);
     const originalStart = eventTime(event.originalStartTime);
@@ -101,6 +129,7 @@ function normalizeProviderEvent(event) {
         originalStartTime: originalStart.value,
         eventType: event.eventType,
         eventLabelId: event.eventLabelId,
+        classification: classificationView(config, event.eventLabelId),
     };
 }
 function apiUrl(path, params = {}) {
@@ -202,7 +231,7 @@ export function createGoogleCalendarProvider(deps = {}) {
             const items = await listProviderEvents(deps, config, timeMin, timeMax);
             return {
                 calendarId: config.designatedCalendar,
-                events: items.map(normalizeProviderEvent),
+                events: items.map((event) => normalizeProviderEvent(config, event)),
             };
         },
         async getEvent(configValue, params) {
@@ -210,7 +239,7 @@ export function createGoogleCalendarProvider(deps = {}) {
             const resolved = await resolveEventReference(deps, config, params.event_id);
             const url = apiUrl(eventPath(config, resolved.id));
             const event = await requestJson(deps, url);
-            return normalizeProviderEvent(event);
+            return normalizeProviderEvent(config, event);
         },
         async getLabels(configValue) {
             const config = parseCalendarConfig(configValue);
@@ -303,6 +332,7 @@ export function createGoogleCalendarProvider(deps = {}) {
                     changed: false,
                     event_id: eventReference(current),
                     label_id: labelId,
+                    classification: classificationView(config, current.eventLabelId),
                     etag: current.etag,
                 };
             }
@@ -322,6 +352,7 @@ export function createGoogleCalendarProvider(deps = {}) {
                 changed: true,
                 event_id: eventReference(updated),
                 label_id: updated.eventLabelId ?? labelId,
+                classification: classificationView(config, updated.eventLabelId ?? labelId),
                 etag: updated.etag,
             };
         },

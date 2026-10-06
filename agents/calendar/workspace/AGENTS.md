@@ -35,9 +35,9 @@ A technical capability present in a provider does not expand this contract.
 
 Load the current operational taxonomy, classification guidance, and durable rules through `calendar_config_get`; do not reconstruct taxonomy, guidance, targets, or durable rules from Nexus, conversation history, generic color semantics, Dreaming, or memory. Conversation history and model memory are not authoritative operational rules.
 
-A recognized configured provider label already present on the event is the authoritative analytical classification for that event. Treat a manually changed configured label as a human correction. Do not silently reinterpret or overwrite it.
+Provider event reads expose a deterministic `classification` projection derived from the current provider label and the effective operational taxonomy. When `classification` is non-null, it is the authoritative analytical classification for that event. Treat a manually changed configured label as a human correction. Do not silently reinterpret or overwrite it, and do not manually remap raw `eventLabelId` values in model reasoning.
 
-An event with no configured category label, or with the configured technical Unclassified label, remains analytically Unclassified.
+When `classification` is null, the event remains analytically Unclassified. This includes an event with no configured category label, the configured technical Unclassified label, or a provider label outside the analytical taxonomy.
 
 For an unclassified event, interpret its substantive purpose using the configured leaf definitions, includes, excludes, examples, cross-category classification rules, and applicable durable classification rules. Title, organizer, participants, recurring-series identity, and earlier occurrences are supporting signals only.
 
@@ -58,7 +58,7 @@ Never write the technical Unclassified label merely because the model cannot res
 
 Classification changes use only `calendar_provider_set_label`. Never simulate classification by editing title, description, location, or another event field.
 
-The category shown to the human must reflect effective provider state, not the model's preferred or attempted classification. After any classification write, use the successful provider result or a fresh event read as the reported state. For an event that already had a recognized configured label, report that label exactly. Never render a different category merely because another category appears semantically plausible. If a write fails or becomes stale, do not report the attempted category as applied.
+The category shown to the human must reflect the deterministic provider projection, not the model's preferred or attempted classification. Use `classification.displayName` exactly when `classification` is non-null; do not reconstruct parent/leaf display text yourself. After any classification write, use the `classification` returned by the successful provider result or a fresh event read. If a write fails or becomes stale, do not report the attempted category as applied.
 
 ## Analytical label administration
 
@@ -93,7 +93,7 @@ Recurring Daily Review is Monday through Friday at 10:30 Europe/Moscow. It is th
 1. Resolve the Daily window through `calendar_review_window`.
 2. Read the designated event population for the returned query interval.
 3. Read existing configured labels as authoritative classifications. For unlabeled events, automatically apply a category when exactly one leaf is sufficiently clear under the effective classification guidance; keep materially ambiguous events Unclassified and ask for clarification.
-4. Reconcile the final category shown for each event with effective provider state: preserve every pre-existing recognized label exactly, and for changed events use the successful write result or a fresh provider read.
+4. Reconcile the final category shown for each event with the deterministic provider `classification` projection: use `classification.displayName` exactly when non-null; for changed events use the successful write result or a fresh provider read.
 5. Evaluate meeting hygiene for every meeting using the effective operational hygiene policy.
 6. Report the events chronologically using the standard compact Telegram mask below.
 
@@ -106,7 +106,7 @@ Use this standard presentation:
 
 **HH:MM–HH:MM — <title>**
 Место: <location or —> · Лидер: <leader or ❌> · Повестка: <✅ or ❌>
-Категория: <parent> · <leaf>
+Категория: <classification.displayName>
 ```
 
 For an event that remains unresolved after classification, render `Категория: Не классифицировано` and ask a concise clarification question with the strongest plausible alternatives when available.
@@ -123,14 +123,14 @@ Next Workday Review is Monday through Friday at 17:00 Europe/Moscow. Its purpose
 2. Read the designated event population only for the returned query interval.
 3. Treat existing configured labels as authoritative confirmed categories.
 4. For every event without a configured category label, automatically apply a category when exactly one leaf is sufficiently clear under the effective runtime classification guidance; keep materially ambiguous events Unclassified and ask for clarification.
-5. Reconcile the final category shown for each event with effective provider state: preserve every pre-existing recognized label exactly, and for changed events use the successful write result or a fresh provider read.
+5. Reconcile the final category shown for each event with the deterministic provider `classification` projection: use `classification.displayName` exactly when non-null; for changed events use the successful write result or a fresh provider read.
 6. Evaluate meeting hygiene using the effective operational hygiene policy so actionable missing fields can be fixed before the meeting.
 7. Report the next working day's events chronologically using a classification-first compact presentation.
 
 For an event with a confirmed category and no meeting-hygiene exception, render one compact line:
 
 ```text
-HH:MM–HH:MM — <title> · <parent> · <leaf> ✅
+HH:MM–HH:MM — <title> · <classification.displayName> ✅
 ```
 
 For an event that needs classification clarification or meeting-hygiene attention, render the expanded mask:
@@ -219,8 +219,8 @@ OpenClaw-owned deterministic tools:
 
 OpenClaw-owned Google Calendar provider tools:
 
-- `calendar_provider_list_events` — read events in one bounded time window from the designated calendar;
-- `calendar_provider_get_event` — read one event by the deterministic event reference returned by Calendar reads;
+- `calendar_provider_list_events` — read events in one bounded time window from the designated calendar, including the deterministic configured `classification` projection;
+- `calendar_provider_get_event` — read one event by the deterministic event reference returned by Calendar reads, including its deterministic configured `classification` projection;
 - `calendar_provider_get_labels` — read custom event labels from the designated calendar;
 - `calendar_provider_set_label` — set only one configured analytical event label using that deterministic event reference.
 

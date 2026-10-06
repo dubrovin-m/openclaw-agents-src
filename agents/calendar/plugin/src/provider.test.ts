@@ -20,6 +20,7 @@ describe("Google Calendar provider", () => {
           end: { dateTime: "2026-09-22T11:00:00+03:00" },
           attendees: [{ self: true, responseStatus: "accepted" }],
           recurringEventId: "provider-series-a",
+          eventLabelId: "label-strategy",
         }],
         nextPageToken: "next",
       }))
@@ -29,6 +30,7 @@ describe("Google Calendar provider", () => {
           summary: "B",
           start: { date: "2026-09-22" },
           end: { date: "2026-09-23" },
+          eventLabelId: "label-service",
         }],
       }));
     const provider = createGoogleCalendarProvider({
@@ -51,12 +53,30 @@ describe("Google Calendar provider", () => {
       allDay: false,
       myResponseStatus: "accepted",
       recurringEventId: expect.stringMatching(/^series_[0-9a-f]{16}$/u),
+      eventLabelId: "label-strategy",
+      classification: {
+        categoryId: "strategy",
+        leafName: "Strategy",
+        kind: "management",
+        providerLabelId: "label-strategy",
+        parentId: "direction",
+        parentName: "Direction",
+        displayName: "Direction · Strategy",
+      },
     });
     expect(result.events[0].recurringEventId).not.toBe("provider-series-a");
     expect(result.events[1]).toMatchObject({
       start: "2026-09-22",
       end: "2026-09-23",
       allDay: true,
+      eventLabelId: "label-service",
+      classification: {
+        categoryId: "service",
+        leafName: "Service",
+        kind: "service",
+        providerLabelId: "label-service",
+        displayName: "Service",
+      },
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
     const firstUrl = new URL(String(fetchImpl.mock.calls[0][0]));
@@ -65,6 +85,32 @@ describe("Google Calendar provider", () => {
     expect(firstUrl.searchParams.get("showDeleted")).toBe("false");
     const secondUrl = new URL(String(fetchImpl.mock.calls[1][0]));
     expect(secondUrl.searchParams.get("pageToken")).toBe("next");
+  });
+
+  it("projects unknown and technical-Unclassified labels as analytically unclassified", async () => {
+    const listedEvent = {
+      id: "event-unknown-label",
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
+      end: { dateTime: "2026-09-22T11:00:00+03:00" },
+      eventLabelId: "unrelated-provider-label",
+    };
+    const currentEvent = {
+      ...listedEvent,
+      eventLabelId: "label-unclassified",
+    };
+    const ref = eventReference(listedEvent);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [listedEvent] }))
+      .mockResolvedValueOnce(jsonResponse(currentEvent));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.getEvent(VALID_CONFIG, { event_id: ref })).resolves.toMatchObject({
+      eventLabelId: "label-unclassified",
+      classification: null,
+    });
   });
 
   it("reads custom labels from calendar metadata", async () => {
@@ -113,6 +159,15 @@ describe("Google Calendar provider", () => {
       changed: false,
       event_id: ref,
       label_id: "label-strategy",
+      classification: {
+        categoryId: "strategy",
+        leafName: "Strategy",
+        kind: "management",
+        providerLabelId: "label-strategy",
+        parentId: "direction",
+        parentName: "Direction",
+        displayName: "Direction · Strategy",
+      },
     });
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
@@ -144,6 +199,15 @@ describe("Google Calendar provider", () => {
       changed: true,
       event_id: ref,
       label_id: "label-strategy",
+      classification: {
+        categoryId: "strategy",
+        leafName: "Strategy",
+        kind: "management",
+        providerLabelId: "label-strategy",
+        parentId: "direction",
+        parentName: "Direction",
+        displayName: "Direction · Strategy",
+      },
     });
     expect(fetchImpl).toHaveBeenCalledTimes(3);
   });
