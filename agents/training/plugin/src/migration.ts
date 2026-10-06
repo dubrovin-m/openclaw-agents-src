@@ -272,7 +272,7 @@ export function importNormalizedTraining(
       db.prepare(`INSERT INTO program_versions(
         program_version_id,program_id,version_number,status,progression_policy_json,created_by,
         decision_reason,activated_at,retired_at,created_at
-      ) VALUES(?,?,?,?,?,'MIGRATION',?,?,?,?,?)`).run(
+      ) VALUES(?,?,?,?,?,'MIGRATION',?,?,?,?)`).run(
         versionId,
         programId,
         positiveInt(version.version_number, "version_number"),
