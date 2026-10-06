@@ -10,7 +10,11 @@
     "plugin:validate": "npm run build && openclaw plugins validate --root . --entry ./dist/plugin.js",
     "test": "vitest run"
   },
-  "files": ["dist","openclaw.plugin.json","README.md"],
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "README.md"
+  ],
   "peerDependencies": {
     "openclaw": ">=2026.9.5 <=2026.9.7"
   },
@@ -24,8 +28,14 @@
     "vitest": "^3.2.0"
   },
   "openclaw": {
-    "extensions": ["./dist/plugin.js"],
-    "compat": {"pluginApi": ">=2026.9.5 <=2026.9.7"},
-    "build": {"openclawVersion": "2026.9.7"}
+    "extensions": [
+      "./dist/plugin.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.9.5 <=2026.9.7"
+    },
+    "build": {
+      "openclawVersion": "2026.9.7"
+    }
   }
 }
