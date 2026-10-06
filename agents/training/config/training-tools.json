@@ -21,7 +21,9 @@
     "training_session_pause",
     "training_session_resume",
     "training_session_abandon",
-    "training_set_correct"
+    "training_set_correct",
+    "training_program_change_propose",
+    "training_program_change_apply"
   ],
   "deny": [
     "read",
