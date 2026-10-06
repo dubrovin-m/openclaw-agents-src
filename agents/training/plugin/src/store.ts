@@ -167,14 +167,14 @@ CREATE TABLE session_exercises(
   target_rir_max REAL CHECK(target_rir_max IS NULL OR target_rir_max>=0),
   progression_policy_json TEXT NOT NULL DEFAULT '{}',
   status TEXT NOT NULL CHECK(status IN ('PENDING','ACTIVE','DEFERRED','COMPLETED','SKIPPED')),
-  CHECK(target_reps_min IS NULL OR target_reps_max IS NULL OR target_reps_min<=target_reps_max),
-  CHECK(target_rir_min IS NULL OR target_rir_max IS NULL OR target_rir_min<=target_rir_max),
   adaptation_reason TEXT,
   prescribed_at TEXT,
   started_at TEXT,
   completed_at TEXT,
   notes TEXT,
-  UNIQUE(training_session_id,sequence)
+  UNIQUE(training_session_id,sequence),
+  CHECK(target_reps_min IS NULL OR target_reps_max IS NULL OR target_reps_min<=target_reps_max),
+  CHECK(target_rir_min IS NULL OR target_rir_max IS NULL OR target_rir_min<=target_rir_max)
 ) STRICT;
 CREATE UNIQUE INDEX ux_training_active_exercise ON session_exercises(training_session_id) WHERE status='ACTIVE';
 
