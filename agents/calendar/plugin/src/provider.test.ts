@@ -107,11 +107,73 @@ describe("Google Calendar provider", () => {
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: ref,
       label_id: "label-strategy",
+      expected_label_id: "label-strategy",
+      write_mode: "human_correction",
     })).resolves.toMatchObject({
       changed: false,
       event_id: ref,
       label_id: "label-strategy",
     });
+    expect(fetchImpl).toHaveBeenCalledTimes(2);
+  });
+
+  it("automatically classifies only when the freshly read label still matches the expected unlabeled state", async () => {
+    const listedEvent = {
+      id: "event-auto",
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
+      end: { dateTime: "2026-09-22T11:00:00+03:00" },
+    };
+    const currentEvent = { ...listedEvent, etag: "\"v1\"" };
+    const updatedEvent = { ...listedEvent, etag: "\"v2\"", eventLabelId: "label-strategy" };
+    const ref = eventReference(listedEvent);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [listedEvent] }))
+      .mockResolvedValueOnce(jsonResponse(currentEvent))
+      .mockResolvedValueOnce(jsonResponse(updatedEvent));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.setLabel(VALID_CONFIG, {
+      event_id: ref,
+      label_id: "label-strategy",
+      expected_label_id: null,
+      write_mode: "automatic",
+    })).resolves.toMatchObject({
+      changed: true,
+      event_id: ref,
+      label_id: "label-strategy",
+    });
+    expect(fetchImpl).toHaveBeenCalledTimes(3);
+  });
+
+  it("fails closed when a human label appears after an automatic classification read", async () => {
+    const listedEvent = {
+      id: "event-race",
+      start: { dateTime: "2026-09-22T10:00:00+03:00" },
+      end: { dateTime: "2026-09-22T11:00:00+03:00" },
+    };
+    const currentEvent = {
+      ...listedEvent,
+      etag: "\"v2\"",
+      eventLabelId: "label-delivery",
+    };
+    const ref = eventReference(listedEvent);
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(jsonResponse({ items: [listedEvent] }))
+      .mockResolvedValueOnce(jsonResponse(currentEvent));
+    const provider = createGoogleCalendarProvider({
+      getAccessToken: async () => "token",
+      fetchImpl,
+    });
+
+    await expect(provider.setLabel(VALID_CONFIG, {
+      event_id: ref,
+      label_id: "label-strategy",
+      expected_label_id: null,
+      write_mode: "automatic",
+    })).rejects.toThrow(/label changed since the classification read/u);
     expect(fetchImpl).toHaveBeenCalledTimes(2);
   });
 
@@ -148,6 +210,8 @@ describe("Google Calendar provider", () => {
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: ref,
       label_id: "label-strategy",
+      expected_label_id: "label-delivery",
+      write_mode: "human_correction",
     })).resolves.toMatchObject({
       changed: true,
       event_id: ref,
@@ -189,6 +253,8 @@ describe("Google Calendar provider", () => {
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: corrupted,
       label_id: "label-strategy",
+      expected_label_id: null,
+      write_mode: "automatic",
     })).rejects.toThrow(/could not be resolved/u);
     expect(fetchImpl).toHaveBeenCalledTimes(1);
   });
@@ -203,10 +269,14 @@ describe("Google Calendar provider", () => {
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: "event-1",
       label_id: "not-configured",
+      expected_label_id: null,
+      write_mode: "automatic",
     })).rejects.toThrow(/not part of the effective analytical configuration/u);
     await expect(provider.setLabel(VALID_CONFIG, {
       event_id: "event-1",
       label_id: "label-unclassified",
+      expected_label_id: null,
+      write_mode: "automatic",
     })).rejects.toThrow(/not part of the effective analytical configuration/u);
     expect(fetchImpl).not.toHaveBeenCalled();
   });
