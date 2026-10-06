@@ -18,9 +18,11 @@ import {
   resumeExercise,
   resumeSession,
   skipExercise,
+  startAdHocSession,
   startProgramSession,
   voidSession,
   type ActualSet,
+  type AdHocStrengthExercise,
   type PrescribedSet,
 } from "./domain.js";
 import { healthSnapshot, openTrainingStore } from "./store.js";
@@ -165,6 +167,32 @@ const entry = defineToolPlugin({
       }, { additionalProperties: false }),
       execute: (params, config) =>
         withDb(config, (db) => getProgressionCandidate(db, params.session_exercise_id)),
+    })),
+    tool(ownerTool({
+      name: "training_session_start_ad_hoc",
+      label: "Start ad-hoc training session",
+      description: "Start an explicitly requested ad-hoc strength or conditioning session without moving the program cursor.",
+      parameters: Type.Object({
+        session_kind: Type.Union([Type.Literal("STRENGTH"), Type.Literal("CONDITIONING")]),
+        timezone_at_start: Type.String({ minLength: 1, maxLength: 100 }),
+        local_date: Type.String({ pattern: "^\\d{4}-\\d{2}-\\d{2}$" }),
+        strength_exercises: Type.Optional(Type.Array(Type.Object({
+          exercise_id: Type.String({ minLength: 1, maxLength: 100 }),
+          planned_sets: Type.Integer({ minimum: 1, maximum: 20 }),
+          target_reps_min: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
+          target_reps_max: Type.Union([Type.Integer({ minimum: 0, maximum: 200 }), Type.Null()]),
+          target_rir_min: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+          target_rir_max: Type.Union([Type.Number({ minimum: 0, maximum: 10 }), Type.Null()]),
+          progression_policy_json: Type.Optional(Type.String({ maxLength: 2000 })),
+        }, { additionalProperties: false }), { minItems: 1, maxItems: 20 })),
+      }, { additionalProperties: false }),
+      mutate: true,
+      execute: (params, config) =>
+        withDb(config, (db) =>
+          startAdHocSession(db, {
+            ...params,
+            strength_exercises: params.strength_exercises as AdHocStrengthExercise[] | undefined,
+          })),
     })),
     tool(ownerTool({
       name: "training_exercise_prescribe",
