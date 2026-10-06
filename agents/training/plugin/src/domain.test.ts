@@ -4,6 +4,7 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   abandonSession,
+  applyApprovedProgramChange,
   completeConditioning,
   completeExercise,
   correctSetResult,
@@ -14,6 +15,7 @@ import {
   getRecommendation,
   pauseSession,
   prescribeExercise,
+  proposeProgramChange,
   resumeExercise,
   resumeSession,
   startAdHocSession,
@@ -496,6 +498,68 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       });
       finishSession(db, adHoc.session.training_session_id);
       expect(getRecommendation(db).recommendation?.program_slot_id).toBe(before);
+    } finally {
+      db.close();
+    }
+  });
+
+
+  it("TRA-PROG-001/002/004: approved proposal creates a new immutable version starting at Strength A", () => {
+    const db = fixture();
+    try {
+      const proposal: any = proposeProgramChange(db, {
+        change_type: "REPLACE_EXERCISE",
+        proposal: {
+          template_exercise_id: "te_a",
+          replacement_exercise_id: "ex_b",
+        },
+        rationale: "user-approved replacement",
+      });
+      expect(proposal.status).toBe("PENDING");
+      expect((db.prepare("SELECT program_version_id FROM program_versions WHERE status='ACTIVE'").get() as any)
+        .program_version_id).toBe("ver_test");
+
+      const applied: any = applyApprovedProgramChange(db, proposal.proposal_id, "USER");
+      expect(applied.active_program.version_number).toBe(2);
+      expect(getRecommendation(db).recommendation?.name).toBe("Strength A");
+      expect(getRecommendation(db).active_program?.cycle_number).toBe(1);
+
+      const oldExercise = (db.prepare(
+        "SELECT exercise_id FROM template_exercises WHERE template_exercise_id='te_a'"
+      ).get() as any).exercise_id;
+      expect(oldExercise).toBe("ex_a");
+
+      const newExercise = db.prepare(
+        `SELECT te.exercise_id
+           FROM template_exercises te
+           JOIN workout_templates wt ON wt.workout_template_id=te.workout_template_id
+           JOIN program_versions pv ON pv.program_version_id=wt.program_version_id
+          WHERE pv.status='ACTIVE' AND wt.name='Strength A' AND te.sequence=1`
+      ).get() as any;
+      expect(newExercise.exercise_id).toBe("ex_b");
+      expect((db.prepare(
+        "SELECT status FROM program_versions WHERE program_version_id='ver_test'"
+      ).get() as any).status).toBe("RETIRED");
+    } finally {
+      db.close();
+    }
+  });
+
+  it("TRA-PROG-005: program version cannot change while a session is open", () => {
+    const db = fixture();
+    try {
+      const proposal: any = proposeProgramChange(db, {
+        change_type: "UPDATE_EXERCISE_TARGETS",
+        proposal: { template_exercise_id: "te_a", target_sets: 3 },
+        rationale: "test",
+      });
+      startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow",
+        local_date: "2026-10-06",
+      });
+      expect(() => applyApprovedProgramChange(db, proposal.proposal_id, "USER"))
+        .toThrow(/while a session is open/);
+      expect((db.prepare("SELECT count(*) n FROM program_versions").get() as any).n).toBe(1);
     } finally {
       db.close();
     }
