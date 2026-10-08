@@ -108,7 +108,7 @@ function release(root, releasePath, expectedOpenClaw) {
     }
     const priorBuild = historic.generation?.openclaw_build_version;
     const priorCompat = historic.generation?.openclaw_compat;
-    if (!/^\\d+\\.\\d+\\.\\d+$/.test(priorBuild ?? '') || priorCompat !== `>=2026.9.5 <=${priorBuild}`) {
+    if (!/^\d+\.\d+\.\d+$/.test(priorBuild ?? '') || priorCompat !== `>=2026.9.5 <=${priorBuild}`) {
       fail('Training predecessor historical OpenClaw compatibility is invalid');
     }
     const checked = validateArtifact(releasePath, predecessor.plugin ?? {}, priorBuild, priorCompat, 'Training predecessor');
