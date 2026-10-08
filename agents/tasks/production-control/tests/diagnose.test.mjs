@@ -215,6 +215,45 @@ test('diagnostics fail closed on runtime, release, and provenance drift without 
     const rendered = JSON.stringify(result);
     assert.equal(rendered.includes('TASK-SECRET-CONTENT'), false);
     assert.equal(rendered.includes('CONFIG-SECRET-CONTENT'), false);
+
+    // Controller-first reconciliation: target controller/qualification, predecessor
+    // runtime source, Task generation and OpenClaw version all remain independently proven.
+    const predecessorVersion = '2026.9.7';
+    assert.notEqual(predecessorVersion, expectedOpenClawVersion);
+    const predecessorCompatibility = '>=2026.9.5 <=2026.9.7';
+    fs.writeFileSync(path.join(source, 'runtime-contract.json'), fs.readFileSync(path.join(repoRoot, 'runtime-contract.json')));
+    fs.writeFileSync(path.join(source, 'openclaw-qualification.json'), JSON.stringify({
+      format: 'openclaw-qualification-target-v1', version: predecessorVersion,
+    }));
+    fs.writeFileSync(path.join(source, 'agents', 'tasks', 'release.json'), JSON.stringify({
+      ...release,
+      generation: { ...release.generation, openclaw_build_version: predecessorVersion, openclaw_compat: predecessorCompatibility },
+    }));
+    execFileSync('git', ['add', '.'], { cwd: source });
+    execFileSync('git', ['commit', '-q', '-m', 'accepted predecessor runtime generation'], { cwd: source });
+    const predecessorBaseline = execFileSync('git', ['rev-parse', 'HEAD'], { cwd: source, encoding: 'utf8' }).trim();
+    fs.writeFileSync(controllerState, JSON.stringify({
+      controller_revision: controllerRevision,
+      protected_path_baseline_sha: controllerRevision,
+      production_baseline_sha: predecessorBaseline,
+    }));
+    fs.writeFileSync(baselineEvidence, JSON.stringify({ source_revision: predecessorBaseline, result: 'PASS', stage: 'COMPLETE' }));
+    writePlugin('0.4.0', '1.3.15', predecessorCompatibility, predecessorVersion);
+    writeOpenClaw(predecessorVersion);
+    diagnose = await loadDiagnose();
+    result = await diagnose();
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(result.checks.provenance.controller_revision, controllerRevision);
+    assert.equal(result.checks.provenance.protected_path_baseline_sha, controllerRevision);
+    assert.equal(result.checks.provenance.production_baseline_sha, predecessorBaseline);
+    assert.equal(result.checks.runtime.expected_openclaw_version, predecessorVersion);
+    assert.equal(result.checks.runtime.openclaw_version, predecessorVersion);
+    assert.equal(result.checks.release.expected.openclaw_build_version, predecessorVersion);
+    writeOpenClaw(expectedOpenClawVersion);
+    diagnose = await loadDiagnose();
+    result = await diagnose();
+    assert.equal(result.ok, false, JSON.stringify(result));
+    assert.equal(result.checks.runtime.ok, false);
   } finally {
     await new Promise((resolve) => server.close(resolve));
     for (const [name, value] of priorEnv.entries()) {
