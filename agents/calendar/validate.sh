@@ -60,6 +60,7 @@ const compare=(a,b)=>{const x=tuple(a),y=tuple(b);for(let i=0;i<3;i++)if(x[i]!==
 if(compare(bounded[1],bounded[2])>0)fail('OpenClaw peer compatibility window is inverted');
 if(compare(buildVersion,bounded[1])<0||compare(buildVersion,bounded[2])>0)fail('pinned OpenClaw build version falls outside compatibility window');
 if(compare(target,bounded[1])<0||compare(target,bounded[2])>0)fail('qualified OpenClaw host target is outside declared plugin compatibility window');
+if(compare(bounded[2],target)!==0)fail('OpenClaw compatibility ceiling must equal the qualified host target');
 if(pkg.dependencies?.typebox!=='1.3.15')fail('Calendar plugin TypeBox version must stay pinned');
 if(pkg.dependencies?.['google-auth-library']!=='^10.3.0')fail('Calendar Google auth library version must stay pinned to the reviewed major/minor');
 NODE
