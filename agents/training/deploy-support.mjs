@@ -51,7 +51,7 @@ function release(root, releasePath, expectedOpenClaw) {
   const g = r.generation ?? {};
   if (g.sqlite_schema !== 2 || g.typebox_version !== '1.3.15') fail('Unexpected Training generation');
   if (g.openclaw_build_version !== expectedOpenClaw) fail('Training/OpenClaw release version mismatch');
-  if (g.openclaw_compat !== '>=2026.9.5 <=2026.9.7') fail('Unexpected Training OpenClaw compatibility');
+  if (g.openclaw_compat !== `>=2026.9.5 <=${expectedOpenClaw}`) fail('Unexpected Training OpenClaw compatibility');
   const p = r.plugin ?? {};
   const src = r.source ?? {};
   if (!/^[a-f0-9]{40}$/.test(src.source_revision ?? '')) fail('Invalid Training source revision');
@@ -83,6 +83,7 @@ function release(root, releasePath, expectedOpenClaw) {
 
   const predecessor = r.predecessor ?? null;
   let predecessorArtifact = null;
+  let predecessorBuildVersion = null;
   if (predecessor) {
     if (!/^[a-f0-9]{40}$/.test(predecessor.source_revision ?? '')) fail('Invalid Training predecessor source revision');
     const expectedWorkspaceKeys = expectedWorkspace.slice().sort();
@@ -90,13 +91,33 @@ function release(root, releasePath, expectedOpenClaw) {
     if (JSON.stringify(Object.keys(predecessorWorkspace).sort()) !== JSON.stringify(expectedWorkspaceKeys)) fail('Unexpected Training predecessor workspace release set');
     for (const name of expectedWorkspace) if (!/^[a-f0-9]{64}$/.test(predecessorWorkspace[name] ?? '')) fail(`Invalid predecessor workspace hash: ${name}`);
     if (!/^[a-f0-9]{64}$/.test(predecessor.plugin_manifest_sha256 ?? '')) fail('Invalid Training predecessor manifest hash');
-    const checked = validateArtifact(releasePath, predecessor.plugin ?? {}, expectedOpenClaw, g.openclaw_compat, 'Training predecessor');
+    // A staged predecessor may have been built under the previous qualified host.
+    // Bind its package, host compatibility and workspace evidence to its exact historical release.
+    let historic;
+    try {
+      historic = JSON.parse(execFileSync('git', ['-C', root, 'show', `${predecessor.source_revision}:agents/training/release.json`], {encoding:'utf8'}));
+      execFileSync('git', ['-C', root, 'merge-base', '--is-ancestor', predecessor.source_revision, 'HEAD'], {stdio:'ignore'});
+    } catch { fail('Training predecessor source revision is unavailable in accepted repository history'); }
+    if (historic?.format !== 'training-agent-release-v1' || historic?.deployment_mode !== 'stage-only') fail('Training predecessor historical release is invalid');
+    const historicPlugin = historic.plugin ?? {};
+    for (const key of ['id','name','version','artifact','sha256','runtime_entry_sha256']) {
+      if (predecessor.plugin?.[key] !== historicPlugin[key]) fail(`Training predecessor historical plugin identity mismatch: ${key}`);
+    }
+    if (JSON.stringify(predecessorWorkspace) !== JSON.stringify(historic.source?.workspace_sha256 ?? {}) ||
+        predecessor.plugin_manifest_sha256 !== historic.source?.plugin_manifest_sha256) {
+      fail('Training predecessor historical workspace/manifest identity mismatch');
+    }
+    const priorBuild = historic.generation?.openclaw_build_version;
+    const priorCompat = historic.generation?.openclaw_compat;
+    if (!/^\d+\.\d+\.\d+$/.test(priorBuild ?? '') || priorCompat !== `>=2026.9.5 <=${priorBuild}`) {
+      fail('Training predecessor historical OpenClaw compatibility is invalid');
+    }
+    predecessorBuildVersion = priorBuild;
+    const checked = validateArtifact(releasePath, predecessor.plugin ?? {}, priorBuild, priorCompat, 'Training predecessor');
     if (checked.manifestSha !== predecessor.plugin_manifest_sha256) fail('Training predecessor artifact manifest mismatch');
     predecessorArtifact = checked.artifact;
-    try { execFileSync('git', ['-C', root, 'cat-file', '-e', `${predecessor.source_revision}^{commit}`], {stdio:'ignore'}); }
-    catch { fail('Training predecessor source revision is unavailable in repository history'); }
   }
-  return {r, artifact, predecessorArtifact};
+  return {r, artifact, predecessorArtifact, predecessorBuildVersion};
 }
 
 const command = process.argv[2];
@@ -104,7 +125,7 @@ if (command === 'release-env') {
   const root = path.resolve(process.argv[3]);
   const releasePath = path.resolve(process.argv[4]);
   const expected = requireString(process.argv[5], 'expected OpenClaw version');
-  const {r, artifact, predecessorArtifact} = release(root, releasePath, expected);
+  const {r, artifact, predecessorArtifact, predecessorBuildVersion} = release(root, releasePath, expected);
   const env = {
     TARGET_PLUGIN_ID:r.plugin.id,
     TARGET_PLUGIN_NAME:r.plugin.name,
@@ -119,6 +140,7 @@ if (command === 'release-env') {
     PREDECESSOR_PLUGIN_VERSION:r.predecessor?.plugin?.version ?? '',
     PREDECESSOR_RUNTIME_ENTRY_SHA:r.predecessor?.plugin?.runtime_entry_sha256 ?? '',
     PREDECESSOR_SOURCE_REVISION:r.predecessor?.source_revision ?? '',
+    PREDECESSOR_OPENCLAW_VERSION:predecessorBuildVersion ?? '',
     PREDECESSOR_ARTIFACT:predecessorArtifact ?? '',
   };
   for (const [key,value] of Object.entries(env)) process.stdout.write(`${key}=${shell(value)}\n`);

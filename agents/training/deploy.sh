@@ -69,8 +69,29 @@ oc(){
 
 [ -f "$CONFIG" ] || fail "OpenClaw config missing: $CONFIG"
 LIVE_OPENCLAW_VERSION=$(oc --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1 || true)
-[ "$LIVE_OPENCLAW_VERSION" = "$TARGET_OPENCLAW_VERSION" ] || fail "OpenClaw version mismatch: live=${LIVE_OPENCLAW_VERSION:-unknown} target=$TARGET_OPENCLAW_VERSION"
+if [ "$LIVE_OPENCLAW_VERSION" != "$TARGET_OPENCLAW_VERSION" ]; then
+  [ "$PREDECESSOR_PRESENT" = 1 ] && [ -n "$PREDECESSOR_OPENCLAW_VERSION" ] && \
+    [ "$LIVE_OPENCLAW_VERSION" = "$PREDECESSOR_OPENCLAW_VERSION" ] || \
+    fail "OpenClaw version mismatch: live=${LIVE_OPENCLAW_VERSION:-unknown} target=$TARGET_OPENCLAW_VERSION predecessor=${PREDECESSOR_OPENCLAW_VERSION:-none}"
+fi
 oc config validate >/dev/null || fail "Current OpenClaw config is invalid"
+
+# Staging preserves an existing, non-authoritative Training Store byte-for-byte.
+DB_WAS_PRESENT=0
+DB_ORIGINAL_SHA=""
+if [ -e "$DB" ] || [ -L "$DB" ]; then
+  [ -f "$DB" ] && [ ! -L "$DB" ] && [ -O "$DB" ] || fail "Unsafe pre-existing Training database"
+  DB_WAS_PRESENT=1
+  DB_ORIGINAL_SHA=$(sha256sum "$DB" | awk '{print $1}')
+fi
+verify_db_preserved() {
+  if [ "$DB_WAS_PRESENT" -eq 1 ]; then
+    [ -f "$DB" ] && [ ! -L "$DB" ] && [ -O "$DB" ] || return 1
+    [ "$(sha256sum "$DB" | awk '{print $1}')" = "$DB_ORIGINAL_SHA" ]
+  else
+    [ ! -e "$DB" ] && [ ! -L "$DB" ]
+  fi
+}
 
 STATE=""
 assess(){
@@ -96,17 +117,19 @@ assess(){
   local common_staged=0
   if [ "$TRAINING_AGENT_COUNT" -eq 0 ] && [ "$TRAINING_BINDING_COUNT" -eq 0 ] && \
      [ "$TRAINING_PLUGIN_CONFIG_PRESENT" -eq 1 ] && [ "$TRAINING_PLUGIN_ENABLED" -eq 0 ] && \
-     [ "$TRAINING_PLUGIN_DB_EXACT" -eq 1 ] && [ "$TRAINING_ALLOW_COUNT" -eq 0 ] && [ "$db_present" -eq 0 ]; then
+     [ "$TRAINING_PLUGIN_DB_EXACT" -eq 1 ] && [ "$TRAINING_ALLOW_COUNT" -eq 0 ]; then
     common_staged=1
   fi
 
   if [ "$common_staged" -eq 1 ] && [ "$TARGET_PLUGIN_COUNT" -eq 1 ] && [ "$TARGET_PLUGIN_EXACT" -eq 1 ] && [ "$target_workspace_exact" -eq 1 ]; then
+    verify_db_preserved || fail "Training database changed during state inspection"
     STATE="STAGED_TARGET"
     return 0
   fi
 
   if [ "$PREDECESSOR_PRESENT" = "1" ] && [ "$common_staged" -eq 1 ] && \
      [ "$PREDECESSOR_PLUGIN_COUNT" -eq 1 ] && [ "$PREDECESSOR_PLUGIN_EXACT" -eq 1 ] && [ "$predecessor_workspace_exact" -eq 1 ]; then
+    verify_db_preserved || fail "Training database changed during state inspection"
     STATE="STAGED_PREDECESSOR"
     return 0
   fi
@@ -136,6 +159,7 @@ flock -n 9 || fail "Another Training deployment is running"
 assess
 [ "$STATE" != "PARTIAL_OR_ACTIVE" ] || fail "Training runtime changed after preflight"
 if [ "$STATE" = "STAGED_TARGET" ]; then
+  verify_db_preserved || fail "Training database changed before staged no-op"
   echo "TRAINING_DEPLOY_ALREADY_STAGED source=$SOURCE_REVISION plugin=$TARGET_PLUGIN_VERSION"
   exit 0
 fi
@@ -166,11 +190,15 @@ rollback(){
   fi
   rm -rf "$WORKSPACE_TMP"
   cp -p "$BACKUP_CONFIG" "$CONFIG"
-  rm -f "$DB"
-  rmdir "$(dirname "$DB")" >/dev/null 2>&1 || true
+  # Retain any pre-existing Store on both success and rollback.
+  if [ "$DB_WAS_PRESENT" -eq 0 ]; then
+    rm -f "$DB"
+    rmdir "$(dirname "$DB")" >/dev/null 2>&1 || true
+  fi
   oc config validate >/dev/null 2>&1 || true
   rm -f "$BACKUP_CONFIG"
   [ -z "$WORKSPACE_BACKUP" ] || rm -rf "$WORKSPACE_BACKUP"
+  verify_db_preserved || fail "Existing Training database changed during rollback; manual recovery required"
   set -e
 }
 
@@ -196,6 +224,7 @@ set +e
 
   assess
   [ "$STATE" = "STAGED_TARGET" ] || { echo "Training target state verification failed: $STATE" >&2; exit 98; }
+  verify_db_preserved || { echo "Training database changed during staging" >&2; exit 99; }
 )
 CODE=$?
 set -e
@@ -208,6 +237,7 @@ if [ "$CODE" -ne 0 ]; then
   exit "$CODE"
 fi
 
+verify_db_preserved || fail "Training database changed after staging"
 rm -f "$BACKUP_CONFIG"
 rm -rf "$WORKSPACE_TMP"
 [ -z "$WORKSPACE_BACKUP" ] || rm -rf "$WORKSPACE_BACKUP"

@@ -5,17 +5,17 @@
     "taskctl_version": "0.4.16",
     "sqlite_schema": 9,
     "typebox_version": "1.3.15",
-    "openclaw_build_version": "2026.9.7",
-    "openclaw_compat": ">=2026.9.5 <=2026.9.7"
+    "openclaw_build_version": "2026.9.8",
+    "openclaw_compat": ">=2026.9.5 <=2026.9.8"
   },
   "plugin": {
     "name": "openclaw-plugin-taskctl",
-    "version": "0.4.31",
-    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.31.tgz",
-    "sha256": "580c9870826d792bec8a34d2a8d919d9c44b0cbbad267df95d2c4f763fe66ac2"
+    "version": "0.4.32",
+    "artifact": "artifacts/openclaw-plugin-taskctl-0.4.32.tgz",
+    "sha256": "bbf1f737a8d7d4aa30b913ad820723e9d31d25a973314765434752d096708065"
   },
   "from": {
-    "source_revision": "0b7406055d8c47fd524374acc4e1c3aad89b8e1d",
+    "source_revision": "9a540f0efa9510626d5721f868699aabebb9322c",
     "sqlite_schemas": [
       9
     ],
@@ -23,7 +23,7 @@
       "0.4.16"
     ],
     "plugin_versions": [
-      "0.4.30"
+      "0.4.31"
     ],
     "workspace_sha256": {
       "AGENTS.md": "cb0331cd8f2ce1f90e48a5c6ba7aea08372c9149722d16bebbdbbb8b9b5d3a3f",
@@ -45,7 +45,7 @@
   },
   "shared_contacts": {
     "release_path": "../../shared/contacts/release.json",
-    "release_sha256": "c2afbe9b1ca184586a9de673a46fe889492287bd3c3bbcdceecd5af964240152",
+    "release_sha256": "78e49106fec92d4865149d9eb0257526fb0fc17935f6a86fe34edf22b6b525e1",
     "implementation_version": "0.1.6",
     "sqlite_schema": 3,
     "predecessor_mode": "exact"
