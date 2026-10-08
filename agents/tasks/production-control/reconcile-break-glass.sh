@@ -13,21 +13,27 @@ export PATH="$HOME/.npm-global/bin${PATH:+:$PATH}"
 FROM=""
 TO=""
 DEPLOY_RESULT=""
+CONTROLLER_ONLY=0
 TEST_ROOT=""
 APPLY=0
 while [ "$#" -gt 0 ]; do
   case "$1" in
     --from) [ "$#" -ge 2 ] || { echo "--from requires SHA" >&2; exit 2; }; FROM=$2; shift 2 ;;
     --to) [ "$#" -ge 2 ] || { echo "--to requires SHA" >&2; exit 2; }; TO=$2; shift 2 ;;
+    --controller-only) CONTROLLER_ONLY=1; shift ;;
     --deploy-result) [ "$#" -ge 2 ] || { echo "--deploy-result requires path" >&2; exit 2; }; DEPLOY_RESULT=$2; shift 2 ;;
     --test-root) [ "$#" -ge 2 ] || { echo "--test-root requires path" >&2; exit 2; }; TEST_ROOT=$2; shift 2 ;;
     --apply) APPLY=1; shift ;;
-    *) echo "Usage: $0 [--test-root /absolute/path] --from OLD_CONTROLLER_SHA --to EXACT_IMPLEMENTATION_MAIN_SHA --deploy-result /absolute/result.json --apply" >&2; exit 2 ;;
+    *) echo "Usage: $0 [--test-root /absolute/path] --from OLD_CONTROLLER_SHA --to EXACT_IMPLEMENTATION_MAIN_SHA [--controller-only | --deploy-result /absolute/result.json] --apply" >&2; exit 2 ;;
   esac
 done
 [[ "$FROM" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid --from SHA" >&2; exit 2; }
 [[ "$TO" =~ ^[0-9a-f]{40}$ ]] || { echo "Invalid --to SHA" >&2; exit 2; }
-case "$DEPLOY_RESULT" in /*) ;; *) echo "--deploy-result must be absolute" >&2; exit 2;; esac
+if [ "$CONTROLLER_ONLY" -eq 1 ]; then
+  [ -z "$DEPLOY_RESULT" ] && [ "$FROM" != "$TO" ] || { echo "Invalid controller-only arguments" >&2; exit 2; }
+else
+  case "$DEPLOY_RESULT" in /*) ;; *) echo "--deploy-result must be absolute" >&2; exit 2;; esac
+fi
 [ "$APPLY" -eq 1 ] || { echo "--apply is required" >&2; exit 2; }
 
 for cmd in awk bash cat chmod cp date flock git id install mkdir mv node realpath rm stat systemctl tr; do
@@ -42,10 +48,10 @@ if [ -n "$TEST_ROOT" ]; then
   mkdir -p "$TEST_ROOT"
   TEST_ROOT=$(realpath -e "$TEST_ROOT")
   case "$TEST_ROOT" in /|/home/dubrovin|/home/dubrovin/*) echo "Refusing unsafe test root: $TEST_ROOT" >&2; exit 2;; esac
-  STATE_DIR="$TEST_ROOT/state"
-  LIB_DIR="$TEST_ROOT/lib"
-  SYSTEMD_DIR="$TEST_ROOT/systemd"
-  SOURCE_DIR="$TEST_ROOT/source"
+  STATE_DIR="$TEST_ROOT/home/.local/state/openclaw-production-control"
+  LIB_DIR="$TEST_ROOT/home/.local/lib/openclaw-production-control"
+  SYSTEMD_DIR="$TEST_ROOT/home/.config/systemd/user"
+  SOURCE_DIR="$TEST_ROOT/home/.local/share/openclaw-production-control/openclaw-agents"
   export OPC_STATE_DIR="$STATE_DIR" OPC_LIB_DIR="$LIB_DIR" OPC_SYSTEMD_DIR="$SYSTEMD_DIR"
 else
   for name in OPC_STATE_DIR OPC_LIB_DIR OPC_SYSTEMD_DIR OPC_CONTROLLER_STATE OPC_SOURCE_DIR; do
@@ -108,6 +114,15 @@ OWNER_LOGIN=${PRIOR_PROVENANCE[5]}
 OWNER_ID=${PRIOR_PROVENANCE[6]}
 REPO_URL="https://github.com/${IMPLEMENTATION_REPOSITORY}.git"
 
+if [ "$CONTROLLER_ONLY" -eq 1 ]; then
+  # The predecessor Task runtime and its checkout remain authoritative.
+  [ "$PRIOR_BASELINE" = "$FROM" ] && [ "$PRIOR_PROTECTED_BASELINE" = "$FROM" ] || { echo "Predecessor baseline mismatch" >&2; exit 2; }
+  [ -d "$SOURCE_DIR/.git" ] && [ ! -L "$SOURCE_DIR" ] || { echo "Unsafe predecessor checkout" >&2; exit 2; }
+  [ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$FROM" ] || { echo "Predecessor source mismatch" >&2; exit 2; }
+  [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Predecessor source dirty" >&2; exit 2; }
+  [ "$(git -C "$SOURCE_DIR" remote get-url origin)" = "$REPO_URL" ] || { echo "Predecessor origin mismatch" >&2; exit 2; }
+  DEPLOY_STAGE=CONTROLLER_ONLY
+else
 DEPLOY_RESULT=$(realpath -e "$DEPLOY_RESULT")
 [ -f "$DEPLOY_RESULT" ] && [ ! -L "$DEPLOY_RESULT" ] || { echo "Task deploy result must be a real file" >&2; exit 2; }
 if [ -z "$TEST_ROOT" ]; then
@@ -135,6 +150,7 @@ PREFLIGHT_PASS=$(awk '/^TASK_AGENT_DEPLOY_PREFLIGHT_PASS /{print; exit}' <<<"$pr
 START_IS_TARGET=$(awk '{for(i=1;i<=NF;i++)if($i~/^start_is_target=/){sub(/^start_is_target=/,"",$i);print $i;exit}}' <<<"$PREFLIGHT_PASS")
 [ "$START_IS_TARGET" = "1" ] || { echo "Task runtime is not the exact target generation" >&2; exit 2; }
 
+fi
 MUTATED=0
 BACKUP_READY=0
 TIMER_STARTED=0
@@ -196,26 +212,37 @@ chmod 700 "$TARGET_SOURCE"
 BACKUP_READY=1
 
 MUTATED=1
-rm -rf "$SOURCE_DIR"
-mkdir -p "$(dirname "$SOURCE_DIR")"
-mv "$TARGET_SOURCE" "$SOURCE_DIR"
-[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$TO" ] || { echo "Controller source checkout did not advance to target" >&2; false; }
+if [ "$CONTROLLER_ONLY" -eq 0 ]; then
+  rm -rf "$SOURCE_DIR"
+  mkdir -p "$(dirname "$SOURCE_DIR")"
+  mv "$TARGET_SOURCE" "$SOURCE_DIR"
+fi
+EXPECTED_SOURCE_SHA="$TO"
+[ "$CONTROLLER_ONLY" -eq 0 ] || EXPECTED_SOURCE_SHA="$FROM"
+[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" ] || { echo "Controller source revision mismatch" >&2; false; }
 [ -z "$(git -C "$SOURCE_DIR" status --porcelain --untracked-files=all)" ] || { echo "Installed controller source checkout is dirty" >&2; false; }
 [ "$(git -C "$SOURCE_DIR" remote get-url origin)" = "$REPO_URL" ] || { echo "Installed controller source origin mismatch" >&2; false; }
 
-bash "$ROOT/install.sh" --apply >/dev/null
+if [ "$CONTROLLER_ONLY" -eq 1 ]; then
+  INSTALL_ARGS=(--apply)
+  if [ -n "$TEST_ROOT" ]; then INSTALL_ARGS+=(--test-root "$TEST_ROOT"); fi
+  bash "$TARGET_SOURCE/agents/tasks/production-control/install.sh" "${INSTALL_ARGS[@]}" >/dev/null
+else
+  bash "$ROOT/install.sh" --apply >/dev/null
+fi
 [ "$(tr -d '\r\n' < "$LIB_DIR/installed-revision")" = "$TO" ] || { echo "Installed controller revision did not advance to target" >&2; false; }
 
 CANDIDATE_STATE="$BACKUP/state.candidate.json"
-node - "$STATE_FILE" "$CANDIDATE_STATE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
+node - "$STATE_FILE" "$CANDIDATE_STATE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" "$CONTROLLER_ONLY" <<'NODE'
 const fs=require('fs');
 const p=process.argv[2],out=process.argv[3],from=process.argv[4],to=process.argv[5],baseline=process.argv[6],protectedBaseline=process.argv[7];
 const controlRepository=process.argv[8],implementationRepository=process.argv[9],controlIssue=Number(process.argv[10]),ownerLogin=process.argv[11],ownerId=Number(process.argv[12]);
+const controllerOnly=process.argv[13]==='1';
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(s.control_repository!==controlRepository||s.implementation_repository!==implementationRepository||Number(s.control_issue)!==controlIssue||s.owner_login!==ownerLogin||Number(s.owner_id)!==ownerId)process.exit(2);
-Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
+Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:controllerOnly?baseline:to});
 fs.writeFileSync(out,JSON.stringify(s,null,2)+'\n',{mode:0o600});
 fs.chmodSync(out,0o600);
 NODE
@@ -223,15 +250,16 @@ NODE
 diag=$(OPC_CONTROLLER_STATE="$CANDIDATE_STATE" OPC_SOURCE_DIR="$SOURCE_DIR" "$LIB_DIR/controller.mjs" diagnose-local)
 node -e 'const d=JSON.parse(process.argv[1]);if(d.ok!==true)process.exit(2)' "$diag" || { echo "Target controller local diagnostics failed" >&2; false; }
 
-node - "$STATE_FILE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$DEPLOY_STAGE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE'
+node - "$STATE_FILE" "$FROM" "$TO" "$PRIOR_BASELINE" "$PRIOR_PROTECTED_BASELINE" "$DEPLOY_STAGE" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" "$CONTROLLER_ONLY" <<'NODE'
 const fs=require('fs');
 const p=process.argv[2],from=process.argv[3],to=process.argv[4],baseline=process.argv[5],protectedBaseline=process.argv[6],deployStage=process.argv[7];
 const controlRepository=process.argv[8],implementationRepository=process.argv[9],controlIssue=Number(process.argv[10]),ownerLogin=process.argv[11],ownerId=Number(process.argv[12]);
+const controllerOnly=process.argv[13]==='1';
 const s=JSON.parse(fs.readFileSync(p,'utf8'));
 if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==from||s.deployment_blocked===true||s.production_baseline_sha!==baseline||(Object.hasOwn(s,'protected_path_baseline_sha')?s.protected_path_baseline_sha:s.controller_revision)!==protectedBaseline)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 if(s.control_repository!==controlRepository||s.implementation_repository!==implementationRepository||Number(s.control_issue)!==controlIssue||s.owner_login!==ownerLogin||Number(s.owner_id)!==ownerId)process.exit(2);
-Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:to});
+Object.assign(s,{controller_revision:to,protected_path_baseline_sha:to,production_baseline_sha:controllerOnly?baseline:to});
 s.last_diagnostic=null;
 s.last_break_glass_reconciliation={from_controller:from,from_protected_path_baseline:protectedBaseline,from_production_baseline:baseline,deploy_stage:deployStage,to,reconciled_at:new Date().toISOString()};
 const tmp=`${p}.tmp.${process.pid}`;
@@ -240,20 +268,20 @@ fs.renameSync(tmp,p);
 fs.chmodSync(p,0o600);
 NODE
 
-node - "$STATE_FILE" "$TO" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" <<'NODE' || { echo "Reconciled controller state validation failed" >&2; false; }
+node - "$STATE_FILE" "$TO" "$CONTROL_REPOSITORY" "$IMPLEMENTATION_REPOSITORY" "$CONTROL_ISSUE" "$OWNER_LOGIN" "$OWNER_ID" "$CONTROLLER_ONLY" "$PRIOR_BASELINE" <<'NODE' || { echo "Reconciled controller state validation failed" >&2; false; }
 const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),to=process.argv[3],control=process.argv[4],implementation=process.argv[5],issue=Number(process.argv[6]),login=process.argv[7],ownerId=Number(process.argv[8]);
-if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==to||s.deployment_blocked===true)process.exit(2);
+if(s.version!==1||s.mode!=='ACTIVE'||s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==(process.argv[9]==='1'?process.argv[10]:to)||s.deployment_blocked===true)process.exit(2);
 if(s.control_repository!==control||s.implementation_repository!==implementation||Number(s.control_issue)!==issue||s.owner_login!==login||Number(s.owner_id)!==ownerId||control===implementation)process.exit(2);
 if(Object.values(s.requests||{}).some(r=>['STARTING','IN_PROGRESS'].includes(r?.state)||r?.report_pending))process.exit(2);
 NODE
-[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$TO" ] || { echo "Reconciled controller source validation failed" >&2; false; }
+[ "$(git -C "$SOURCE_DIR" rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA" ] || { echo "Reconciled controller source validation failed" >&2; false; }
 
 systemctl --user start "$TIMER"
 TIMER_STARTED=1
 systemctl --user is-active --quiet "$TIMER" || { echo "Controller timer did not become active" >&2; false; }
 
 cat > "$BACKUP/result.json" <<JSON
-{"result":"PASS","mode":"ACTIVE","from_controller":"$FROM","from_protected_path_baseline":"$PRIOR_PROTECTED_BASELINE","to_protected_path_baseline":"$TO","from_production_baseline":"$PRIOR_BASELINE","deploy_stage":"$DEPLOY_STAGE","to":"$TO","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
+{"result":"PASS","mode":"ACTIVE","controller_only":$([ "$CONTROLLER_ONLY" -eq 1 ] && echo true || echo false),"from_controller":"$FROM","from_protected_path_baseline":"$PRIOR_PROTECTED_BASELINE","to_protected_path_baseline":"$TO","from_production_baseline":"$PRIOR_BASELINE","deploy_stage":"$DEPLOY_STAGE","to":"$TO","to_production_baseline":"$([ "$CONTROLLER_ONLY" -eq 1 ] && printf %s "$FROM" || printf %s "$TO")","task_deploy_result":"$DEPLOY_RESULT","backup":"$BACKUP","completed_at":"$(date -u +%Y-%m-%dT%H:%M:%SZ)"}
 JSON
 chmod 600 "$BACKUP/result.json"
 
