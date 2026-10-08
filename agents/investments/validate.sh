@@ -34,7 +34,7 @@ done
 
 node "$RUNTIME_HELPER" repo-check "$REPO_ROOT" >/dev/null || fail "repository runtime requirements mismatch"
 
-node - "$ROOT/config/investments-agent.fragment.json" "$ROOT/config/investments-tools.json" "$ROOT/plugin/package.json" <<'NODE' || exit 2
+node - "$ROOT/config/investments-agent.fragment.json" "$ROOT/config/investments-tools.json" "$ROOT/plugin/package.json" "$REPO_ROOT/openclaw-qualification.json" <<'NODE' || exit 2
 const fs=require('node:fs');
 const agent=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
 const tools=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
@@ -57,6 +57,19 @@ if(!/^\d+\.\d+\.\d+$/.test(buildVersion||''))fail('plugin build version must be 
 if(pkg.openclaw?.build?.openclawVersion!==buildVersion)fail('plugin build metadata must match dev dependency');
 const compat=pkg.openclaw?.compat?.pluginApi;
 if(pkg.peerDependencies?.openclaw!==compat)fail('peer range must match plugin API compatibility metadata');
+
+const targetInfo=JSON.parse(fs.readFileSync(process.argv[5],'utf8'));
+const target=String(targetInfo?.version??'');
+if(targetInfo?.format!=='openclaw-qualification-target-v1'||!/^[0-9]+\.[0-9]+\.[0-9]+$/.test(target))fail('invalid OpenClaw qualification target');
+const peer=pkg.peerDependencies.openclaw;
+const bounded=/^>=([0-9]+\.[0-9]+\.[0-9]+) <=([0-9]+\.[0-9]+\.[0-9]+)$/.exec(peer);
+if(!bounded)fail('Investments plugin must declare an explicit finite OpenClaw host compatibility window');
+const tuple=v=>v.split('.').map(Number);
+const compare=(a,b)=>{const x=tuple(a),y=tuple(b);for(let i=0;i<3;i++)if(x[i]!==y[i])return x[i]<y[i]?-1:1;return 0;};
+if(compare(bounded[1],bounded[2])>0)fail('OpenClaw peer compatibility window is inverted');
+if(compare(buildVersion,bounded[1])<0||compare(buildVersion,bounded[2])>0)fail('pinned OpenClaw build version falls outside compatibility window');
+if(compare(target,bounded[1])<0||compare(target,bounded[2])>0)fail('qualified OpenClaw host target is outside declared plugin compatibility window');
+if(compare(bounded[2],target)!==0)fail('OpenClaw compatibility ceiling must equal the qualified host target');
 if(pkg.dependencies?.typebox!=='1.3.15')fail('TypeBox must stay pinned');
 NODE
 

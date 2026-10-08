@@ -26,9 +26,21 @@ Detailed executor guidance is in [AGENTS.md](AGENTS.md).
 
 ## Runtime compatibility
 
-`runtime-contract.json` is the executable repository-wide implementation contract for the OpenClaw and Node generations against which this repository is built, validated, diagnosed, and recovered. `shared/runtime-contract/` owns deterministic validation of that contract and its implementation consumers.
+`runtime-contract.json` is the executable repository-wide Node/runtime implementation contract. The exact candidate OpenClaw host version is owned separately by `openclaw-qualification.json`; `shared/runtime-contract/` validates these inputs and their implementation consumers. Neither file authorizes a production rollout.
 
-The runtime contract does not replace Nexus authority over intended runtime state. A contract change is compatibility-sensitive implementation work and must remain reconciled with the owning live Nexus runtime baseline and official OpenClaw support documentation before deployment.
+These implementation contracts do not replace Nexus authority over intended runtime state. A compatibility-sensitive change must be reconciled with live Nexus and official OpenClaw support documentation before deployment.
+
+### OpenClaw host qualification workflow
+
+The intended operating experience is **one reviewed qualification PR and one separately owner-approved rollout request**, reusing existing GitHub Actions and the registered production controller. A published OpenClaw release or a passing static build is not by itself evidence of host/plugin compatibility.
+
+1. **Preflight before source churn.** Read the official target release and plugin API/migration notes, identify the effective owned-plugin cohort, and inspect the live controller's protected-path and production baselines. If protected drift blocks routine rollout, record it as a separately governed dependency rather than quietly changing protected paths or claiming deployability.
+2. **Prepare one exact candidate revision.** In an ordinary implementation PR, pin the target in `openclaw-qualification.json`. Reconcile every affected owned plugin's exact development/build version, `peerDependencies.openclaw`, `openclaw.compat.pluginApi`, release identity, lockfile, and frozen artifact/checksum according to that package's existing release procedure. This includes Taskctl, Contacts, Calendar, Investments, and Training as applicable to the intended runtime cohort. Do not declare compatibility with untested future host versions; retain the previously proven floor only while its coverage remains valid. No production-host build or installation is required for PR preparation.
+3. **Use existing CI; do not create a second qualification system.** The relevant Task Agent, production-control, Engineer, Calendar, Investments, and Training workflows must finish successfully on the exact reviewed candidate as applicable. Check that each host-sensitive test used the intended OpenClaw version, not merely the version from a plugin's earlier development lockfile. Task/Contacts isolated-host checks and Training runtime/idempotency tests provide stronger evidence than Calendar/Investments build/manifest validation alone. If a release changes an integration used by the latter plugins, add the smallest relevant runtime-path proof before declaring compatibility.
+4. **Promote only evidenced compatibility.** Review the final PR diff, all owned plugin compatibility declarations and release artifacts, the official upstream changes, and any remaining host/runtime-path gaps. The PR/CI result qualifies only the exact source candidate and the tests actually performed. A compatibility-range extension or merge must not be interpreted as automatic production approval.
+5. **Roll out through registered authority only.** After accepted source review/merge and resolution of protected-path dependencies, use the existing owner-approved exact-revision production rollout operation. Its live resource, backup, predecessor, Codex-cohort, specialized-agent and recovery gates still apply. Reconcile final live behavior and state from controller evidence rather than inferring success from CI.
+
+This workflow is implemented through existing repository PRs, existing GitHub-hosted CI, and the existing production controller. It authorizes **no automatic PR writes, scheduled upgrade bot, new service, production credentials in CI, protected-control changes, or unattended rollout**.
 
 ## Packages
 
