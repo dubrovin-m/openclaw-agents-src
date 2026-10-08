@@ -3,11 +3,11 @@
   "implementation_version": "0.1.6",
   "sqlite_schema": 3,
   "from": {
-    "source_revision": "0b7406055d8c47fd524374acc4e1c3aad89b8e1d",
+    "source_revision": "9a540f0efa9510626d5721f868699aabebb9322c",
     "implementation_version": "0.1.6",
     "sqlite_schema": 3,
-    "plugin_version": "0.1.6",
-    "release_sha256": "11143601cd89c4fd44c6be4dff6ddcf991984f0cf8b352bf3fcb9f52361b074e"
+    "plugin_version": "0.1.7",
+    "release_sha256": "c2afbe9b1ca184586a9de673a46fe889492287bd3c3bbcdceecd5af964240152"
   },
   "runtime_files": {
     "core.cjs": "3805c01bd25dac8fb1c178a29a4def5563968ba2dd62d0439465ee2cc406e172",
@@ -16,11 +16,11 @@
   },
   "plugin": {
     "name": "openclaw-plugin-contacts",
-    "version": "0.1.7",
-    "artifact": "artifacts/openclaw-plugin-contacts-0.1.7.tgz",
-    "sha256": "7c6ef74734aec8bed6af34f1bcf7b69450c7a90c4c1d68117392e60d2e3a3263"
+    "version": "0.1.8",
+    "artifact": "artifacts/openclaw-plugin-contacts-0.1.8.tgz",
+    "sha256": "b4f844978cbb0ffcb435965286d5c762a3a4fa4d3efcbd7613036b98c4006e2d"
   },
-  "openclaw_build_version": "2026.9.7",
-  "openclaw_compat": ">=2026.9.5 <=2026.9.7",
+  "openclaw_build_version": "2026.9.8",
+  "openclaw_compat": ">=2026.9.5 <=2026.9.8",
   "typebox_version": "1.3.15"
 }
