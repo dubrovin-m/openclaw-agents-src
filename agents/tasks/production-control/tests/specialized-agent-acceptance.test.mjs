@@ -1,5 +1,8 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 
 import {
   assertSnapshotPreserved,
@@ -15,6 +18,23 @@ import {
 } from '../lib.mjs';
 
 const acceptancePath = 'agents/tasks/production-control/specialized-agent-acceptance.mjs';
+const disabledTrainingDoctor = {
+  ok: false,
+  pluginErrors: [],
+  diagnostics: [],
+  sourceShadowing: [],
+  compatibility: [],
+  configurationWarnings: [
+    '- plugins.entries.training: plugin disabled (disabled in config) but config is present',
+  ],
+};
+const disabledTrainingPlugin = {
+  id: 'training',
+  enabled: false,
+  status: 'disabled',
+  origin: 'global',
+  toolNames: ['training_log'],
+};
 
 const baseAgents = [
   {
@@ -101,12 +121,15 @@ function runnerFor({
   agentEntries = baseAgentEntries,
   globalTools = baseGlobalTools,
   plugins = basePlugins,
+  doctor = { ok: true },
+  trainingEnabled = false,
 } = {}) {
   const runtimeBindings = bindings ?? baseBindings.filter((binding) => agents.some((agent) => agent.id === binding.agentId));
   return (_bin, args) => {
     const command = args.join(' ');
     if (command === 'config validate --json') return { valid: true };
-    if (command === 'plugins doctor --json') return { ok: true };
+    if (command === 'plugins doctor --json') return doctor;
+    if (command === 'config get plugins.entries.training.enabled --json') return trainingEnabled;
     if (command === 'agents list --json') return agents;
     if (command === 'agents bindings --json') return runtimeBindings;
     if (command === 'config get agents.entries --json') return agentEntries;
@@ -258,6 +281,90 @@ test('collectSnapshot captures agent runtime, tool authority, and custom plugin 
     'config get tools --json',
     'plugins list --json',
   ]);
+});
+
+
+test('accepts only the exact disabled Training warning and leaves active snapshot unchanged', () => {
+  const plugins = { plugins: [...basePlugins.plugins, disabledTrainingPlugin] };
+  const actual = collectSnapshot('/bin/openclaw', runnerFor({ doctor: disabledTrainingDoctor, plugins }));
+  assert.deepEqual(actual, baselineSnapshot());
+});
+
+test('rejects unrelated or malformed doctor warnings and all nonempty diagnostic categories', () => {
+  const plugins = { plugins: [...basePlugins.plugins, disabledTrainingPlugin] };
+  const badDoctors = [
+    { ...disabledTrainingDoctor, configurationWarnings: ['- another warning'] },
+    { ...disabledTrainingDoctor, configurationWarnings: [...disabledTrainingDoctor.configurationWarnings, '- extra'] },
+    { ...disabledTrainingDoctor, configurationWarnings: [] },
+    { ...disabledTrainingDoctor, pluginErrors: ['plugin broke'] },
+    { ...disabledTrainingDoctor, diagnostics: ['diagnostic'] },
+    { ...disabledTrainingDoctor, sourceShadowing: ['shadowed'] },
+    { ...disabledTrainingDoctor, compatibility: ['incompatible'] },
+    { ...disabledTrainingDoctor, unrelated: 'unknown field' },
+    { ok: false, configurationWarnings: disabledTrainingDoctor.configurationWarnings },
+  ];
+  for (const doctor of badDoctors) {
+    assert.throws(
+      () => collectSnapshot('/bin/openclaw', runnerFor({ doctor, plugins })),
+      /plugin doctor is not healthy/,
+    );
+  }
+});
+
+test('disabled Training exception refuses enablement, runtime authority, and plugin mismatch', () => {
+  const plugins = { plugins: [...basePlugins.plugins, disabledTrainingPlugin] };
+  const scenarios = [
+    [{ trainingEnabled: true }, /effective plugin configuration/],
+    [{ trainingEnabled: null }, /effective plugin configuration/],
+    [{ plugins: basePlugins }, /effective plugin state/],
+    [{ plugins: { plugins: [...basePlugins.plugins, { ...disabledTrainingPlugin, enabled: true, status: 'loaded' }] } }, /effective plugin state/],
+    [{ plugins: { plugins: [...basePlugins.plugins, { ...disabledTrainingPlugin, status: 'error' }] } }, /effective plugin state/],
+    [{ plugins: { plugins: [...plugins.plugins, disabledTrainingPlugin] } }, /effective plugin state/],
+    [{ agents: [...baseAgents, { id: 'training' }], agentEntries: { ...baseAgentEntries, training: {} } }, /agent authority/],
+    [{ bindings: [...baseBindings, { agentId: 'training', match: { channel: 'telegram', accountId: 'training' } }] }, /unknown agent/],
+    [{ globalTools: { ...baseGlobalTools, alsoAllow: ['training_log'] } }, /explicit tool authority/],
+    [{ agentEntries: { ...baseAgentEntries, main: { ...baseAgentEntries.main, tools: { alsoAllow: ['training_log'] } } } }, /explicit tool authority/],
+  ];
+  for (const [overrides, message] of scenarios) {
+    assert.throws(
+      () => collectSnapshot('/bin/openclaw', runnerFor({ doctor: disabledTrainingDoctor, plugins, ...overrides })),
+      message,
+    );
+  }
+});
+
+test('nonzero doctor exit code is accepted only for the exact exception', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'specialized-doctor-'));
+  try {
+    const responses = {
+      'config validate --json': { valid: true },
+      'plugins doctor --json': disabledTrainingDoctor,
+      'config get plugins.entries.training.enabled --json': false,
+      'agents list --json': baseAgents,
+      'agents bindings --json': baseBindings,
+      'config get agents.entries --json': baseAgentEntries,
+      'config get tools --json': baseGlobalTools,
+      'plugins list --json': { plugins: [...basePlugins.plugins, disabledTrainingPlugin] },
+    };
+    const createShim = (name, doctorExit) => {
+      const bin = path.join(dir, name);
+      fs.writeFileSync(bin, `#!/usr/bin/env node
+const responses = ${JSON.stringify(responses)};
+const cmd = process.argv.slice(2).join(' ');
+if (!Object.hasOwn(responses, cmd)) process.exit(3);
+process.stdout.write(JSON.stringify(responses[cmd])+'\\n');
+process.exit(cmd === 'plugins doctor --json' ? ${doctorExit} : 0);
+`, { mode: 0o700 });
+      return bin;
+    };
+    assert.deepEqual(collectSnapshot(createShim('doctor-warning-exit-1', 1)), baselineSnapshot());
+    assert.throws(
+      () => collectSnapshot(createShim('doctor-warning-exit-2', 2)),
+      /openclaw plugins doctor --json failed/,
+    );
+  } finally {
+    fs.rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test('collectSnapshot accepts a healthy runtime without external plugins', () => {

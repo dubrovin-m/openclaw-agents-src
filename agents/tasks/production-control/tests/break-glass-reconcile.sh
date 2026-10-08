@@ -39,7 +39,15 @@ printf 'export const generation="old";\n' > "$PC/diagnose.mjs"
 cat > "$PC/install.sh" <<'SH'
 #!/usr/bin/env bash
 set -euo pipefail
-[ "${1:-}" = "--apply" ] || exit 2
+apply=0
+while [ "$#" -gt 0 ]; do
+  case "$1" in
+    --apply) apply=1; shift ;;
+    --test-root) [ "$#" -ge 2 ] || exit 2; test -d "$2" || exit 2; shift 2 ;;
+    *) exit 2 ;;
+  esac
+done
+[ "$apply" -eq 1 ] || exit 2
 root=$(cd "$(dirname "$0")" && pwd)
 repo=$(git -C "$root" rev-parse --show-toplevel)
 rev=$(git -C "$repo" rev-parse HEAD)
@@ -51,6 +59,7 @@ printf '%s\n' "$rev" > "$OPC_LIB_DIR/installed-revision"
 chmod 600 "$OPC_LIB_DIR/installed-revision"
 install -m 644 "$root/openclaw-task-production-control.service" "$OPC_SYSTEMD_DIR/openclaw-task-production-control.service"
 install -m 644 "$root/openclaw-task-production-control.timer" "$OPC_SYSTEMD_DIR/openclaw-task-production-control.timer"
+[ "${FAIL_INSTALL:-0}" != "1" ] || exit 1
 systemctl --user daemon-reload
 SH
 chmod 755 "$PC/install.sh"
@@ -88,7 +97,7 @@ try {
   const here=path.dirname(fileURLToPath(import.meta.url));
   const installed=fs.readFileSync(path.join(here,'installed-revision'),'utf8').trim();
   const source=execFileSync('git',['-C',sourceDir,'rev-parse','HEAD'],{encoding:'utf8'}).trim();
-  ok=candidate.controller_revision===installed&&candidate.protected_path_baseline_sha===source&&candidate.production_baseline_sha===source&&candidate.control_repository==='example/control'&&candidate.implementation_repository==='example/source';
+  ok=candidate.controller_revision===installed&&candidate.protected_path_baseline_sha===installed&&candidate.production_baseline_sha===source&&candidate.control_repository==='example/control'&&candidate.implementation_repository==='example/source';
 } catch {}
 process.stdout.write(JSON.stringify({ok,generation:'target'})+'\n');
 JS
@@ -100,10 +109,10 @@ git commit -qm break-glass-target
 TO=$(git rev-parse HEAD)
 
 RUNTIME="$TMP/runtime"
-STATE="$RUNTIME/state"
-LIB="$RUNTIME/lib"
-SYSTEMD="$RUNTIME/systemd"
-SOURCE="$RUNTIME/source"
+STATE="$RUNTIME/home/.local/state/openclaw-production-control"
+LIB="$RUNTIME/home/.local/lib/openclaw-production-control"
+SYSTEMD="$RUNTIME/home/.config/systemd/user"
+SOURCE="$RUNTIME/home/.local/share/openclaw-production-control/openclaw-agents"
 DELIVERABLES="$TMP/deliverables"
 SYSTEMCTL_STATE="$TMP/systemctl-state"
 mkdir -p "$TMP/shims" "$DELIVERABLES" "$SYSTEMCTL_STATE"
@@ -156,7 +165,7 @@ JSON
 
 reset_runtime(){
   rm -rf "$RUNTIME"
-  mkdir -p "$STATE" "$LIB" "$SYSTEMD"
+  mkdir -p "$STATE" "$LIB" "$SYSTEMD" "$(dirname "$SOURCE")"
   printf '%s\n' "$FROM" > "$LIB/installed-revision"
   git show "$FROM:agents/tasks/production-control/controller.mjs" > "$LIB/controller.mjs"
   git show "$FROM:agents/tasks/production-control/lib.mjs" > "$LIB/lib.mjs"
@@ -184,6 +193,10 @@ JSON
 
 run_reconcile(){
   "$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --deploy-result "$DELIVERABLES/task-result.json" --apply
+}
+
+run_controller_only(){
+  "$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --controller-only --apply
 }
 
 assert_old_state(){
@@ -222,7 +235,100 @@ if(r.result!=='PASS'||r.from_protected_path_baseline!==from||r.to_protected_path
 NODE
 }
 
+assert_controller_only_state(){
+  test "$(cat "$LIB/installed-revision")" = "$TO"
+  test "$(git -C "$SOURCE" rev-parse HEAD)" = "$FROM"
+  test "$(git -C "$SOURCE" remote get-url origin)" = "$IMPLEMENTATION_URL"
+  test -z "$(git -C "$SOURCE" status --porcelain --untracked-files=all)"
+  test "$(cat "$SYSTEMCTL_STATE/timer")" = active
+  node - "$STATE/state.json" "$FROM" "$TO" <<'NODE'
+const fs=require('fs'),s=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],to=process.argv[4];
+if(s.controller_revision!==to||s.protected_path_baseline_sha!==to||s.production_baseline_sha!==from||s.last_diagnostic!==null)process.exit(2);
+if(s.watermark!==100||s.minimum_comment_id!==50||s.requests?.['77']?.state!=='SUCCESS')process.exit(2);
+if(s.last_break_glass_reconciliation?.from_controller!==from||s.last_break_glass_reconciliation?.from_production_baseline!==from||s.last_break_glass_reconciliation?.deploy_stage!=='CONTROLLER_ONLY'||s.last_break_glass_reconciliation?.to!==to)process.exit(2);
+NODE
+  result_file=$(find "$STATE" -path '*/break-glass-reconcile-*/result.json' -print -quit)
+  test -n "$result_file"
+  node - "$result_file" "$FROM" "$TO" <<'NODE'
+const fs=require('fs'),r=JSON.parse(fs.readFileSync(process.argv[2])),from=process.argv[3],to=process.argv[4];
+if(r.result!=='PASS'||r.controller_only!==true||r.to!==to||r.from_production_baseline!==from||r.to_production_baseline!==from||r.deploy_stage!=='CONTROLLER_ONLY'||r.task_deploy_result!=='')process.exit(2);
+NODE
+}
+
 cd "$REPO"
+
+echo STAGE=controller-only-predecessor-runtime
+reset_runtime
+PREFLIGHT_TARGET=0 run_controller_only >/dev/null
+assert_controller_only_state
+
+echo STAGE=controller-only-rejects-deploy-evidence
+reset_runtime
+if "$PC/reconcile-break-glass.sh" --test-root "$RUNTIME" --from "$FROM" --to "$TO" --controller-only --deploy-result "$DELIVERABLES/task-result.json" --apply >/dev/null 2>&1; then exit 1; fi
+assert_old_state
+
+echo STAGE=controller-only-refuses-non-predecessor-source
+reset_runtime
+git -C "$SOURCE" checkout -q --detach "$TO"
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+test "$(cat "$LIB/installed-revision")" = "$FROM"
+test "$(git -C "$SOURCE" rev-parse HEAD)" = "$TO"
+
+echo STAGE=controller-only-refuses-dirty-source
+reset_runtime
+printf 'unsafe\n' > "$SOURCE/untracked"
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+test "$(cat "$LIB/installed-revision")" = "$FROM"
+rm "$SOURCE/untracked"
+assert_old_state
+
+echo STAGE=controller-only-refuses-wrong-origin
+reset_runtime
+git -C "$SOURCE" remote set-url origin https://example.invalid/untrusted.git
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+test "$(cat "$LIB/installed-revision")" = "$FROM"
+git -C "$SOURCE" remote set-url origin "$IMPLEMENTATION_URL"
+assert_old_state
+
+echo STAGE=controller-only-refuses-baseline-divergence
+reset_runtime
+node - "$STATE/state.json" "$TO" <<'NODE'
+const fs=require('fs'),p=process.argv[2],s=JSON.parse(fs.readFileSync(p,'utf8'));
+s.protected_path_baseline_sha=process.argv[3];
+fs.writeFileSync(p,JSON.stringify(s));
+NODE
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+test "$(cat "$LIB/installed-revision")" = "$FROM"
+node - "$STATE/state.json" "$FROM" <<'NODE'
+const fs=require('fs'),p=process.argv[2],s=JSON.parse(fs.readFileSync(p,'utf8'));
+s.protected_path_baseline_sha=process.argv[3];
+fs.writeFileSync(p,JSON.stringify(s));
+NODE
+assert_old_state
+
+echo STAGE=controller-only-lock-preflight
+reset_runtime
+touch "$STATE/controller.lock"
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+rm "$STATE/controller.lock"
+assert_old_state
+
+echo STAGE=controller-only-install-failure-rollback
+reset_runtime
+if FAIL_INSTALL=1 run_controller_only >/dev/null 2>&1; then exit 1; fi
+assert_old_state
+
+echo STAGE=controller-only-diagnostic-failure-rollback
+reset_runtime
+if FAIL_DIAG=1 run_controller_only >/dev/null 2>&1; then exit 1; fi
+assert_old_state
+
+echo STAGE=controller-only-timer-failure-rollback
+reset_runtime
+touch "$SYSTEMCTL_STATE/fail-start"
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+rm "$SYSTEMCTL_STATE/fail-start"
+assert_old_state
 
 echo STAGE=legacy-binding-arg-rejected
 reset_runtime
