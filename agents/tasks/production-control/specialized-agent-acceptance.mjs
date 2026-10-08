@@ -185,6 +185,19 @@ export function normalizeExternalPluginRoster(value) {
   return normalizePluginInventory(value).external_plugin_ids;
 }
 
+const DISABLED_TRAINING_WARNING = '- plugins.entries.training: plugin disabled (disabled in config) but config is present';
+
+function onlyDisabledTrainingWarning(value) {
+  if (!value || typeof value !== 'object' || Array.isArray(value) || value.ok !== false) return false;
+  const expectedKeys = ['compatibility', 'configurationWarnings', 'diagnostics', 'ok', 'pluginErrors', 'sourceShadowing'];
+  if (JSON.stringify(Object.keys(value).sort()) !== JSON.stringify(expectedKeys)) return false;
+  if (!['pluginErrors', 'diagnostics', 'sourceShadowing', 'compatibility']
+    .every((field) => Array.isArray(value[field]) && value[field].length === 0)) return false;
+  return Array.isArray(value.configurationWarnings)
+    && value.configurationWarnings.length === 1
+    && value.configurationWarnings[0] === DISABLED_TRAINING_WARNING;
+}
+
 function runJson(openclawBin, args) {
   const result = spawnSync(openclawBin, args, {
     encoding: 'utf8',
@@ -204,6 +217,9 @@ function runJson(openclawBin, args) {
       && parsed?.error?.type === 'cli_error'
       && parsed?.error?.message === 'Config path is valid but unset: tools. The runtime default applies until you set an authored value with openclaw config set tools <value>.';
     if (optionalUnsetPath) return null;
+    if (args.join(' ') === 'plugins doctor --json' && result.status === 1 && onlyDisabledTrainingWarning(parsed)) {
+      return parsed;
+    }
     const detail = String(result.stderr ?? '').trim() || String(parsed?.error?.message ?? '').trim();
     throw new Error(`openclaw ${args.join(' ')} failed${detail ? `: ${detail}` : ''}`);
   }
@@ -216,14 +232,31 @@ export function collectSnapshot(openclawBin, runner = runJson) {
   if (config.valid !== true) throw new Error('effective OpenClaw configuration is invalid');
 
   const doctor = requireObject(runner(openclawBin, ['plugins', 'doctor', '--json']), 'plugin doctor');
-  if (doctor.ok !== true) throw new Error('OpenClaw plugin doctor is not healthy');
+  const disabledTrainingWarning = onlyDisabledTrainingWarning(doctor);
+  if (doctor.ok !== true && !disabledTrainingWarning) throw new Error('OpenClaw plugin doctor is not healthy');
+  if (disabledTrainingWarning
+    && runner(openclawBin, ['config', 'get', 'plugins.entries.training.enabled', '--json']) !== false) {
+    throw new Error('Training disabled warning contradicts effective plugin configuration');
+  }
 
   const agents = runner(openclawBin, ['agents', 'list', '--json']);
   const agentIds = normalizeAgentRoster(agents);
   const routingBindings = runner(openclawBin, ['agents', 'bindings', '--json']);
   const agentEntries = runner(openclawBin, ['config', 'get', 'agents.entries', '--json']);
   const globalTools = runner(openclawBin, ['config', 'get', 'tools', '--json']);
-  const plugins = normalizePluginInventory(runner(openclawBin, ['plugins', 'list', '--json']));
+  const pluginList = runner(openclawBin, ['plugins', 'list', '--json']);
+  if (disabledTrainingWarning) {
+    if (agentIds.includes('training') || Object.hasOwn(requireObject(agentEntries, 'agent entries'), 'training')) {
+      throw new Error('Training disabled warning contradicts agent authority');
+    }
+    const items = Array.isArray(pluginList) ? pluginList : requireObject(pluginList, 'plugin list').plugins;
+    if (!Array.isArray(items)) throw new Error('plugin list is unavailable');
+    const training = items.filter((plugin) => plugin?.id === 'training');
+    if (training.length !== 1 || training[0].enabled !== false || training[0].status !== 'disabled') {
+      throw new Error('Training disabled warning contradicts effective plugin state');
+    }
+  }
+  const plugins = normalizePluginInventory(pluginList);
   return {
     agent_ids: agentIds,
     agent_runtime: normalizeAgentRuntime(agents),
