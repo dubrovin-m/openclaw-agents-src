@@ -290,6 +290,22 @@ test "$(cat "$LIB/installed-revision")" = "$FROM"
 git -C "$SOURCE" remote set-url origin "$IMPLEMENTATION_URL"
 assert_old_state
 
+echo STAGE=controller-only-refuses-baseline-divergence
+reset_runtime
+node - "$STATE/state.json" "$TO" <<'NODE'
+const fs=require('fs'),p=process.argv[2],s=JSON.parse(fs.readFileSync(p,'utf8'));
+s.protected_path_baseline_sha=process.argv[3];
+fs.writeFileSync(p,JSON.stringify(s));
+NODE
+if run_controller_only >/dev/null 2>&1; then exit 1; fi
+test "$(cat "$LIB/installed-revision")" = "$FROM"
+node - "$STATE/state.json" "$FROM" <<'NODE'
+const fs=require('fs'),p=process.argv[2],s=JSON.parse(fs.readFileSync(p,'utf8'));
+s.protected_path_baseline_sha=process.argv[3];
+fs.writeFileSync(p,JSON.stringify(s));
+NODE
+assert_old_state
+
 echo STAGE=controller-only-lock-preflight
 reset_runtime
 touch "$STATE/controller.lock"
