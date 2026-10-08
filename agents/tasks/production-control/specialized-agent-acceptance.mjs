@@ -198,6 +198,16 @@ function onlyDisabledTrainingWarning(value) {
     && value.configurationWarnings[0] === DISABLED_TRAINING_WARNING;
 }
 
+function grantsTrainingTool(policy, knownToolNames) {
+  if (!policy || typeof policy !== 'object') return false;
+  return Object.entries(policy).some(([key, value]) => {
+    if (['allow', 'alsoAllow'].includes(key) && Array.isArray(value)
+      && value.some((name) => typeof name === 'string'
+        && (knownToolNames.has(name) || /^training(?:[._:]|$)/u.test(name)))) return true;
+    return value && typeof value === 'object' && grantsTrainingTool(value, knownToolNames);
+  });
+}
+
 function runJson(openclawBin, args) {
   const result = spawnSync(openclawBin, args, {
     encoding: 'utf8',
@@ -254,6 +264,11 @@ export function collectSnapshot(openclawBin, runner = runJson) {
     const training = items.filter((plugin) => plugin?.id === 'training');
     if (training.length !== 1 || training[0].enabled !== false || training[0].status !== 'disabled') {
       throw new Error('Training disabled warning contradicts effective plugin state');
+    }
+    const trainingToolNames = new Set(normalizeToolNames(training[0]));
+    if (grantsTrainingTool(globalTools, trainingToolNames)
+      || Object.values(agentEntries).some((entry) => grantsTrainingTool(entry?.tools, trainingToolNames))) {
+      throw new Error('Training disabled warning contradicts explicit tool authority');
     }
   }
   const plugins = normalizePluginInventory(pluginList);
