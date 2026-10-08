@@ -165,7 +165,7 @@ JSON
 
 reset_runtime(){
   rm -rf "$RUNTIME"
-  mkdir -p "$STATE" "$LIB" "$SYSTEMD"
+  mkdir -p "$STATE" "$LIB" "$SYSTEMD" "$(dirname "$SOURCE")"
   printf '%s\n' "$FROM" > "$LIB/installed-revision"
   git show "$FROM:agents/tasks/production-control/controller.mjs" > "$LIB/controller.mjs"
   git show "$FROM:agents/tasks/production-control/lib.mjs" > "$LIB/lib.mjs"
