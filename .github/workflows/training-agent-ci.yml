@@ -100,7 +100,12 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/openclaw-training-deploy-host"
           npm install --prefix "$root" --no-save --package-lock=false "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
-          OPENCLAW_BIN="$root/node_modules/.bin/openclaw" bash agents/training/tests/deploy.sh
+          predecessor="$(node -p 'require("./agents/training/release.json").predecessor ? "2026.9.7" : ""')"
+          test -n "$predecessor"
+          previous_root="$RUNNER_TEMP/openclaw-training-predecessor-host"
+          npm install --prefix "$previous_root" --no-save --package-lock=false "openclaw@$predecessor" >/dev/null
+          test "$("$previous_root/node_modules/.bin/openclaw" --version | grep -oE '[0-9]+\\.[0-9]+\\.[0-9]+' | head -1)" = "$predecessor"
+          PREDECESSOR_OPENCLAW_BIN="$previous_root/node_modules/.bin/openclaw" OPENCLAW_BIN="$root/node_modules/.bin/openclaw" bash agents/training/tests/deploy.sh
 
       - name: Qualify normalized Training migration
         working-directory: agents/training/plugin
