@@ -100,7 +100,8 @@ jobs:
           set -euo pipefail
           root="$RUNNER_TEMP/openclaw-training-deploy-host"
           npm install --prefix "$root" --no-save --package-lock=false "openclaw@$OPENCLAW_QUALIFICATION_VERSION" >/dev/null
-          predecessor="$(node -p 'require("./agents/training/release.json").predecessor ? "2026.9.7" : ""')"
+          eval "$(node agents/training/deploy-support.mjs release-env "$GITHUB_WORKSPACE" "$GITHUB_WORKSPACE/agents/training/release.json" "$OPENCLAW_QUALIFICATION_VERSION")"
+          predecessor="$PREDECESSOR_OPENCLAW_VERSION"
           test -n "$predecessor"
           previous_root="$RUNNER_TEMP/openclaw-training-predecessor-host"
           npm install --prefix "$previous_root" --no-save --package-lock=false "openclaw@$predecessor" >/dev/null
