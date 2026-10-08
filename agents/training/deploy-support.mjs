@@ -83,6 +83,7 @@ function release(root, releasePath, expectedOpenClaw) {
 
   const predecessor = r.predecessor ?? null;
   let predecessorArtifact = null;
+  let predecessorBuildVersion = null;
   if (predecessor) {
     if (!/^[a-f0-9]{40}$/.test(predecessor.source_revision ?? '')) fail('Invalid Training predecessor source revision');
     const expectedWorkspaceKeys = expectedWorkspace.slice().sort();
@@ -111,11 +112,12 @@ function release(root, releasePath, expectedOpenClaw) {
     if (!/^\d+\.\d+\.\d+$/.test(priorBuild ?? '') || priorCompat !== `>=2026.9.5 <=${priorBuild}`) {
       fail('Training predecessor historical OpenClaw compatibility is invalid');
     }
+    predecessorBuildVersion = priorBuild;
     const checked = validateArtifact(releasePath, predecessor.plugin ?? {}, priorBuild, priorCompat, 'Training predecessor');
     if (checked.manifestSha !== predecessor.plugin_manifest_sha256) fail('Training predecessor artifact manifest mismatch');
     predecessorArtifact = checked.artifact;
   }
-  return {r, artifact, predecessorArtifact};
+  return {r, artifact, predecessorArtifact, predecessorBuildVersion};
 }
 
 const command = process.argv[2];
@@ -123,7 +125,7 @@ if (command === 'release-env') {
   const root = path.resolve(process.argv[3]);
   const releasePath = path.resolve(process.argv[4]);
   const expected = requireString(process.argv[5], 'expected OpenClaw version');
-  const {r, artifact, predecessorArtifact} = release(root, releasePath, expected);
+  const {r, artifact, predecessorArtifact, predecessorBuildVersion} = release(root, releasePath, expected);
   const env = {
     TARGET_PLUGIN_ID:r.plugin.id,
     TARGET_PLUGIN_NAME:r.plugin.name,
@@ -138,6 +140,7 @@ if (command === 'release-env') {
     PREDECESSOR_PLUGIN_VERSION:r.predecessor?.plugin?.version ?? '',
     PREDECESSOR_RUNTIME_ENTRY_SHA:r.predecessor?.plugin?.runtime_entry_sha256 ?? '',
     PREDECESSOR_SOURCE_REVISION:r.predecessor?.source_revision ?? '',
+    PREDECESSOR_OPENCLAW_VERSION:predecessorBuildVersion ?? '',
     PREDECESSOR_ARTIFACT:predecessorArtifact ?? '',
   };
   for (const [key,value] of Object.entries(env)) process.stdout.write(`${key}=${shell(value)}\n`);
