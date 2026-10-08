@@ -4,6 +4,7 @@ umask 077
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
 DEPLOY="$ROOT/deploy.sh"
 OPENCLAW_BIN=${OPENCLAW_BIN:-$(command -v openclaw)}
+PREDECESSOR_OPENCLAW_BIN=${PREDECESSOR_OPENCLAW_BIN:-}
 TARGET_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.plugin.version)' "$ROOT/release.json")
 PREDECESSOR_VERSION=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.predecessor.plugin.version)' "$ROOT/release.json")
 PREDECESSOR_SOURCE=$(node -e 'const r=require(process.argv[1]);process.stdout.write(r.predecessor.source_revision)' "$ROOT/release.json")
@@ -17,16 +18,30 @@ oc(){
   local r=$1; shift
   HOME="$r/home" OPENCLAW_HOME="$r/home" OPENCLAW_STATE_DIR="$r/state" OPENCLAW_CONFIG_PATH="$r/state/openclaw.json" "$OPENCLAW_BIN" "$@"
 }
+oc_predecessor(){
+  local r=$1; shift
+  [ -n "$PREDECESSOR_OPENCLAW_BIN" ] && [ -x "$PREDECESSOR_OPENCLAW_BIN" ] || fail "qualified predecessor OpenClaw binary unavailable"
+  HOME="$r/home" OPENCLAW_HOME="$r/home" OPENCLAW_STATE_DIR="$r/state" OPENCLAW_CONFIG_PATH="$r/state/openclaw.json" "$PREDECESSOR_OPENCLAW_BIN" "$@"
+}
 init_root(){
-  local r=$1
+  local r=$1 host=${2:-target}
   mkdir -p "$r/home" "$r/state" "$r/sentinel-workspace" "$r/sentinel-agent"
   printf '%s\n' '{}' > "$r/state/openclaw.json"
-  oc "$r" agents add sentinel \
-    --workspace "$r/sentinel-workspace" \
-    --agent-dir "$r/sentinel-agent" \
-    --model openai/gpt-5.6-luna \
-    --non-interactive --json >/dev/null
-  oc "$r" config validate >/dev/null
+  if [ "$host" = predecessor ]; then
+    oc_predecessor "$r" agents add sentinel \
+      --workspace "$r/sentinel-workspace" \
+      --agent-dir "$r/sentinel-agent" \
+      --model openai/gpt-5.6-luna \
+      --non-interactive --json >/dev/null
+    oc_predecessor "$r" config validate >/dev/null
+  else
+    oc "$r" agents add sentinel \
+      --workspace "$r/sentinel-workspace" \
+      --agent-dir "$r/sentinel-agent" \
+      --model openai/gpt-5.6-luna \
+      --non-interactive --json >/dev/null
+    oc "$r" config validate >/dev/null
+  fi
 }
 assert_sentinel(){
   local r=$1
@@ -65,17 +80,22 @@ NODE
 assert_plugin_staged(){ assert_plugin_version "$1" "$TARGET_VERSION"; }
 stage_predecessor(){
   local r=$1 db="$1/state/data/training/training.sqlite3" patch
-  init_root "$r"
+  init_root "$r" predecessor
   mkdir -p "$r/state/workspace-training"
   for name in AGENTS.md HEARTBEAT.md IDENTITY.md SOUL.md USER.md; do
     git -C "$REPO_ROOT" show "$PREDECESSOR_SOURCE:agents/training/workspace/$name" > "$r/state/workspace-training/$name"
     chmod 600 "$r/state/workspace-training/$name"
   done
-  oc "$r" plugins install --force --no-enable --accept-capabilities "$PREDECESSOR_ARTIFACT" >/dev/null
+  oc_predecessor "$r" plugins install --force --no-enable --accept-capabilities "$PREDECESSOR_ARTIFACT" >/dev/null
   patch=$(node -e 'process.stdout.write(JSON.stringify({plugins:{entries:{training:{enabled:false,config:{databasePath:process.argv[1]}}}}}))' "$db")
-  printf '%s\n' "$patch" | oc "$r" config patch --stdin >/dev/null
-  oc "$r" config validate >/dev/null
-  assert_plugin_version "$r" "$PREDECESSOR_VERSION"
+  printf '%s\n' "$patch" | oc_predecessor "$r" config patch --stdin >/dev/null
+  oc_predecessor "$r" config validate >/dev/null
+  # Inspect pre-upgrade with 2026.9.7; subsequent commands use the upgraded 2026.9.8 host.
+  oc_predecessor "$r" plugins list --json | node -e 'let s="";process.stdin.on("data",d=>s+=d).on("end",()=>{const x=JSON.parse(s);const p=(x.plugins||[]).filter(p=>p.id==="training");if(p.length!==1||p[0].version!==process.argv[1]||p[0].status!=="disabled")process.exit(1)})' "$PREDECESSOR_VERSION"
+  node - "$r/state/openclaw.json" "$db" <<'NODE'
+const fs=require('fs'),c=JSON.parse(fs.readFileSync(process.argv[2],'utf8')),p=c?.plugins?.entries?.training;
+if(!p||p.enabled!==false||p.config?.databasePath!==process.argv[3])process.exit(1);
+NODE
   node "$ROOT/deploy-support.mjs" workspace-exact "$r/state/workspace-training" "$ROOT/release.json" predecessor >/dev/null
   assert_no_training_agent_or_binding "$r"
   [ ! -e "$db" ] || fail "predecessor staging created Training DB"
