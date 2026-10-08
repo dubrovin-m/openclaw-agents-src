@@ -193,7 +193,11 @@ jobs:
           task['shared_contacts']['sqlite_schema']=contacts['sqlite_schema']
           write('agents/tasks/release.json',task)
           PY_FINISH
-          git add -A -- agents/tasks/plugins/taskctl agents/tasks/artifacts agents/tasks/release.json shared/contacts/plugin shared/contacts/artifacts shared/contacts/release.json agents/training/plugin agents/training/artifacts agents/training/release.json
+          git add -u -- agents/tasks/plugins/taskctl agents/tasks/artifacts agents/tasks/release.json shared/contacts/plugin shared/contacts/artifacts shared/contacts/release.json agents/training/plugin agents/training/artifacts agents/training/release.json
+          git add -f -- agents/tasks/plugins/taskctl/dist shared/contacts/plugin/dist agents/training/plugin/dist
+          git add -f -- agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.32.tgz agents/tasks/artifacts/openclaw-plugin-taskctl-0.4.32.sha256
+          git add -f -- shared/contacts/artifacts/openclaw-plugin-contacts-0.1.8.tgz shared/contacts/artifacts/openclaw-plugin-contacts-0.1.8.sha256
+          git add -f -- agents/training/artifacts/openclaw-plugin-training-0.1.3.tgz agents/training/artifacts/openclaw-plugin-training-0.1.3.sha256
           python3 - <<'PY_ALLOWED'
           
           import subprocess,sys
