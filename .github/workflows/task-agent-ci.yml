@@ -115,6 +115,10 @@ jobs:
           bash -n agents/tasks/recovery/backup.sh
           bash -n agents/tasks/recovery/install.sh
           bash -n agents/tasks/recovery/tests/backup.sh
+          bash -n shared/contacts/recovery/backup.sh
+          bash -n shared/contacts/recovery/install.sh
+          bash -n shared/contacts/recovery/restore.sh
+          bash -n shared/contacts/recovery/tests/backup.sh
           bash -n agents/tasks/tests/batch6.sh
           bash -n agents/tasks/tests/health-readonly.sh
           bash -n agents/tasks/tests/compatibility-window.sh
@@ -305,6 +309,10 @@ jobs:
           bash -n agents/tasks/recovery/backup.sh
           bash -n agents/tasks/recovery/install.sh
           bash -n agents/tasks/recovery/tests/backup.sh
+          bash -n shared/contacts/recovery/backup.sh
+          bash -n shared/contacts/recovery/install.sh
+          bash -n shared/contacts/recovery/restore.sh
+          bash -n shared/contacts/recovery/tests/backup.sh
           bash -n agents/tasks/tests/batch6.sh
           bash -n agents/tasks/tests/health-readonly.sh
           bash -n agents/tasks/tests/compatibility-window.sh
@@ -320,6 +328,7 @@ jobs:
           bash -n agents/tasks/tests/deadline-governance.sh
           node --test agents/tasks/tests/deploy-contacts-lineage.test.mjs
           timeout 180s bash agents/tasks/recovery/tests/backup.sh
+          timeout 180s bash shared/contacts/recovery/tests/backup.sh
           timeout 120s bash agents/tasks/tests/smoke.sh agents/tasks/taskctl
           timeout 120s bash agents/tasks/tests/health-readonly.sh agents/tasks/taskctl
           timeout 120s bash agents/tasks/tests/compatibility-window.sh agents/tasks/taskctl
