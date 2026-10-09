@@ -61,7 +61,7 @@ create_db "$GOOD_DB" 0
 run_backup "$GOOD_DB" "$TEST_ROOT/home" "$TEST_ROOT/uploads" "$TEST_ROOT/curl.log" >/dev/null
 version=$(node -e 'const s=require(process.argv[1]);if(s.last_result!=="PASS"||s.sqlite_schema!==5)process.exit(1);process.stdout.write(s.last_success_package_version)' "$TEST_ROOT/home/state/nexus-recovery/contacts-independent-backup.json")
 [[ -n "$version" ]]
-[[ -s "$TEST_ROOT/uploads/contactss.sqlite3.age" && -s "$TEST_ROOT/uploads/manifest.json" ]]
+[[ -s "$TEST_ROOT/uploads/contacts.sqlite3.age" && -s "$TEST_ROOT/uploads/manifest.json" ]]
 node -e 'const m=require(process.argv[1]);if(m.class!=="contacts-sqlite"||m.validation.sqlite_schema!==5||m.validation.integrity_check!=="ok"||m.validation.foreign_key_violations!==0)process.exit(1)' "$TEST_ROOT/uploads/manifest.json"
 ! grep -q 'synthetic-secret-token' "$TEST_ROOT/curl.log"
 [[ $(find /tmp -maxdepth 1 -name 'nexus-contacts-recovery.*' | wc -l) -eq 0 ]]
