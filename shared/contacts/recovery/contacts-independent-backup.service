@@ -1,0 +1,14 @@
+[Unit]
+Description=Shared Contacts independent recovery backup
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+EnvironmentFile=%h/.config/nexus-recovery/contacts-backup.env
+ExecStart=%h/.local/lib/nexus-recovery/contacts-independent-backup.sh
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectControlGroups=true
+ProtectKernelTunables=true
