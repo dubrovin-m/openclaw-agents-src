@@ -118,7 +118,7 @@ set -e
 
 # Exercise the actual Contacts schema, not only a generic SQLite fixture.
 REAL_DB="$TEST_ROOT/real-contacts.sqlite3"
-CONTACTCTL="$ROOT/../../contactctl"
+CONTACTCTL="$ROOT/../contactctl"
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$REAL_DB" "$CONTACTCTL" init >/dev/null
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$REAL_DB" CONTACTCTL_PAYLOAD='{"operation_key":"test-create","display_name":"Synthetic Person"}' "$CONTACTCTL" create >/dev/null
 CONTACTCTL_ALLOW_DB_OVERRIDE=1 CONTACTCTL_DB="$REAL_DB" CONTACTCTL_PAYLOAD='{"operation_key":"test-group","display_name":"Synthetic Group"}' "$CONTACTCTL" group_create >/dev/null
