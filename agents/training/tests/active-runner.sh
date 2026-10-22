@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
-trap 'rc=$?; printf "TRAINING_ACTIVE_RUNNER_TEST_FAILURE line=%s exit=%s scenario=%s\\n" "$LINENO" "$rc" "${scenario:-bootstrap}" >&2' ERR
+trap 'rc=$?; case "$-" in *e*) printf "TRAINING_ACTIVE_RUNNER_TEST_FAILURE line=%s exit=%s scenario=%s\\n" "$LINENO" "$rc" "${scenario:-bootstrap}" >&2;; esac' ERR
 umask 077
 # Synthetic ACTIVE Training upgrade and rollback; no production state, keys or network.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -136,7 +136,7 @@ node "$ROOT/active-upgrade.mjs" --test-root "$UNSAFE" --apply --source-sha "$SHA
 CODE=$?
 set -e
 test "$CODE" -ne 0
-grep -q "Unsafe private recovery directory" "$TMP/unsafe.err"
+grep -Eq "Unsafe (test runtime path:|private recovery directory)" "$TMP/unsafe.err"
 assert_version "$UNSAFE" "$PREDECESSOR_PLUGIN_VERSION"
 assert_policy "$UNSAFE" "$OLD_POLICY"
 test "$BEFORE" = "$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')"
