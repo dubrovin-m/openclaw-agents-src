@@ -1,5 +1,6 @@
 #!/usr/bin/env bash
 set -euo pipefail
+trap 'rc=$?; printf "TRAINING_ACTIVE_RUNNER_TEST_FAILURE line=%s exit=%s scenario=%s\\n" "$LINENO" "$rc" "${scenario:-bootstrap}" >&2' ERR
 umask 077
 # Synthetic ACTIVE Training upgrade and rollback; no production state, keys or network.
 ROOT=$(cd "$(dirname "$0")/.." && pwd)
@@ -85,11 +86,17 @@ function strip(v){
       c.plugins[section].training=null;
   return c;
 }
-if(JSON.stringify(strip(before))!==JSON.stringify(strip(after)))process.exit(2);
+if(JSON.stringify(strip(before))!==JSON.stringify(strip(after))){
+  const a=strip(before),b=strip(after);
+  const keys=[...new Set([...Object.keys(a),...Object.keys(b)])].filter(k=>JSON.stringify(a[k])!==JSON.stringify(b[k]));
+  console.error('UNRELATED_CONFIG_DRIFT_CATEGORIES',keys.join(','));
+  process.exit(2);
+}
 if(!JSON.stringify(after).includes('synthetic-never-used-test-only'))process.exit(2);
 NODE
 }
 for scenario in success after-config after-workspace; do
+  echo "QUALIFY_SCENARIO_START $scenario"
   R="$TMP/$scenario"
   init_root "$R"
   AGENT_ID_SHA=$(sha256sum "$R/state/workspace-training/IDENTITY.md" | awk '{print $1}')
@@ -119,6 +126,7 @@ for scenario in success after-config after-workspace; do
   assert_unchanged_unrelated "$TMP/$scenario.before.json" "$R/state/openclaw.json"
 done
 # Tampered local recovery path must refuse before any plugin/config/Store write.
+echo "QUALIFY_SCENARIO_START unsafe-recovery"
 UNSAFE="$TMP/unsafe-recovery-path"
 init_root "$UNSAFE"
 BEFORE=$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')
@@ -134,6 +142,7 @@ assert_policy "$UNSAFE" "$OLD_POLICY"
 test "$BEFORE" = "$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')"
 # The disposable test-root guard must refuse symlinked home/state children
 # even when the outer root itself is a safe directory.
+echo "QUALIFY_SCENARIO_START unsafe-children"
 for child in home state; do
   CHILD_ROOT="$TMP/unsafe-$child-child"
   init_root "$CHILD_ROOT"
@@ -153,6 +162,7 @@ for child in home state; do
 done
 # A nested symlink must never permit test-root escape into another workspace,
 # even when the top-level test root and home/state are genuine directories.
+echo "QUALIFY_SCENARIO_START unsafe-nested"
 for child in workspace-training data; do
   NESTED="$TMP/unsafe-nested-$child"
   init_root "$NESTED"
@@ -169,6 +179,7 @@ for child in workspace-training data; do
   assert_version "$NESTED" "$PREDECESSOR_PLUGIN_VERSION"
 done
 # An unproven accepted plugin operation must block automatic rollback/retry.
+echo "QUALIFY_SCENARIO_START unknown-outcome"
 UNKNOWN="$TMP/unknown-external-outcome"
 init_root "$UNKNOWN"
 STORE_BEFORE=$(sha256sum "$UNKNOWN/state/data/training/training.sqlite3" | awk '{print $1}')
