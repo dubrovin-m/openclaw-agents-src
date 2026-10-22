@@ -121,6 +121,12 @@ jobs:
           OPENCLAW_BIN="$RUNNER_TEMP/openclaw-training-deploy-host/node_modules/.bin/openclaw" \
           bash agents/training/tests/active-gateway-upgrade.sh
 
+      - name: Qualify guarded active Training upgrade runner and rollback
+        run: |
+          set -euo pipefail
+          OPENCLAW_BIN="$RUNNER_TEMP/openclaw-training-deploy-host/node_modules/.bin/openclaw" \
+          bash agents/training/tests/active-runner.sh
+
       - name: Qualify normalized Training migration
         working-directory: agents/training/plugin
         run: |
