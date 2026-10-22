@@ -1022,13 +1022,13 @@ function validateLoadIndependent(
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
     .slice(0, 5).sort((a, b) => a - b);
   const median = prior.length ? prior[Math.floor(prior.length / 2)]! : null;
-  const references = [median, progression.candidate_load_kg, progression.policy.initial_load_kg]
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
-  // A saved prescription is secondary evidence, never a substitute for
-  // independent progression/history when those are available.
-  if (!references.length && prescribedLoad != null && prescribedLoad > 0 && Number.isFinite(prescribedLoad)) {
-    references.push(prescribedLoad);
-  }
+  // Prefer the most recent independent comparable work. A stale initial load
+  // must not override a valid current progression established through history.
+  const reference = [median, progression.candidate_load_kg, progression.policy.initial_load_kg]
+    .find((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  // Persisted prescription is a last resort, never an independent baseline.
+  const baseline = reference ??
+    (prescribedLoad != null && Number.isFinite(prescribedLoad) && prescribedLoad > 0 ? prescribedLoad : null);
   const maximumByMode: Record<string, number> = {
     TOTAL_EXTERNAL: 400,
     PER_HAND: 120,
@@ -1038,10 +1038,10 @@ function validateLoadIndependent(
     MACHINE_DISPLAYED: 500,
   };
   const excessive = load > (maximumByMode[evidence.load_mode] ?? 400) ||
-    references.some((reference) =>
-      load >= Math.max(reference * 2.5, reference + 40) ||
-      (reference >= 20 && load <= reference / 5 && reference - load >= 30)
-    );
+    (baseline !== null && (
+      load >= Math.max(baseline * 2.5, baseline + 40) ||
+      (baseline >= 20 && load <= baseline / 5 && baseline - load >= 30)
+    ));
   if (!excessive) return;
   const approvals = all<{details_json:string}>(db,
     `SELECT payload_json AS details_json FROM training_events
