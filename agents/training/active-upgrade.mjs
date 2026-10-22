@@ -179,6 +179,13 @@ const recoveryDir = path.join(recoveryBase,sourceSha.slice(0,12)+'-'+process.pid
 let mutated = false;
 let done = false;
 let backupCreated = false;
+let externalMutationUncertain = false;
+function invokeAcceptedMutation(fn) {
+  externalMutationUncertain = true;
+  const result = fn();
+  externalMutationUncertain = false;
+  return result;
+}
 const oldDbHash = hashFile(dbFile);
 const oldIdentityHash = hashFile(path.join(workspace,'IDENTITY.md'));
 const resultFile = path.join(recoveryDir,'result.json');
@@ -229,16 +236,20 @@ try {
   backupCreated=true;
   writeResult('IN_PROGRESS','PREFLIGHT','Backup staged; upgrade not yet started');
   mutated=true;
-  oc('plugins','install','--force','--no-enable','--accept-capabilities',path.join(here,release.plugin.artifact));
+  invokeAcceptedMutation(() => oc('plugins','install','--force','--no-enable','--accept-capabilities',path.join(here,release.plugin.artifact)));
+  if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_UNKNOWN_STAGE === 'after-install') {
+    externalMutationUncertain = true; // synthetic lost acceptance response
+    die('Synthetic unproven plugin-install outcome');
+  }
   assertPlugin(release.plugin.version,release.plugin.runtime_entry_sha256);
-  exec(host,['config','patch','--stdin'],toolsPatch(old,tools)+'\n');
+  invokeAcceptedMutation(() => exec(host,['config','patch','--stdin'],toolsPatch(old,tools)+'\n'));
   oc('config','validate');
   if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE === 'after-config') die('Synthetic after-config failure');
   atomicCopy(targetAgentsFile,agentsFile);
   if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE === 'after-workspace') die('Synthetic after-workspace failure');
   const after=inspect('target',tools);
   preserveBoundaries(old,after);
-  gatewayReload();
+  invokeAcceptedMutation(() => gatewayReload());
   writeResult('SUCCESS','COMPLETE','Training 0.1.7 active with owner-only tools and preserved Store');
   done=true;
   // Config backup contains possible secrets; do not retain after proven success.
@@ -247,8 +258,10 @@ try {
   fs.rmdirSync(lock);
   process.stdout.write('TRAINING_ACTIVE_UPGRADE_PASS source='+sourceSha+' target='+release.plugin.version+'\n');
 } catch(error) {
-  let recoveryError=null;
-  if (backupCreated && mutated) {
+  // A CLI failure after an externally admitted mutation may be an unknown
+  // outcome; never race it by starting an automatic compensating mutation.
+  let recoveryError=externalMutationUncertain ? new Error('External mutation outcome unproven') : null;
+  if (backupCreated && mutated && !externalMutationUncertain) {
     try {
       oc('plugins','install','--force','--no-enable','--accept-capabilities',path.join(here,predecessor.plugin.artifact));
       exec(host,['config','patch','--stdin'],toolsPatch(readJson(path.join(recoveryDir,'config.before')),historicalTools)+'\n');
