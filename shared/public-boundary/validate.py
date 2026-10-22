@@ -44,7 +44,7 @@ FORBIDDEN = [
     ),
     (
         # Generic control-issue assignments must not include live numeric values.
-        re.compile(r"\b(?:CONTROL_ISSUE|PRODUCTION_CONTROL_ISSUE)\s*[:=]\s*['\\"]?\d+\b", re.IGNORECASE),
+        re.compile(r"\b(?:CONTROL_ISSUE|PRODUCTION_CONTROL_ISSUE)\s*[:=]\s*['\x22]?\d+\b", re.IGNORECASE),
         "concrete control issue binding",
     ),
     (
