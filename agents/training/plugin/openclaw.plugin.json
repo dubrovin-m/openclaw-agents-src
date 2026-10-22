@@ -2,7 +2,7 @@
   "id": "training",
   "name": "Training",
   "description": "Owner-scoped deterministic Training Store and session execution tools.",
-  "version": "0.1.3",
+  "version": "0.1.7",
   "configSchema": {
     "type": "object",
     "required": [
@@ -50,7 +50,6 @@
       "training_learning_get",
       "training_learning_upsert",
       "training_program_change_propose",
-      "training_program_change_apply",
       "training_session_void"
     ]
   },
@@ -137,9 +136,6 @@
       "optional": true
     },
     "training_program_change_propose": {
-      "optional": true
-    },
-    "training_program_change_apply": {
       "optional": true
     },
     "training_session_void": {

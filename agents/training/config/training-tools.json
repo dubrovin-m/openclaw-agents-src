@@ -30,7 +30,6 @@
     "training_learning_get",
     "training_learning_upsert",
     "training_program_change_propose",
-    "training_program_change_apply",
     "training_session_void"
   ],
   "deny": [

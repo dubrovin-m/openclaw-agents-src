@@ -4,7 +4,9 @@ import path from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import {
   abandonSession,
+  approveAndApplyProgramChange,
   applyApprovedProgramChange,
+  confirmExceptionalLoad,
   completeConditioning,
   completeExercise,
   correctSetResult,
@@ -688,7 +690,9 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect((db.prepare("SELECT program_version_id FROM program_versions WHERE status='ACTIVE'").get() as any)
         .program_version_id).toBe("ver_test");
 
-      const applied: any = applyApprovedProgramChange(db, proposal.proposal_id, "USER");
+      expect(() => applyApprovedProgramChange(db, proposal.proposal_id, "USER"))
+        .toThrow(/independently verified owner approval/);
+      const applied: any = approveAndApplyProgramChange(db, proposal.proposal_id, proposal.approval_fingerprint);
       expect(applied.active_program.version_number).toBe(2);
       expect(getRecommendation(db).recommendation?.name).toBe("Strength A");
       expect(getRecommendation(db).active_program?.cycle_number).toBe(1);
@@ -714,6 +718,54 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     }
   });
 
+  it("TRA-PROG-007/008: unapproved and mismatched proposals cannot activate a version", () => {
+    const db = fixture();
+    try {
+      const first: any = proposeProgramChange(db, {
+        change_type: "UPDATE_EXERCISE_TARGETS",
+        proposal: { template_exercise_id: "te_a", target_sets: 3 },
+        rationale: "model suggestion",
+      });
+      const second: any = proposeProgramChange(db, {
+        change_type: "UPDATE_EXERCISE_TARGETS",
+        proposal: { template_exercise_id: "te_a", target_sets: 2 },
+        rationale: "different suggestion",
+      });
+      expect(() => applyApprovedProgramChange(db, first.proposal_id, "USER"))
+        .toThrow(/independently verified/);
+      expect(() => approveAndApplyProgramChange(db, second.proposal_id, first.approval_fingerprint))
+        .toThrow(/fingerprint/);
+      db.prepare("UPDATE program_change_proposals SET proposal_json=? WHERE proposal_id=?")
+        .run(JSON.stringify({ template_exercise_id: "te_a", target_sets: 5 }), first.proposal_id);
+      expect(() => approveAndApplyProgramChange(db, first.proposal_id, first.approval_fingerprint))
+        .toThrow(/fingerprint/);
+      expect((db.prepare("SELECT count(*) n FROM program_versions").get() as any).n).toBe(1);
+      expect((db.prepare("SELECT program_version_id FROM program_versions WHERE status='ACTIVE'")
+        .get() as any).program_version_id).toBe("ver_test");
+      expect((db.prepare("SELECT count(*) n FROM program_change_proposals WHERE status='APPROVED' OR status='APPLIED'")
+        .get() as any).n).toBe(0);
+    } finally { db.close(); }
+  });
+
+  it("TRA-PROG-003/008: exact owner command applies once; repeated command cannot duplicate the version", () => {
+    const db = fixture();
+    try {
+      const proposal: any = proposeProgramChange(db, {
+        change_type: "UPDATE_EXERCISE_TARGETS",
+        proposal: { template_exercise_id: "te_a", target_sets: 3 },
+        rationale: "direct owner command",
+        created_by: "USER",
+      });
+      const first: any = approveAndApplyProgramChange(db, proposal.proposal_id, proposal.approval_fingerprint);
+      expect(first.replayed).toBe(false);
+      const replay: any = approveAndApplyProgramChange(db, proposal.proposal_id, proposal.approval_fingerprint);
+      expect(replay.replayed).toBe(true);
+      expect((db.prepare("SELECT count(*) n FROM program_versions").get() as any).n).toBe(2);
+      expect(() => approveAndApplyProgramChange(db, proposal.proposal_id, "0000000000000000"))
+        .toThrow(/fingerprint/);
+    } finally { db.close(); }
+  });
+
   it("TRA-PROG-005: program version cannot change while a session is open", () => {
     const db = fixture();
     try {
@@ -726,8 +778,10 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
         timezone_at_start: "Europe/Moscow",
         local_date: "2026-10-06",
       });
-      expect(() => applyApprovedProgramChange(db, proposal.proposal_id, "USER"))
+      expect(() => approveAndApplyProgramChange(db, proposal.proposal_id, proposal.approval_fingerprint))
         .toThrow(/while a session is open/);
+      expect((db.prepare("SELECT status FROM program_change_proposals WHERE proposal_id=?")
+        .get(proposal.proposal_id) as any).status).toBe("PENDING");
       expect((db.prepare("SELECT count(*) n FROM program_versions").get() as any).n).toBe(1);
     } finally {
       db.close();
@@ -1061,6 +1115,180 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("TRA-VAL-009: anomalous prescription is rejected before any set, event, or exercise-status mutation", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, { timezone_at_start: "Europe/Moscow", local_date: "2026-10-06" });
+      const id = started.session.exercises[0].session_exercise_id;
+      expect(() => prescribeExercise(db, id, fourSets(700))).toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?").get(id) as any).n).toBe(0);
+      expect((db.prepare("SELECT status FROM session_exercises WHERE session_exercise_id=?").get(id) as any).status).toBe("PENDING");
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='EXERCISE_PRESCRIBED'")
+        .get() as any).n).toBe(0);
+      const permitted: any = confirmExceptionalLoad(db, id, 700);
+      expect(permitted.replayed).toBe(false);
+      expect(confirmExceptionalLoad(db, id, 700).replayed).toBe(true);
+      prescribeExercise(db, id, fourSets(700));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE actual_load_kg=700 AND status='COMPLETED'")
+        .get() as any).n).toBe(4);
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
+        .get() as any).n).toBe(1);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-010: confirmed exceptional load does not transfer across exercise substitution", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      confirmExceptionalLoad(db, id, 700);
+      substituteExercise(db, id, "ex_b", "owner substituted exercise");
+      expect(() => prescribeExercise(db, id, fourSets(700))).toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?")
+        .get(id) as any).n).toBe(0);
+      confirmExceptionalLoad(db, id, 700);
+      prescribeExercise(db, id, fourSets(700));
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
+        .get() as any).n).toBe(2);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-010: legacy anomalous prescription cannot launder load through AS_PRESCRIBED", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, { timezone_at_start: "Europe/Moscow", local_date: "2026-10-06" });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      db.prepare("UPDATE session_sets SET target_load_kg=700 WHERE session_exercise_id=?")
+        .run(id);
+      expect(() => completeExercise(db, id, "AS_PRESCRIBED")).toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=? AND status='COMPLETED'")
+        .get(id) as any).n).toBe(0);
+      expect((db.prepare("SELECT status FROM session_exercises WHERE session_exercise_id=?")
+        .get(id) as any).status).toBe("ACTIVE");
+      confirmExceptionalLoad(db, id, 700);
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=? AND actual_load_kg=700")
+        .get(id) as any).n).toBe(4);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-008/010: suspicious post-completion corrections require exact owner confirmation", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, { timezone_at_start: "Europe/Moscow", local_date: "2026-10-06" });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      const result: any = completeExercise(db, id, "AS_PRESCRIBED");
+      finishSession(db, started.session.training_session_id);
+      const setId = result.exercise.sets[0].session_set_id;
+      expect(() => correctSetResult(db, setId, { load_kg: 700 }, "owner corrected"))
+        .toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM data_corrections").get() as any).n).toBe(0);
+      confirmExceptionalLoad(db, id, 700);
+      const corrected: any = correctSetResult(db, setId, { load_kg: 700 }, "owner confirmed exact value");
+      expect(corrected.replayed).toBe(false);
+      expect((db.prepare("SELECT actual_load_kg FROM session_sets WHERE session_set_id=?")
+        .get(setId) as any).actual_load_kg).toBe(700);
+      expect((db.prepare("SELECT count(*) n FROM data_corrections").get() as any).n).toBe(1);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-009: established comparable history supersedes stale initial weight", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE program_versions SET progression_policy_json=? WHERE program_version_id='ver_test'")
+        .run(JSON.stringify({ initial_load_kg: 20 }));
+      const first: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-05",
+      });
+      const firstId = first.session.exercises[0].session_exercise_id;
+      // The first 70 kg exposure is exceptional relative to the 20 kg initial policy.
+      confirmExceptionalLoad(db, firstId, 70);
+      prescribeExercise(db, firstId, fourSets(70));
+      completeExercise(db, firstId, "AS_PRESCRIBED");
+      finishSession(db, first.session.training_session_id);
+
+      const repeat: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-06",
+      });
+      const id = repeat.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db, id);
+      expect(candidate.candidate_load_kg).toBe(70);
+      expect(candidate.policy.initial_load_kg).toBe(20);
+      // The approved first exposure established durable comparable history.
+      // A normal replay of that weight must not need a second exception.
+      prescribeExercise(db, id, fourSets(70));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
+        .get() as any).n).toBe(1);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-009: zero assistance progression remains valid despite obsolete initial policy", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE exercises SET load_mode='ASSISTANCE',load_progression_direction='LOWER_IS_HARDER' WHERE exercise_id='ex_a'")
+        .run();
+      db.prepare("UPDATE program_versions SET progression_policy_json=? WHERE program_version_id='ver_test'")
+        .run(JSON.stringify({
+          kind: "DOUBLE_SUCCESS_THEN_INCREMENT",
+          initial_load_kg: 40,
+          increment_kg: 5,
+          successful_exposures_required: 2,
+        }));
+      const loads = [10, 10, 5, 5, 0, 0, 0];
+      for (const [i, load] of loads.entries()) {
+        const date = `2026-10-${String(i + 1).padStart(2, "0")}`;
+        const started: any = startProgramSession(db, {
+          selected_program_slot_id: "slot_a", timezone_at_start: "Europe/Moscow", local_date: date,
+        });
+        const id = started.session.exercises[0].session_exercise_id;
+        const candidate = getProgressionCandidate(db, id);
+        if (i >= 2) expect(candidate.candidate_load_kg).toBe(load);
+        // Neither zero candidate nor zero completed history may fall back to the stale 40 kg initial load.
+        prescribeExercise(db, id, fourSets(load));
+        completeExercise(db, id, "AS_PRESCRIBED");
+        finishSession(db, started.session.training_session_id);
+      }
+      const started: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a", timezone_at_start: "Europe/Moscow", local_date: "2026-10-08",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db, id);
+      expect(candidate.candidate_load_kg).toBe(0);
+      expect(candidate.recent_exposures.slice(0, 3).map((x: any) => x.load_kg)).toEqual([0, 0, 0]);
+      expect(() => prescribeExercise(db, id, fourSets(100))).toThrow(/SUSPICIOUS load/);
+      prescribeExercise(db, id, fourSets(0));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) AS n FROM session_sets WHERE session_exercise_id=? AND actual_load_kg=0")
+        .get(id) as any).n).toBe(4);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-004/009: historical 70 kg on the same equipment rejects 250 kg but accepts normal progression", () => {
+    const db = fixture();
+    try {
+      const prior: any = startProgramSession(db, { timezone_at_start: "Europe/Moscow", local_date: "2026-10-05" });
+      const priorId = prior.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, priorId, fourSets(70));
+      completeExercise(db, priorId, "AS_PRESCRIBED");
+      finishSession(db, prior.session.training_session_id);
+      const repeat: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a", timezone_at_start: "Europe/Moscow", local_date: "2026-10-06",
+      });
+      const id = repeat.session.exercises[0].session_exercise_id;
+      expect(() => prescribeExercise(db, id, fourSets(250))).toThrow(/SUSPICIOUS load/);
+      prescribeExercise(db, id, fourSets(72.5));
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?")
+        .get(id) as any).n).toBe(4);
+    } finally { db.close(); }
   });
 
   it("TRA-STR-006/008 and TRA-LIFE-003: defer/skip and completed-partial advance cursor explicitly", () => {
