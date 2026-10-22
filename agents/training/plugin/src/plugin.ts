@@ -724,7 +724,7 @@ entry.register = (api) => {
     requireAuth: true,
     exposeSenderIsOwner: true,
     handler: async (ctx) => {
-      const fields = ctx.args?.trim().split(/\\s+/) ?? [];
+      const fields = ctx.args?.trim().split(/\s+/) ?? [];
       if (fields.length !== 2 || !/^[a-zA-Z0-9_-]{1,100}$/.test(fields[0] ?? "") ||
           !/^[0-9a-f]{16}$/.test(fields[1] ?? "")) {
         return { text: "Usage: /trainingapprove <proposal_id> <16-character fingerprint>" };
@@ -751,9 +751,9 @@ entry.register = (api) => {
     requireAuth: true,
     exposeSenderIsOwner: true,
     handler: async (ctx) => {
-      const fields = ctx.args?.trim().split(/\\s+/) ?? [];
+      const fields = ctx.args?.trim().split(/\s+/) ?? [];
       if (fields.length !== 2 || !/^[a-zA-Z0-9_-]{1,100}$/.test(fields[0] ?? "") ||
-          !/^(?:\\d{1,4})(?:\\.\\d{1,3})?$/.test(fields[1] ?? "")) {
+          !/^(?:\d{1,4})(?:\.\d{1,3})?$/.test(fields[1] ?? "")) {
         return { text: "Usage: /trainingload <session_exercise_id> <load_kg>" };
       }
       try {
