@@ -996,6 +996,7 @@ function samePrescription(existing: Row[], requested: PrescribedSet[]) {
 }
 
 type ExerciseLoadEvidence = {
+  exercise_id: string;
   load_mode: string;
   equipment_instance_id: SQLInputValue;
 };
@@ -1005,7 +1006,7 @@ function validateLoadIndependent(
   db: DatabaseSync, sessionExerciseId: string, load: number | null, prescribedLoad?: number | null
 ) {
   const evidence = one<ExerciseLoadEvidence>(db,
-    `SELECT e.load_mode,se.equipment_instance_id
+    `SELECT se.exercise_id,e.load_mode,se.equipment_instance_id
        FROM session_exercises se JOIN exercises e ON e.exercise_id=se.exercise_id
       WHERE se.session_exercise_id=?`, sessionExerciseId);
   if (!evidence) throw new Error("Exercise load semantics are unavailable");
@@ -1047,8 +1048,12 @@ function validateLoadIndependent(
       WHERE event_type='LOAD_EXCEPTION_APPROVED'
         AND aggregate_type='session_exercise' AND aggregate_id=?`, sessionExerciseId);
   const approved = approvals.some(({ details_json }) => {
-    const approval = JSON.parse(details_json) as { load_kg: number; equipment_instance_id: SQLInputValue };
-    return approval.load_kg === load && approval.equipment_instance_id === evidence.equipment_instance_id;
+    const approval = JSON.parse(details_json) as {
+      load_kg: number; equipment_instance_id: SQLInputValue; exercise_id?: string
+    };
+    return approval.load_kg === load &&
+      approval.exercise_id === evidence.exercise_id &&
+      approval.equipment_instance_id === evidence.equipment_instance_id;
   });
   if (!approved) throw new Error(`SUSPICIOUS load ${load}; independent progression/history check requires owner confirmation`);
 }
@@ -1056,9 +1061,12 @@ function validateLoadIndependent(
 /** Only the owner-authenticated native command invokes this bounded exception path. */
 export function confirmExceptionalLoad(db: DatabaseSync, sessionExerciseId: string, load: number) {
   return withTransaction(db, () => {
-    const exercise = one<{status:string; session_status:string; load_mode:string; equipment_instance_id:SQLInputValue}>(
+    const exercise = one<{
+      status:string; session_status:string; exercise_id:string;
+      load_mode:string; equipment_instance_id:SQLInputValue
+    }>(
       db,
-      `SELECT se.status,ts.status AS session_status,e.load_mode,se.equipment_instance_id
+      `SELECT se.status,ts.status AS session_status,se.exercise_id,e.load_mode,se.equipment_instance_id
          FROM session_exercises se
          JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
          JOIN exercises e ON e.exercise_id=se.exercise_id
@@ -1072,7 +1080,11 @@ export function confirmExceptionalLoad(db: DatabaseSync, sessionExerciseId: stri
         exercise.load_mode === "BODYWEIGHT" || exercise.load_mode === "NONE") {
       throw new Error("INVALID exceptional load");
     }
-    const details = JSON.stringify({ load_kg: load, equipment_instance_id: exercise.equipment_instance_id });
+    const details = JSON.stringify({
+      exercise_id: exercise.exercise_id,
+      load_kg: load,
+      equipment_instance_id: exercise.equipment_instance_id,
+    });
     const prior = all<{details_json:string}>(db,
       `SELECT payload_json AS details_json FROM training_events
         WHERE event_type='LOAD_EXCEPTION_APPROVED' AND aggregate_type='session_exercise' AND aggregate_id=?`,
