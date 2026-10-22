@@ -146,8 +146,13 @@ function gatewayReady() {
 function gatewayReload() {
   if (testRoot) return; // separately covered by disposable live-Gateway E2E
   const response = JSON.parse(oc('plugins','reload','training','--wait','--json'));
-  if (response?.restartRequired === true || !JSON.stringify(response).includes('training')) {
-    die('Training Gateway reload did not prove live activation');
+  const applied = response?.runtime;
+  if (response?.restartRequired !== false ||
+      !Array.isArray(response?.pluginIds) || !response.pluginIds.includes('training') ||
+      !applied || typeof applied.operationId !== 'string' || !applied.operationId ||
+      !Number.isSafeInteger(applied.generation) || applied.generation < 1 ||
+      !Array.isArray(applied.pluginIds) || !applied.pluginIds.includes('training')) {
+    die('Training Gateway reload did not return an accepted applied generation receipt');
   }
   gatewayReady();
 }
