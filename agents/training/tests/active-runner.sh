@@ -139,4 +139,43 @@ test -d "$UNKNOWN/state/.training-active-upgrade-recovery/.active.lock"
 assert_version "$UNKNOWN" "$TARGET_PLUGIN_VERSION"
 assert_policy "$UNKNOWN" "$OLD_POLICY"
 test "$STORE_BEFORE" = "$(sha256sum "$UNKNOWN/state/data/training/training.sqlite3" | awk '{print $1}')"
+# A disposable outer root is insufficient if a nested runtime directory
+# or the configuration file is a symlink. Reuse one installed fixture to keep
+# these negative checks bounded; every attempt must refuse before CLI mutation.
+NESTED_ROOT="$TMP/unsafe-nested-runtime"
+init_root "$NESTED_ROOT"
+NESTED_CONFIG_SHA=$(sha256sum "$NESTED_ROOT/state/openclaw.json" | awk '{print $1}')
+NESTED_DB_SHA=$(sha256sum "$NESTED_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')
+for relative in state/workspace-training state/data/training state/extensions/training state/openclaw.json; do
+  candidate="$NESTED_ROOT/$relative"
+  mv "$candidate" "$candidate-original"
+  ln -s "$candidate-original" "$candidate"
+  set +e
+  node "$ROOT/active-upgrade.mjs" --test-root "$NESTED_ROOT" --apply --source-sha "$SHA" >"$TMP/nested.out" 2>"$TMP/nested.err"
+  rc=$?
+  set -e
+  test "$rc" -ne 0
+  grep -q "Unsafe test runtime path:" "$TMP/nested.err"
+  test "$NESTED_CONFIG_SHA" = "$(sha256sum "$NESTED_ROOT/state/openclaw.json" | awk '{print $1}')"
+  test "$NESTED_DB_SHA" = "$(sha256sum "$NESTED_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')"
+  rm "$candidate"
+  mv "$candidate-original" "$candidate"
+done
+assert_version "$NESTED_ROOT" "$PREDECESSOR_PLUGIN_VERSION"
+# Preflight must bind the instruction file being replaced to the *effective*
+# Training agent workspace, not merely to an unrelated expected directory.
+node - "$NESTED_ROOT/state/openclaw.json" "$NESTED_ROOT/wrong-workspace" <<'NODE'
+const fs=require('fs'),p=process.argv[2],wrong=process.argv[3],c=JSON.parse(fs.readFileSync(p,'utf8'));
+const e=c.agents.entries,t=Array.isArray(e)?e.find(x=>x?.id==='training'):e.training;
+t.workspace=wrong;
+fs.writeFileSync(p,JSON.stringify(c,null,2)+'\n',{mode:0o600});
+NODE
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$NESTED_ROOT" --preflight >"$TMP/workspace.out" 2>"$TMP/workspace.err"
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -q "Training configured workspace path mismatch" "$TMP/workspace.err"
+test "$NESTED_DB_SHA" = "$(sha256sum "$NESTED_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')"
+assert_version "$NESTED_ROOT" "$PREDECESSOR_PLUGIN_VERSION"
 echo TRAINING_ACTIVE_RUNNER_TEST_PASS
