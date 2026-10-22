@@ -150,7 +150,7 @@ if (mode==='--preflight') {
   process.exit(0);
 }
 // The private recovery set is local to the runtime. It is NOT an independent backup.
-const recoveryBase = path.join(state,'backups','training-active-upgrade');
+const recoveryBase = path.join(state,'.training-active-upgrade-recovery');
 function ensurePrivateDirectory(dir) {
   if (!fs.existsSync(dir)) fs.mkdirSync(dir,{mode:0o700});
   const stat=fs.lstatSync(dir);
