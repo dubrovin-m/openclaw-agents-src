@@ -1036,9 +1036,9 @@ function validateLoadIndependent(db: DatabaseSync, sessionExerciseId: string, lo
     );
   if (!excessive) return;
   const approvals = all<{details_json:string}>(db,
-    `SELECT details_json FROM training_events
+    `SELECT payload_json AS details_json FROM training_events
       WHERE event_type='LOAD_EXCEPTION_APPROVED'
-        AND entity_type='session_exercise' AND entity_id=?`, sessionExerciseId);
+        AND aggregate_type='session_exercise' AND aggregate_id=?`, sessionExerciseId);
   const approved = approvals.some(({ details_json }) => {
     const approval = JSON.parse(details_json) as { load_kg: number; equipment_instance_id: SQLInputValue };
     return approval.load_kg === load && approval.equipment_instance_id === evidence.equipment_instance_id;
@@ -1067,8 +1067,8 @@ export function confirmExceptionalLoad(db: DatabaseSync, sessionExerciseId: stri
     }
     const details = JSON.stringify({ load_kg: load, equipment_instance_id: exercise.equipment_instance_id });
     const prior = all<{details_json:string}>(db,
-      `SELECT details_json FROM training_events
-        WHERE event_type='LOAD_EXCEPTION_APPROVED' AND entity_type='session_exercise' AND entity_id=?`,
+      `SELECT payload_json AS details_json FROM training_events
+        WHERE event_type='LOAD_EXCEPTION_APPROVED' AND aggregate_type='session_exercise' AND aggregate_id=?`,
       sessionExerciseId
     );
     if (prior.some((row) => row.details_json === details)) return { replayed: true, session_exercise_id: sessionExerciseId, load_kg: load };
