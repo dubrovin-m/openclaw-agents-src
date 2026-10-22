@@ -71,6 +71,24 @@ class PublicBoundaryTests(unittest.TestCase):
         self.add("notes.md", text)
         self.check(False, "production control issue number")
 
+    def test_synthetic_private_key_headers_are_rejected(self) -> None:
+        for prefix, suffix in (
+            ("", ""),
+            ("OPENSSH ", ""),
+            ("RSA ", ""),
+            ("EC ", ""),
+            ("PGP ", " BLOCK"),
+        ):
+            with self.subTest(prefix=prefix):
+                header = "-" * 5 + "BEGIN " + prefix + "PRIVATE KEY" + suffix + "-" * 5
+                self.add("synthetic-key.txt", header + "\nplaceholder-only\n")
+                output = self.check(False, "private key header")
+                self.assertNotIn(header, output)
+
+    def test_synthetic_numeric_control_issue_binding_is_rejected(self) -> None:
+        self.add("config.py", "CONTROL_" + "ISSUE = 424242")
+        self.check(False, "concrete control issue binding")
+
     def test_provider_credential_shape_is_rejected(self) -> None:
         secret = "sk-" + "A" * 32
         self.add("config.txt", secret)
