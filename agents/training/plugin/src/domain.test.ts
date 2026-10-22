@@ -1139,6 +1139,25 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally { db.close(); }
   });
 
+  it("TRA-VAL-010: confirmed exceptional load does not transfer across exercise substitution", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-06",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      confirmExceptionalLoad(db, id, 700);
+      substituteExercise(db, id, "ex_b", "owner substituted exercise");
+      expect(() => prescribeExercise(db, id, fourSets(700))).toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?")
+        .get(id) as any).n).toBe(0);
+      confirmExceptionalLoad(db, id, 700);
+      prescribeExercise(db, id, fourSets(700));
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
+        .get() as any).n).toBe(2);
+    } finally { db.close(); }
+  });
+
   it("TRA-VAL-010: legacy anomalous prescription cannot launder load through AS_PRESCRIBED", () => {
     const db = fixture();
     try {
