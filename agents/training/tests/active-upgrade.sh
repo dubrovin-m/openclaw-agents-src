@@ -29,7 +29,7 @@ assert_plugin() {
   oc "$host" plugins list --json | node -e '
     let s="";process.stdin.on("data",x=>s+=x).on("end",()=>{
       const p=(JSON.parse(s).plugins||[]).filter(x=>x.id==="training");
-      if(p.length!==1 || p[0].version!==process.argv[1] || p[0].enabled!==true)process.exit(2);
+      if(p.length!==1 || p[0].version!==process.argv[1] || p[0].enabled!==true || p[0].status!=="loaded")process.exit(2);
     });' "$want"
 }
 assert_training_policy() {
