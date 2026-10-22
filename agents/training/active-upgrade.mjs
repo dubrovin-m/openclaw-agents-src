@@ -33,7 +33,12 @@ if (argv.length) {
   approvedSha = argv[1];
 }
 if (mode === '--apply' && !approvedSha) die('Exact --source-sha is mandatory for apply (authorization is external)');
-const home = testRoot ? path.join(path.resolve(testRoot),'home') : os.homedir();
+// The CLI and the files we inspect must address one and the same runtime.
+const home = testRoot ? path.join(path.resolve(testRoot),'home') : os.userInfo().homedir;
+if (!testRoot) {
+  if (path.resolve(os.homedir())!==path.resolve(home)) die('Production HOME does not match the effective user');
+  if (os.userInfo().username!=='dubrovin') die('Production runner requires the registered OpenClaw user');
+}
 if (testRoot) {
   const real = fs.realpathSync(testRoot);
   const actualHome = fs.realpathSync(os.homedir());
@@ -51,6 +56,16 @@ if (testRoot) {
 }
 const state = testRoot ? path.join(path.resolve(testRoot),'state') : path.join(home,'.openclaw');
 const configFile = path.join(state,'openclaw.json');
+if (!testRoot) {
+  for (const [key, expected] of [
+    ['OPENCLAW_HOME',home],['OPENCLAW_STATE_DIR',state],['OPENCLAW_CONFIG_PATH',configFile],
+  ]) {
+    if (process.env[key] && path.resolve(process.env[key])!==path.resolve(expected)) {
+      die('Conflicting production runtime override: '+key);
+    }
+  }
+  if (process.env.OPENCLAW_PROFILE || process.env.OPENCLAW_GATEWAY_URL) die('Conflicting production profile or Gateway override');
+}
 const workspace = path.join(state,'workspace-training');
 const agentsFile = path.join(workspace,'AGENTS.md');
 const entryFile = path.join(state,'extensions/training/dist/plugin.js');
@@ -88,10 +103,10 @@ const targetToolsFile = path.join(here,'config/training-tools.json');
 const targetAgentsFile = path.join(here,'workspace/AGENTS.md');
 const helper = path.join(here,'deploy-support.mjs');
 const host = process.env.OPENCLAW_BIN || 'openclaw';
-const env = testRoot ? {
+const env = {
   ...process.env, HOME: home, OPENCLAW_HOME: home, OPENCLAW_STATE_DIR: state,
   OPENCLAW_CONFIG_PATH: configFile,
-} : process.env;
+};
 const exec = (bin, args, input) => execFileSync(bin,args,{
   env, encoding:'utf8', input, maxBuffer:4*1024*1024,
   stdio: ['pipe','pipe','pipe'], timeout:120000
@@ -144,7 +159,10 @@ function ownerRoute(c) {
 }
 function assertPlugin(version, runtimeHash) {
   const p = JSON.parse(oc('plugins','list','--json')).plugins?.filter(x=>x?.id==='training') ?? [];
-  if (p.length!==1 || p[0].version!==version || p[0].enabled!==true || p[0].status!=='loaded') die('Training plugin runtime identity mismatch');
+  const expectedRoot=path.join(state,'extensions/training');
+  if (p.length!==1 || p[0].version!==version || p[0].enabled!==true || p[0].status!=='loaded' ||
+      typeof p[0].rootDir!=='string' || path.resolve(p[0].rootDir)!==expectedRoot ||
+      fs.realpathSync(expectedRoot)!==expectedRoot) die('Training loaded plugin provenance mismatch');
   checkRegular(entryFile);
   if (hashFile(entryFile)!==runtimeHash) die('Training compiled plugin hash mismatch');
 }
@@ -240,6 +258,21 @@ function toolsPatch(base,policy) {
 }
 function preserveBoundaries(before,after) {
   if (!same(ownerRoute(before),ownerRoute(after))) die('Training Telegram owner route drift');
+  // A plugin installation and config patch must never silently change another
+  // agent, channel, provider, Gateway or non-Training plugin configuration.
+  const isolateTraining = (value) => {
+    const c=structuredClone(value);
+    const entries=c.agents?.entries;
+    if (Array.isArray(entries)) entries.find(x=>x?.id==='training').tools=null;
+    else entries.training.tools=null;
+    for (const section of ['entries','installs']) {
+      if (c.plugins?.[section] && Object.hasOwn(c.plugins[section],'training')) {
+        c.plugins[section].training=null;
+      }
+    }
+    return c;
+  };
+  if (!same(isolateTraining(before),isolateTraining(after))) die('Unrelated OpenClaw configuration changed during Training upgrade');
   const a=structuredClone(before.agents.entries);
   const b=structuredClone(after.agents.entries);
   const clearTools=(entries)=>{
