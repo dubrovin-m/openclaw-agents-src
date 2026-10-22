@@ -70,7 +70,7 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-VAL-007 | SOURCE+ACTIVATION | Corrected retry persists once after suspicious attempt left no mutation; interpreting the confirmation remains behavioral. |
 | TRA-VAL-008 | SOURCE-TESTED; RELEASE-PENDING | Correction operation validates independent load plausibility and retains before/after/reason audit evidence; suspicious changes require the native owner exception path. |
 | TRA-VAL-009 | SOURCE-TESTED; RELEASE-PENDING | Anomalous prescription rejected atomically before any session-set persistence; comparable history and absolute checks are tested. |
-| TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise, equipment and load. Live command context remains unqualified. |
+| TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise identity, equipment and load, and cannot transfer after exercise substitution. Live command context remains unqualified. |
 
 ## Session lifecycle and integrity
 
