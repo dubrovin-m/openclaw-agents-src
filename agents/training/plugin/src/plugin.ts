@@ -9,7 +9,8 @@ import {
 import { jsonResult } from "openclaw/plugin-sdk/tool-results";
 import {
   abandonSession,
-  applyApprovedProgramChange,
+  approveAndApplyProgramChange,
+  confirmExceptionalLoad,
   completeConditioning,
   completeExercise,
   createConditioningPrescription,
@@ -629,7 +630,7 @@ const entry = defineToolPlugin({
     tool(ownerTool({
       name: "training_program_change_propose",
       label: "Propose training program change",
-      description: "Create an auditable bounded permanent-program change proposal without changing the active Program Version.",
+      description: "Create a pending program change; return its immutable proposal id and approval fingerprint. Only the owner may apply the exact change using /trainingapprove <proposal_id> <fingerprint>.",
       parameters: Type.Object({
         change: Type.Union([
           Type.Object({
@@ -681,17 +682,6 @@ const entry = defineToolPlugin({
         })),
     })),
     tool(ownerTool({
-      name: "training_program_change_apply",
-      label: "Apply approved training program change",
-      description: "Apply exactly one pending user-approved proposal by creating a new immutable Program Version starting from Strength A.",
-      parameters: Type.Object({
-        proposal_id: Type.String({ minLength: 1, maxLength: 100 }),
-      }, { additionalProperties: false }),
-      mutate: true,
-      execute: (params, config) =>
-        withDb(config, (db) => applyApprovedProgramChange(db, params.proposal_id, "USER")),
-    })),
-    tool(ownerTool({
       name: "training_session_void",
       label: "Void training session",
       description: "Void an erroneously created or test session so it is excluded from training analytics.",
@@ -706,5 +696,80 @@ const entry = defineToolPlugin({
     })),
   ],
 });
+
+/** Native commands are user-originated, unlike model tool invocations.
+ * The host's live owner assertion is checked just before every bounded mutation.
+ */
+const registerTools = entry.register;
+entry.register = (api) => {
+  registerTools(api);
+  const databasePath = (api.pluginConfig as TrainingConfig | undefined)?.databasePath;
+  function requireOwner(ctx: {
+    senderIsOwner?: boolean;
+    agentId?: string;
+    assertOwnerCurrent?: () => void;
+  }) {
+    if (ctx.agentId !== "training" || ctx.senderIsOwner !== true || !ctx.assertOwnerCurrent) {
+      throw new Error("Training command requires current owner authority");
+    }
+    ctx.assertOwnerCurrent();
+    if (!databasePath) throw new Error("Training database path unavailable");
+    return databasePath;
+  }
+  api.registerCommand({
+    name: "trainingapprove",
+    description: "Apply the exact proposed Training program change with its fingerprint.",
+    channels: ["telegram"],
+    acceptsArgs: true,
+    requireAuth: true,
+    exposeSenderIsOwner: true,
+    handler: async (ctx) => {
+      const fields = ctx.args?.trim().split(/\\s+/) ?? [];
+      if (fields.length !== 2 || !/^[a-zA-Z0-9_-]{1,100}$/.test(fields[0] ?? "") ||
+          !/^[0-9a-f]{16}$/.test(fields[1] ?? "")) {
+        return { text: "Usage: /trainingapprove <proposal_id> <16-character fingerprint>" };
+      }
+      try {
+        const path = requireOwner(ctx);
+        const db = openTrainingStore(path);
+        try {
+          const result = approveAndApplyProgramChange(db, fields[0]!, fields[1]!);
+          return { text: result.replayed
+            ? "This exact proposal was already applied."
+            : "Program change approved and applied; the new version starts at Strength A." };
+        } finally { db.close(); }
+      } catch (error) {
+        return { text: `Training program change rejected: ${error instanceof Error ? error.message : "unknown error"}` };
+      }
+    },
+  });
+  api.registerCommand({
+    name: "trainingload",
+    description: "Authorize one exact exceptional load for an open Training exercise.",
+    channels: ["telegram"],
+    acceptsArgs: true,
+    requireAuth: true,
+    exposeSenderIsOwner: true,
+    handler: async (ctx) => {
+      const fields = ctx.args?.trim().split(/\\s+/) ?? [];
+      if (fields.length !== 2 || !/^[a-zA-Z0-9_-]{1,100}$/.test(fields[0] ?? "") ||
+          !/^(?:\\d{1,4})(?:\\.\\d{1,3})?$/.test(fields[1] ?? "")) {
+        return { text: "Usage: /trainingload <session_exercise_id> <load_kg>" };
+      }
+      try {
+        const path = requireOwner(ctx);
+        const db = openTrainingStore(path);
+        try {
+          const result = confirmExceptionalLoad(db, fields[0]!, Number(fields[1]));
+          return { text: result.replayed
+            ? "This exact exercise load was already confirmed."
+            : "Exceptional load confirmed for this session exercise only." };
+        } finally { db.close(); }
+      } catch (error) {
+        return { text: `Exceptional load rejected: ${error instanceof Error ? error.message : "unknown error"}` };
+      }
+    },
+  });
+};
 
 export default entry;
