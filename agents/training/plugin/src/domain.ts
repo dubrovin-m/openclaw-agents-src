@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import type { DatabaseSync, SQLInputValue } from "node:sqlite";
 import { newId, nowIso, withTransaction } from "./store.js";
 
@@ -1600,6 +1601,16 @@ export type ProgramChangeType =
   | "UPDATE_EXERCISE_TARGETS"
   | "UPDATE_CONDITIONING_POLICY";
 
+/** Fingerprint the immutable proposal and its base version, not model-supplied approval text. */
+export function programChangeFingerprint(proposal: Row): string {
+  return createHash("sha256").update(JSON.stringify([
+    proposal.proposal_id,
+    proposal.base_program_version_id,
+    proposal.change_type,
+    proposal.proposal_json,
+  ])).digest("hex").slice(0, 16);
+}
+
 export function proposeProgramChange(
   db: DatabaseSync,
   params: {
@@ -1624,11 +1635,12 @@ export function proposeProgramChange(
       proposalId, active.program_version_id, params.created_by ?? "TRAINING_AGENT",
       params.change_type, JSON.stringify(params.proposal), params.rationale, now
     );
-    return one<Row>(
+    const created = one<Row>(
       db,
       "SELECT * FROM program_change_proposals WHERE proposal_id=?",
       proposalId
-    );
+    )!;
+    return { ...created, approval_fingerprint: programChangeFingerprint(created) };
   });
 }
 
@@ -1880,8 +1892,8 @@ export function applyApprovedProgramChange(
         active_program: one<Row>(db, "SELECT * FROM program_versions WHERE status='ACTIVE'"),
       };
     }
-    if (proposal.status !== "PENDING" && proposal.status !== "APPROVED") {
-      throw new Error("Program change proposal is not applicable");
+    if (proposal.status !== "APPROVED" || proposal.decision_actor !== decisionActor) {
+      throw new Error("Program change lacks independently verified owner approval");
     }
     const active = one<{program_version_id:string}>(
       db,
@@ -1934,6 +1946,32 @@ export function applyApprovedProgramChange(
       active_program: one<Row>(db, "SELECT * FROM program_versions WHERE program_version_id=?", maps.newVersionId),
       recommendation: getRecommendation(db),
     };
+  });
+}
+
+/** Called only from the host's owner-authenticated native command handler.
+ * Both the approval and version activation commit in the same transaction.
+ */
+export function approveAndApplyProgramChange(db: DatabaseSync, proposalId: string, fingerprint: string) {
+  return withTransaction(db, () => {
+    const proposal = one<Row>(
+      db, "SELECT * FROM program_change_proposals WHERE proposal_id=?", proposalId
+    );
+    if (!proposal) throw new Error("Program change proposal not found");
+    if (!/^[0-9a-f]{16}$/.test(fingerprint) || programChangeFingerprint(proposal) !== fingerprint) {
+      throw new Error("Program approval fingerprint does not match the exact proposal");
+    }
+    if (proposal.status === "APPLIED" && proposal.decision_actor === "USER") {
+      return { replayed: true, proposal, active_program: one<Row>(
+        db, "SELECT * FROM program_versions WHERE program_version_id=?", proposal.applied_program_version_id as string
+      ) };
+    }
+    if (proposal.status !== "PENDING") throw new Error("Program proposal is not pending");
+    if (getOpenSession(db)) throw new Error("Program Version cannot change while a session is open");
+    db.prepare(`UPDATE program_change_proposals
+      SET status='APPROVED',decision_actor='USER',decided_at=? WHERE proposal_id=?`)
+      .run(nowIso(), proposalId);
+    return applyApprovedProgramChange(db, proposalId, "USER");
   });
 }
 
