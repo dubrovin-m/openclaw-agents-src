@@ -1199,6 +1199,38 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally { db.close(); }
   });
 
+  it("TRA-VAL-009: established comparable history supersedes stale initial weight", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE program_versions SET progression_policy_json=? WHERE program_version_id='ver_test'")
+        .run(JSON.stringify({ initial_load_kg: 20 }));
+      const first: any = startProgramSession(db, {
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-05",
+      });
+      const firstId = first.session.exercises[0].session_exercise_id;
+      // The first 70 kg exposure is exceptional relative to the 20 kg initial policy.
+      confirmExceptionalLoad(db, firstId, 70);
+      prescribeExercise(db, firstId, fourSets(70));
+      completeExercise(db, firstId, "AS_PRESCRIBED");
+      finishSession(db, first.session.training_session_id);
+
+      const repeat: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a",
+        timezone_at_start: "Europe/Moscow", local_date: "2026-10-06",
+      });
+      const id = repeat.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db, id);
+      expect(candidate.candidate_load_kg).toBe(70);
+      expect(candidate.policy.initial_load_kg).toBe(20);
+      // The approved first exposure established durable comparable history.
+      // A normal replay of that weight must not need a second exception.
+      prescribeExercise(db, id, fourSets(70));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
+        .get() as any).n).toBe(1);
+    } finally { db.close(); }
+  });
+
   it("TRA-VAL-004/009: historical 70 kg on the same equipment rejects 250 kg but accepts normal progression", () => {
     const db = fixture();
     try {
