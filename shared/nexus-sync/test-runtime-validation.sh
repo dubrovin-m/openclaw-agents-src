@@ -47,6 +47,13 @@ fi
 checkout=$2
 shift 2
 
+if [ "${1:-}" = "remote" ] && [ -z "${2:-}" ]; then
+  printf '%s\n' 'origin'
+  if [ "$checkout" = "$TEST_ENGINEER" ] && [ "${TEST_SCENARIO:-}" = engineer_extra_remote ]; then
+    printf '%s\n' 'write-enabled'
+  fi
+  exit 0
+fi
 if [ "${1:-}" = "remote" ] && [ "${2:-}" = "get-url" ]; then
   if [ "${3:-}" = "origin" ]; then
     if [ "$checkout" = "$TEST_ENGINEER" ] && [ "${TEST_SCENARIO:-}" = engineer_remote ]; then
@@ -56,13 +63,15 @@ if [ "${1:-}" = "remote" ] && [ "${2:-}" = "get-url" ]; then
     printf '%s\n' "$TEST_REMOTE"
     exit 0
   fi
-  if [ "${3:-}" = "--push" ] && [ "${4:-}" = "origin" ]; then
+  if [ "${3:-}" = "--push" ] && [ "${4:-}" = "--all" ] && [ "${5:-}" = "origin" ]; then
     case "$checkout" in
       "$TEST_PRIMARY"|"$TEST_TASK"|"$TEST_INVESTMENTS"|"$TEST_ENGINEER")
         if [ "${TEST_SCENARIO:-baseline}" = baseline ]; then
           printf '%s\n' 'DISABLED'
         elif [ "$checkout" = "$TEST_ENGINEER" ] && [ "${TEST_SCENARIO:-}" = engineer_push ]; then
           printf '%s\n' 'ssh://git@example.invalid/write.git'
+        elif [ "$checkout" = "$TEST_ENGINEER" ] && [ "${TEST_SCENARIO:-}" = engineer_multi_push ]; then
+          printf '%s\n' 'disabled://nexus-read-only' 'ssh://git@example.invalid/write.git'
         else
           printf '%s\n' 'disabled://nexus-read-only'
         fi ;;
@@ -199,7 +208,7 @@ fi
 cp "$ROOT/nexus-sync.service.three-mirror" "$PACKAGE/nexus-sync.service.three-mirror"
 
 # Every Engineer integrity condition is enforced independently.
-for item in remote push branch dirty head; do
+for item in remote push multi_push extra_remote branch dirty head; do
   result=$(run_runtime /home/dubrovin 0 "engineer_$item")
   [ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
   printf '%s\n' "$result" | grep -F "$ENGINEER" >/dev/null
@@ -228,6 +237,15 @@ run_installer() {
 result=$(run_installer --preflight engineer_push)
 [ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
 printf '%s\n' "$result" | grep -F "Existing Nexus checkout does not have the registered disabled push path: $ENGINEER" >/dev/null
+
+# Reject a second writable push URL even when the first push URL is disabled.
+result=$(run_installer --preflight engineer_multi_push)
+[ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
+printf '%s\n' "$result" | grep -F "Existing Nexus checkout does not have the registered disabled push path: $ENGINEER" >/dev/null
+# Reject a writable alternate named remote.
+result=$(run_installer --preflight engineer_extra_remote)
+[ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
+printf '%s\n' "$result" | grep -F "Unexpected Nexus remote list: $ENGINEER" >/dev/null
 
 # Frozen predecessor is accepted only by explicit transition modes.
 cp "$PACKAGE/nexus-sync.service.three-mirror" "$UNIT_DIR/nexus-sync.service"

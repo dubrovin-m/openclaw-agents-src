@@ -75,9 +75,11 @@ check_checkout() {
     return 0
   fi
   [ -d "$checkout/.git" ] || fail "Existing Nexus path is not a Git checkout: $checkout"
+  [ "$(git -C "$checkout" remote)" = origin ] \
+    || fail "Unexpected Nexus remote list: $checkout"
   [ "$(git -C "$checkout" remote get-url origin)" = "$REMOTE" ] \
     || fail "Unexpected Nexus fetch remote: $checkout"
-  push=$(git -C "$checkout" remote get-url --push origin)
+  push=$(git -C "$checkout" remote get-url --push --all origin)
   [ "$push" = "$DISABLED_PUSH_URL" ] \
     || fail "Existing Nexus checkout does not have the registered disabled push path: $checkout"
   [ "$(git -C "$checkout" symbolic-ref --quiet --short HEAD 2>/dev/null || true)" = "$BRANCH" ] \

@@ -103,12 +103,15 @@ validate_unit "$SERVICE_SOURCE" "$UNIT_DIR/nexus-sync.service" "nexus-sync.servi
 validate_unit "$TIMER_SOURCE" "$UNIT_DIR/nexus-sync.timer" "nexus-sync.timer"
 
 validate_checkout() {
-  local checkout=$1 fetch push branch status head origin_head
+  local checkout=$1 fetch push remotes branch status head origin_head
   [ -d "$checkout/.git" ] || fail "Missing Nexus checkout: $checkout"
+  remotes=$(git -C "$checkout" remote) \
+    || fail "Unable to enumerate Nexus remotes: $checkout"
+  [ "$remotes" = origin ] || mismatch "Unexpected Nexus remote list: $checkout"
   fetch=$(git -C "$checkout" remote get-url origin) \
     || fail "Unable to read Nexus fetch remote: $checkout"
   [ "$fetch" = "$REMOTE" ] || mismatch "Unexpected Nexus fetch remote: $checkout"
-  push=$(git -C "$checkout" remote get-url --push origin) \
+  push=$(git -C "$checkout" remote get-url --push --all origin) \
     || fail "Unable to read Nexus push remote: $checkout"
   [ "$push" = "$DISABLED_PUSH_URL" ] || mismatch "Nexus push path is not disabled: $checkout"
   branch=$(git -C "$checkout" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
