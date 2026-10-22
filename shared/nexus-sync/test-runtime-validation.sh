@@ -192,6 +192,11 @@ if bash "$PACKAGE/validate.sh" --source >/dev/null 2>&1; then
   echo 'Source validation accepted three mirrors' >&2; exit 1
 fi
 cp "$TMP/four.service" "$PACKAGE/nexus-sync.service"
+printf '\n# invalid historical content\n' >> "$PACKAGE/nexus-sync.service.three-mirror"
+if bash "$PACKAGE/validate.sh" --source >/dev/null 2>&1; then
+  echo 'Source validation accepted an altered predecessor' >&2; exit 1
+fi
+cp "$ROOT/nexus-sync.service.three-mirror" "$PACKAGE/nexus-sync.service.three-mirror"
 
 # Every Engineer integrity condition is enforced independently.
 for item in remote push branch dirty head; do
@@ -234,6 +239,16 @@ printf '%s\n' "$result" | grep -Fx 'NEXUS_SYNC_PREFLIGHT_PASS' >/dev/null
 printf '\n# unapproved drift\n' >> "$UNIT_DIR/nexus-sync.service"
 result=$(run_installer --preflight-from-three)
 [ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
+cp "$PACKAGE/nexus-sync.service.three-mirror" "$UNIT_DIR/nexus-sync.service"
+chmod 664 "$UNIT_DIR/nexus-sync.service"
+result=$(run_installer --preflight-from-three)
+[ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
+chmod 644 "$UNIT_DIR/nexus-sync.service"
+rm "$UNIT_DIR/nexus-sync.service"
+ln -s "$PACKAGE/nexus-sync.service.three-mirror" "$UNIT_DIR/nexus-sync.service"
+result=$(run_installer --preflight-from-three)
+[ "$(printf '%s\n' "$result" | head -n1)" -eq 2 ]
+rm "$UNIT_DIR/nexus-sync.service"
 cp "$PACKAGE/nexus-sync.service.three-mirror" "$UNIT_DIR/nexus-sync.service"
 
 # A failed fourth pull must not install the new service or return overall success.

@@ -43,7 +43,7 @@ esac
 case "$REMOTE" in *$'\n'*|*$'\r'*) fail "OPENCLAW_NEXUS_REMOTE must be a single line" ;; esac
 [ "$(id -u)" -ne 0 ] || fail "Run as the OpenClaw owner, not root"
 [ "$HOME" = "/home/dubrovin" ] || fail "Unexpected HOME: $HOME"
-for cmd in git install systemctl cmp bash; do require_cmd "$cmd"; done
+for cmd in git install systemctl cmp stat bash; do require_cmd "$cmd"; done
 [ -f "$SERVICE_SOURCE" ] || fail "Missing nexus-sync.service"
 [ -f "$PREDECESSOR_SOURCE" ] || fail "Missing three-mirror predecessor"
 [ -f "$TIMER_SOURCE" ] || fail "Missing nexus-sync.timer"
@@ -53,13 +53,19 @@ GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code "$REMOTE" "refs/heads/$BRANCH" >
   || fail "Registered Nexus repository is not reachable through the current read-only authentication path"
 
 check_existing_unit() {
-  local source=$1 target=$2 allow_predecessor=${3:-0}
-  if [ -e "$target" ] && ! cmp -s "$source" "$target"; then
-    # Only an explicitly selected transition accepts this exact historical service.
-    if [ "$allow_predecessor" = 1 ] && cmp -s "$PREDECESSOR_SOURCE" "$target"; then
-      return 0
+  local source=$1 target=$2 allow_predecessor=${3:-0} mode
+  [ ! -L "$target" ] || fail "Installed unit must not be a symlink: $target"
+  if [ -e "$target" ]; then
+    [ -f "$target" ] || fail "Installed unit is not a regular file: $target"
+    mode=$(stat -c '%a' "$target") || fail "Unable to read installed unit mode: $target"
+    [ "$mode" = 644 ] || fail "Installed unit mode is not 0644: $target"
+    if ! cmp -s "$source" "$target"; then
+      # Only an explicitly selected transition accepts this exact historical service.
+      if [ "$allow_predecessor" = 1 ] && cmp -s "$PREDECESSOR_SOURCE" "$target"; then
+        return 0
+      fi
+      fail "Installed unit differs from implementation source: $target"
     fi
-    fail "Installed unit differs from implementation source: $target"
   fi
 }
 
