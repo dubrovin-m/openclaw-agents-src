@@ -92,4 +92,18 @@ for scenario in success after-config after-workspace; do
   test "$AGENT_ID_SHA" = "$(sha256sum "$R/state/workspace-training/IDENTITY.md" | awk '{print $1}')"
   test "$STORE_SHA" = "$(sha256sum "$R/state/data/training/training.sqlite3" | awk '{print $1}')"
 done
+# Tampered local recovery path must refuse before any plugin/config/Store write.
+UNSAFE="$TMP/unsafe-recovery-path"
+init_root "$UNSAFE"
+BEFORE=$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')
+ln -s "$TMP" "$UNSAFE/state/backups"
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$UNSAFE" --apply --source-sha "$SHA" >"$TMP/unsafe.out" 2>"$TMP/unsafe.err"
+CODE=$?
+set -e
+test "$CODE" -ne 0
+grep -q "Unsafe private recovery directory" "$TMP/unsafe.err"
+assert_version "$UNSAFE" "$PREDECESSOR_PLUGIN_VERSION"
+assert_policy "$UNSAFE" "$OLD_POLICY"
+test "$BEFORE" = "$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')"
 echo TRAINING_ACTIVE_RUNNER_TEST_PASS
