@@ -1159,6 +1159,27 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally { db.close(); }
   });
 
+  it("TRA-VAL-008/010: suspicious post-completion corrections require exact owner confirmation", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, { timezone_at_start: "Europe/Moscow", local_date: "2026-10-06" });
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(70));
+      const result: any = completeExercise(db, id, "AS_PRESCRIBED");
+      finishSession(db, started.session.training_session_id);
+      const setId = result.exercise.sets[0].session_set_id;
+      expect(() => correctSetResult(db, setId, { load_kg: 700 }, "owner corrected"))
+        .toThrow(/SUSPICIOUS load/);
+      expect((db.prepare("SELECT count(*) n FROM data_corrections").get() as any).n).toBe(0);
+      confirmExceptionalLoad(db, id, 700);
+      const corrected: any = correctSetResult(db, setId, { load_kg: 700 }, "owner confirmed exact value");
+      expect(corrected.replayed).toBe(false);
+      expect((db.prepare("SELECT actual_load_kg FROM session_sets WHERE session_set_id=?")
+        .get(setId) as any).actual_load_kg).toBe(700);
+      expect((db.prepare("SELECT count(*) n FROM data_corrections").get() as any).n).toBe(1);
+    } finally { db.close(); }
+  });
+
   it("TRA-VAL-004/009: historical 70 kg on the same equipment rejects 250 kg but accepts normal progression", () => {
     const db = fixture();
     try {
