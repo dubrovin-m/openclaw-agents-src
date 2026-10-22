@@ -69,7 +69,9 @@ if (!testRoot) {
       die('Conflicting production runtime override: '+key);
     }
   }
-  if (process.env.OPENCLAW_PROFILE || process.env.OPENCLAW_GATEWAY_URL) die('Conflicting production profile or Gateway override');
+  for (const key of ['OPENCLAW_PROFILE','OPENCLAW_GATEWAY_URL','OPENCLAW_GATEWAY_PORT','OPENCLAW_GATEWAY_TOKEN']) {
+    if (process.env[key]) die('Conflicting production profile or Gateway override: '+key);
+  }
 }
 const workspace = path.join(state,'workspace-training');
 const agentsFile = path.join(workspace,'AGENTS.md');
