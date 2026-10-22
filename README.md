@@ -55,6 +55,6 @@ This workflow is implemented through existing repository PRs, existing GitHub-ho
 - `shared/contacts/` — shared deterministic Contact Registry implementation and its bounded OpenClaw integration.
 - `shared/nexus-sync/` — generic read-only Nexus synchronization mechanics; the private remote is supplied externally at runtime.
 - `shared/voice-transcription/` — local voice-transcription preprocessing shared by Telegram agents.
-- `shared/public-boundary/` — deterministic checks that reject known private-source and credential material before publication.
+- `shared/public-boundary/` — heuristic checks for structured private/production bindings, credential-like material, workflow constraints, and tracked release archives (including the validator's own files). This cannot recognize arbitrary Sensitive prose or unlabeled identifiers; human disclosure review remains mandatory.
 
 The deterministic Task production controller is implementation source only. Its concrete private control repository, issue, owner identity, credentials, production baseline, and execution evidence are supplied or retained outside this public source tree.
