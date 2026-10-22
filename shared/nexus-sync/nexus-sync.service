@@ -6,3 +6,4 @@ Type=oneshot
 ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only
 ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only
 ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only
+ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-engineer/nexus pull --ff-only

@@ -3,12 +3,14 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 SERVICE_SOURCE="$ROOT/nexus-sync.service"
+PREDECESSOR_SOURCE="$ROOT/nexus-sync.service.three-mirror"
 TIMER_SOURCE="$ROOT/nexus-sync.timer"
 REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"
 BRANCH="main"
 PRIMARY_CHECKOUT="/home/dubrovin/.openclaw/workspace/nexus"
 TASK_CHECKOUT="/home/dubrovin/.openclaw/workspace-tasks/nexus"
 INVESTMENTS_CHECKOUT="/home/dubrovin/.openclaw/workspace-investments/nexus"
+ENGINEER_CHECKOUT="/home/dubrovin/.openclaw/workspace-engineer/nexus"
 UNIT_DIR="/home/dubrovin/.config/systemd/user"
 DISABLED_PUSH_URL="disabled://nexus-read-only"
 MISMATCHES=0
@@ -36,6 +38,10 @@ case "$1" in
 esac
 
 [ -f "$SERVICE_SOURCE" ] || fail "Missing nexus-sync.service"
+[ -f "$PREDECESSOR_SOURCE" ] || fail "Missing three-mirror predecessor"
+command -v git >/dev/null 2>&1 || fail "git unavailable"
+[ "$(git hash-object "$PREDECESSOR_SOURCE")" = "ddf228baf97012a8c4fbf57f0dd3faf222735aa4" ] \
+  || fail "Three-mirror predecessor differs from frozen source"
 [ -f "$TIMER_SOURCE" ] || fail "Missing nexus-sync.timer"
 bash -n "$ROOT/install.sh"
 grep -F 'REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"' "$ROOT/install.sh" >/dev/null \
@@ -47,7 +53,24 @@ grep -Fx 'Type=oneshot' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
-[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 3 ] || fail "nexus-sync.service must own exactly three sync commands"
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-engineer/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
+[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 4 ] || fail "nexus-sync.service must own exactly four sync commands"
+# The only permitted predecessor is the frozen original three-mirror service.
+[ "$(grep -c '^ExecStart=' "$PREDECESSOR_SOURCE")" -eq 3 ] || fail "Invalid three-mirror predecessor"
+grep -Fx 'Type=oneshot' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+# Installer must check all four existing checkout boundaries and prepare all four.
+for checkout in PRIMARY TASK INVESTMENTS ENGINEER; do
+  printf -v expected_check 'check_checkout "$%s_CHECKOUT"' "$checkout"
+  printf -v expected_prepare 'prepare_checkout "$%s_CHECKOUT"' "$checkout"
+  grep -Fx "$expected_check" "$ROOT/install.sh" >/dev/null \
+    || fail "Installer must preflight $checkout"
+  grep -Fx "$expected_prepare" "$ROOT/install.sh" >/dev/null \
+    || fail "Installer must prepare $checkout"
+done
+
 grep -Fx 'OnCalendar=*:0/5' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Persistent=true' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Unit=nexus-sync.service' "$TIMER_SOURCE" >/dev/null
@@ -80,12 +103,15 @@ validate_unit "$SERVICE_SOURCE" "$UNIT_DIR/nexus-sync.service" "nexus-sync.servi
 validate_unit "$TIMER_SOURCE" "$UNIT_DIR/nexus-sync.timer" "nexus-sync.timer"
 
 validate_checkout() {
-  local checkout=$1 fetch push branch status head origin_head
+  local checkout=$1 fetch push remotes branch status head origin_head
   [ -d "$checkout/.git" ] || fail "Missing Nexus checkout: $checkout"
+  remotes=$(git -C "$checkout" remote) \
+    || fail "Unable to enumerate Nexus remotes: $checkout"
+  [ "$remotes" = origin ] || mismatch "Unexpected Nexus remote list: $checkout"
   fetch=$(git -C "$checkout" remote get-url origin) \
     || fail "Unable to read Nexus fetch remote: $checkout"
   [ "$fetch" = "$REMOTE" ] || mismatch "Unexpected Nexus fetch remote: $checkout"
-  push=$(git -C "$checkout" remote get-url --push origin) \
+  push=$(git -C "$checkout" remote get-url --push --all origin) \
     || fail "Unable to read Nexus push remote: $checkout"
   [ "$push" = "$DISABLED_PUSH_URL" ] || mismatch "Nexus push path is not disabled: $checkout"
   branch=$(git -C "$checkout" symbolic-ref --quiet --short HEAD 2>/dev/null || true)
@@ -103,6 +129,7 @@ validate_checkout() {
 validate_checkout "$PRIMARY_CHECKOUT"
 validate_checkout "$TASK_CHECKOUT"
 validate_checkout "$INVESTMENTS_CHECKOUT"
+validate_checkout "$ENGINEER_CHECKOUT"
 
 timer_enabled=$(systemctl --user is-enabled nexus-sync.timer 2>/dev/null || true)
 [ "$timer_enabled" = "enabled" ] || mismatch "nexus-sync.timer is not enabled"
