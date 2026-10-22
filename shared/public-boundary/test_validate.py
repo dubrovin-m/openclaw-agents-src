@@ -61,6 +61,11 @@ class PublicBoundaryTests(unittest.TestCase):
         self.add("config.py", private)
         self.check(False, "concrete private or production binding")
 
+    def test_quoted_json_binding_is_rejected(self) -> None:
+        private = '"production_control_' + 'owner_id": "424242"'
+        self.add("config.json", "{" + private + "}")
+        self.check(False, "concrete private or production binding")
+
     def test_production_issue_reference_is_rejected(self) -> None:
         text = "production control issue #" + "424242"
         self.add("notes.md", text)
