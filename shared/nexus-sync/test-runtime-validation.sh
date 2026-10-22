@@ -36,6 +36,10 @@ cat > "$MOCK_BIN/git" <<'EOF'
 #!/usr/bin/env bash
 set -euo pipefail
 
+if [ "${1:-}" = "hash-object" ]; then
+  /usr/bin/git "$@"
+  exit 0
+fi
 if [ "${1:-}" = "ls-remote" ]; then
   exit 0
 fi
