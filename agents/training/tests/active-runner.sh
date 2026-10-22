@@ -16,7 +16,7 @@ init_root() {
   local dir=$1
   local home="$dir/home" state="$dir/state" config="$dir/state/openclaw.json"
   local db="$state/data/training/training.sqlite3"
-  mkdir -p "$home" "$state" "$state/workspace-training" "$dir/agent-dir" "$state/secrets"
+  mkdir -p "$home" "$state" "$state/workspace-training" "$dir/agent-dir" "$state/secrets" "$dir/workspace-tasks" "$dir/tasks-agent"
   printf '{}\n' > "$config"
   for file in AGENTS.md HEARTBEAT.md IDENTITY.md SOUL.md USER.md; do
     git -C "$REPO_ROOT" show "$PREDECESSOR_SOURCE_REVISION:agents/training/workspace/$file" > "$state/workspace-training/$file"
@@ -28,6 +28,8 @@ init_root() {
   chmod 600 "$state/secrets/training.token"
   HOME="$home" OPENCLAW_HOME="$home" OPENCLAW_STATE_DIR="$state" OPENCLAW_CONFIG_PATH="$config" \
     "$OPENCLAW_BIN" agents add training --workspace "$state/workspace-training" --agent-dir "$dir/agent-dir" --model openai/gpt-5.6-luna --non-interactive --json >/dev/null
+  HOME="$home" OPENCLAW_HOME="$home" OPENCLAW_STATE_DIR="$state" OPENCLAW_CONFIG_PATH="$config" \
+    "$OPENCLAW_BIN" agents add tasks --workspace "$dir/workspace-tasks" --agent-dir "$dir/tasks-agent" --model openai/gpt-5.6-luna --non-interactive --json >/dev/null
   HOME="$home" OPENCLAW_HOME="$home" OPENCLAW_STATE_DIR="$state" OPENCLAW_CONFIG_PATH="$config" \
     "$OPENCLAW_BIN" plugins install --force --no-enable --accept-capabilities "$PREDECESSOR_ARTIFACT" >/dev/null
   node "$ROOT/migration/import.mjs" "$db" "$ROOT/migration/fixtures/synthetic.json" >/dev/null
@@ -44,7 +46,11 @@ c.bindings=[{agentId:'training',match:{channel:'telegram',accountId:'training'}}
 c.channels={telegram:{accounts:{training:{
   enabled:true,tokenFile,dmPolicy:'allowlist',allowFrom:['111'],
   groupPolicy:'disabled',groupAllowFrom:[]
+},tasks:{
+  enabled:false,dmPolicy:'allowlist',allowFrom:['222'],
+  groupPolicy:'disabled'
 }}}};
+c.gateway={mode:'local',bind:'loopback',port:18789,auth:{mode:'token',token:'synthetic-never-used-test-only'}};
 fs.writeFileSync(configPath,JSON.stringify(c,null,2)+'\n',{mode:0o600});
 NODE
   HOME="$home" OPENCLAW_HOME="$home" OPENCLAW_STATE_DIR="$state" OPENCLAW_CONFIG_PATH="$config" "$OPENCLAW_BIN" config validate >/dev/null
@@ -65,11 +71,30 @@ const target=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
 if(JSON.stringify(actual)!==JSON.stringify(target))process.exit(2);
 NODE
 }
+assert_unchanged_unrelated() {
+  node - "$1" "$2" <<'NODE'
+const fs=require('node:fs');
+const before=JSON.parse(fs.readFileSync(process.argv[2],'utf8'));
+const after=JSON.parse(fs.readFileSync(process.argv[3],'utf8'));
+function strip(v){
+  const c=structuredClone(v),e=c.agents.entries;
+  if(Array.isArray(e))e.find(x=>x.id==='training').tools=null;
+  else e.training.tools=null;
+  for(const section of ['entries','installs'])
+    if(c.plugins?.[section] && Object.hasOwn(c.plugins[section],'training'))
+      c.plugins[section].training=null;
+  return c;
+}
+if(JSON.stringify(strip(before))!==JSON.stringify(strip(after)))process.exit(2);
+if(!JSON.stringify(after).includes('synthetic-never-used-test-only'))process.exit(2);
+NODE
+}
 for scenario in success after-config after-workspace; do
   R="$TMP/$scenario"
   init_root "$R"
   AGENT_ID_SHA=$(sha256sum "$R/state/workspace-training/IDENTITY.md" | awk '{print $1}')
   STORE_SHA=$(sha256sum "$R/state/data/training/training.sqlite3" | awk '{print $1}')
+  cp "$R/state/openclaw.json" "$TMP/$scenario.before.json"
   node "$ROOT/active-upgrade.mjs" --test-root "$R" --preflight | grep -q TRAINING_ACTIVE_UPGRADE_PREFLIGHT_PASS
   if [ "$scenario" = success ]; then
     node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_PASS
@@ -91,6 +116,7 @@ for scenario in success after-config after-workspace; do
   fi
   test "$AGENT_ID_SHA" = "$(sha256sum "$R/state/workspace-training/IDENTITY.md" | awk '{print $1}')"
   test "$STORE_SHA" = "$(sha256sum "$R/state/data/training/training.sqlite3" | awk '{print $1}')"
+  assert_unchanged_unrelated "$TMP/$scenario.before.json" "$R/state/openclaw.json"
 done
 # Tampered local recovery path must refuse before any plugin/config/Store write.
 UNSAFE="$TMP/unsafe-recovery-path"
@@ -124,6 +150,23 @@ for child in home state; do
   test "$BEFORE_CONFIG_SHA" = "$(sha256sum "$CHILD_ROOT/state/openclaw.json" | awk '{print $1}')"
   test "$BEFORE_STORE_SHA" = "$(sha256sum "$CHILD_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')"
   assert_version "$CHILD_ROOT" "$PREDECESSOR_PLUGIN_VERSION"
+done
+# A nested symlink must never permit test-root escape into another workspace,
+# even when the top-level test root and home/state are genuine directories.
+for child in workspace-training data; do
+  NESTED="$TMP/unsafe-nested-$child"
+  init_root "$NESTED"
+  SNAP=$(sha256sum "$NESTED/state/workspace-training/AGENTS.md" "$NESTED/state/data/training/training.sqlite3")
+  mv "$NESTED/state/$child" "$NESTED/state/$child-real"
+  ln -s "$NESTED/state/$child-real" "$NESTED/state/$child"
+  set +e
+  node "$ROOT/active-upgrade.mjs" --test-root "$NESTED" --apply --source-sha "$SHA" >"$TMP/nested-$child.out" 2>"$TMP/nested-$child.err"
+  CODE=$?
+  set -e
+  test "$CODE" -ne 0
+  grep -q 'Unsafe test runtime path:' "$TMP/nested-$child.err"
+  test "$SNAP" = "$(sha256sum "$NESTED/state/workspace-training/AGENTS.md" "$NESTED/state/data/training/training.sqlite3")"
+  assert_version "$NESTED" "$PREDECESSOR_PLUGIN_VERSION"
 done
 # An unproven accepted plugin operation must block automatic rollback/retry.
 UNKNOWN="$TMP/unknown-external-outcome"
