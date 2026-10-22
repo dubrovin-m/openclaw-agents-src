@@ -51,7 +51,7 @@ class PublicBoundaryTests(unittest.TestCase):
         self.check(True)
 
     def test_private_remote_is_rejected_without_logging_value(self) -> None:
-        private = "private_repository = https://github.com/" + "example/synthetic-private.git"
+        private = "private_" + "repository = https://github.com/" + "example/synthetic-private.git"
         self.add("config.txt", "source = " + private)
         output = self.check(False, "concrete private or production binding")
         self.assertNotIn(private, output)
