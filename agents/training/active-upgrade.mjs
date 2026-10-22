@@ -55,6 +55,34 @@ const workspace = path.join(state,'workspace-training');
 const agentsFile = path.join(workspace,'AGENTS.md');
 const entryFile = path.join(state,'extensions/training/dist/plugin.js');
 const dbFile = path.join(state,'data/training/training.sqlite3');
+// Test mode must never follow a nested state/workspace/data symlink into a
+// different runtime. Check each existing ancestor before the first host CLI.
+if (testRoot) {
+  const rootReal=fs.realpathSync(testRoot);
+  const rootPath=path.resolve(testRoot);
+  if (rootReal!==rootPath) die('Unsafe test root alias');
+  const guardedPaths=[
+    home,state,configFile,workspace,agentsFile,
+    path.join(workspace,'IDENTITY.md'),dbFile,entryFile,
+    path.join(state,'.training-active-upgrade-recovery'),
+    path.join(state,'secrets'),
+  ];
+  for (const candidate of guardedPaths) {
+    const relative=path.relative(rootPath,candidate);
+    if (relative==='..' || relative.startsWith('..'+path.sep) || path.isAbsolute(relative)) {
+      die('Unsafe test runtime path outside root');
+    }
+    let cursor=rootPath;
+    for (const part of relative.split(path.sep).filter(Boolean)) {
+      cursor=path.join(cursor,part);
+      const stat=fs.lstatSync(cursor,{throwIfNoEntry:false});
+      if (!stat) break;
+      if (stat.isSymbolicLink() || (cursor!==candidate && !stat.isDirectory())) {
+        die('Unsafe test runtime path: '+path.relative(rootPath,cursor));
+      }
+    }
+  }
+}
 const releaseFile = path.join(here,'release.json');
 const targetToolsFile = path.join(here,'config/training-tools.json');
 const targetAgentsFile = path.join(here,'workspace/AGENTS.md');
@@ -123,7 +151,9 @@ function assertPlugin(version, runtimeHash) {
 function inspect(expected, expectedTools) {
   checkRegular(configFile);checkRegular(agentsFile);
   const c=readJson(configFile);
-  if (!same(trainingRecord(c).tools,expectedTools)) die('Training model-facing tools policy mismatch');
+  const training=trainingRecord(c);
+  if (typeof training.workspace!=='string' || path.resolve(training.workspace)!==workspace) die('Training configured workspace path mismatch');
+  if (!same(training.tools,expectedTools)) die('Training model-facing tools policy mismatch');
   if (c?.plugins?.entries?.training?.enabled!==true ||
       c.plugins.entries.training.config?.databasePath!==dbFile ||
       !Array.isArray(c.plugins.allow) || c.plugins.allow.filter(x=>x==='training').length!==1) die('Training plugin enablement/config mismatch');
