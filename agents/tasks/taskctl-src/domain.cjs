@@ -30,7 +30,23 @@ const fmtComment=r=>({id:`C-${r.id}`,task_id:`T-${r.task_id}`,content:r.content,
 const fmtEvent=r=>({id:`E-${r.id}`,task_id:`T-${r.task_id}`,event_type:r.event_type,old_value:r.old_value,new_value:r.new_value,reason:r.reason,occurred_at:r.occurred_at});
 function taskRow(db,n){return db.prepare("SELECT t.*,p.id assignee_canonical_id,p.display_name assignee,p.is_self assignee_is_self,pr.title project_title,pr.status project_status FROM tasks t JOIN contacts.people ps ON ps.id=t.assignee_id JOIN contacts.people p ON p.id=CASE WHEN ps.status='MERGED' THEN ps.merged_into ELSE ps.id END LEFT JOIN projects pr ON pr.id=t.project_id WHERE t.id=?").get(n);}
 const fmtTask=r=>({id:`T-${r.id}`,title:r.title,assignee_id:`P-${r.assignee_canonical_id??r.assignee_id}`,assignee:r.assignee,assignee_is_self:Boolean(r.assignee_is_self),status:r.status,due_date:r.due_date,due_time:r.due_time,project_id:r.project_id===null?null:`PRJ-${r.project_id}`,project_title:r.project_title??null,project_status:r.project_status??null,created_at:r.created_at,completed_at:r.completed_at});
-function mutate(db,type,p,fn){ const key=required(p,'operation_key',500),h=hash(p),prior=db.prepare('SELECT * FROM operation_results WHERE operation_key=?').get(key); if(prior){if(prior.operation_type!==type||prior.request_hash!==h) throw new AppError('IDEMPOTENCY_KEY_REUSE','operation_key was already used for a different request'); return {...JSON.parse(prior.result_json),idempotent_replay:true};} db.exec('BEGIN IMMEDIATE;'); try{const result=fn(); db.prepare('INSERT INTO operation_results VALUES(?,?,?,?,?)').run(key,type,h,JSON.stringify(result),now()); db.exec('COMMIT;'); return result;}catch(e){try{db.exec('ROLLBACK;');}catch{} throw e;} }
+function mutate(db,type,p,fn){
+  const key=required(p,'operation_key',500),h=hash(p);
+  db.exec('BEGIN IMMEDIATE;');
+  try{
+    const prior=db.prepare('SELECT * FROM operation_results WHERE operation_key=?').get(key);
+    if(prior){
+      if(prior.operation_type!==type||prior.request_hash!==h)throw new AppError('IDEMPOTENCY_KEY_REUSE','operation_key was already used for a different request');
+      const replay={...JSON.parse(prior.result_json),idempotent_replay:true};
+      db.exec('COMMIT;');
+      return replay;
+    }
+    const result=fn();
+    db.prepare('INSERT INTO operation_results VALUES(?,?,?,?,?)').run(key,type,h,JSON.stringify(result),now());
+    db.exec('COMMIT;');
+    return result;
+  }catch(e){try{db.exec('ROLLBACK;');}catch{}throw e;}
+}
 function event(db,taskId,type,oldV,newV,reason=null,at=now()){db.prepare('INSERT INTO task_events(task_id,event_type,old_value,new_value,reason,occurred_at) VALUES(?,?,?,?,?,?)').run(taskId,type,oldV,newV,reason,at);}
 
 function peopleMatching(db,ref){return contacts.matchingPeople(db,ref,{schema:'contacts'});}

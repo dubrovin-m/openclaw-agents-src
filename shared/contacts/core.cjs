@@ -594,13 +594,15 @@ function mutate(db, operationType, payload, fn, options = {}) {
   const key = String(payload.operation_key ?? '').trim();
   if (!key) throw new Error('operation_key is required');
   const hash = requestHash(payload);
-  const prior = db.prepare(`SELECT * FROM ${table(schema,'operation_results')} WHERE operation_key=?`).get(key);
-  if (prior) {
-    if (prior.operation_type !== operationType || prior.request_hash !== hash) throw new Error('operation_key was already used for a different request');
-    return { ...JSON.parse(prior.result_json), idempotent_replay:true };
-  }
   db.exec('BEGIN IMMEDIATE');
   try {
+    const prior = db.prepare(`SELECT * FROM ${table(schema,'operation_results')} WHERE operation_key=?`).get(key);
+    if (prior) {
+      if (prior.operation_type !== operationType || prior.request_hash !== hash) throw new Error('operation_key was already used for a different request');
+      const replay = { ...JSON.parse(prior.result_json), idempotent_replay:true };
+      db.exec('COMMIT');
+      return replay;
+    }
     const result = fn();
     db.prepare(`INSERT INTO ${table(schema,'operation_results')}(operation_key,operation_type,request_hash,result_json,created_at) VALUES(?,?,?,?,?)`)
       .run(key,operationType,hash,JSON.stringify(result),now());
