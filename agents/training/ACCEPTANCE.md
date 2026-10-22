@@ -34,13 +34,13 @@ No row marked **GAP** is acceptable for source freeze.
 | ID | Status | Evidence / remaining gate |
 | --- | --- | --- |
 | TRA-PROG-001 | SOURCE+ACTIVATION | Proposal creation is bounded and leaves the active Program Version unchanged; identifying when to propose remains model-mediated. |
-| TRA-PROG-002 | SOURCE-TESTED; RELEASE-PENDING | Exact owner-command approval atomically applies the fingerprint-bound proposal and creates a new immutable Program Version. |
+| TRA-PROG-002 | SOURCE-QUALIFIED | Exact owner-command approval atomically applies the fingerprint-bound proposal and creates a new immutable Program Version. |
 | TRA-PROG-003 | SOURCE-TESTED; ACTIVATION-PENDING | Owner-native exact proposal command needs no redundant confirmation; unbound free-form instructions require the fingerprint-bound command. Live Telegram command context remains unqualified. |
 | TRA-PROG-004 | SOURCE-QUALIFIED | New active Program Version receives cycle 1 cursor at Strength A. |
 | TRA-PROG-005 | SOURCE-QUALIFIED | Apply operation rejects version changes while ACTIVE or PAUSED session exists. |
 | TRA-PROG-006 | SOURCE-TESTED; ACTIVATION-PENDING | Model-accessible apply tool is removed. Native owner command checks live authorization; effective Telegram command context still requires runtime verification. |
-| TRA-PROG-007 | SOURCE-TESTED; RELEASE-PENDING | PENDING cannot activate via domain apply; no partial Program Version mutation on failed approval. |
-| TRA-PROG-008 | SOURCE-TESTED; RELEASE-PENDING | Fingerprint binds proposal identity, base version and exact persisted payload; mismatches and duplicate activation are tested. |
+| TRA-PROG-007 | SOURCE-QUALIFIED | PENDING cannot activate via domain apply; no partial Program Version mutation on failed approval. |
+| TRA-PROG-008 | SOURCE-QUALIFIED | Fingerprint binds proposal identity, base version and exact persisted payload; mismatches and duplicate activation are tested. |
 
 ## Strength prescription and execution
 
@@ -68,8 +68,8 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-VAL-005 | SOURCE-QUALIFIED | Structurally invalid actuals fail before any set mutation commits. |
 | TRA-VAL-006 | SOURCE+ACTIVATION | 700-vs-70 anomaly fails atomically as SUSPICIOUS; workspace requires minimal user confirmation rather than silent correction. |
 | TRA-VAL-007 | SOURCE+ACTIVATION | Corrected retry persists once after suspicious attempt left no mutation; interpreting the confirmation remains behavioral. |
-| TRA-VAL-008 | SOURCE-TESTED; RELEASE-PENDING | Correction operation validates independent load plausibility and retains before/after/reason audit evidence; suspicious changes require the native owner exception path. |
-| TRA-VAL-009 | SOURCE-TESTED; RELEASE-PENDING | Anomalous prescription rejected atomically before any session-set persistence; comparable history, precedence over stale initial policy, and absolute checks are tested. |
+| TRA-VAL-008 | SOURCE-QUALIFIED | Correction operation validates independent load plausibility and retains before/after/reason audit evidence; suspicious changes require the native owner exception path. |
+| TRA-VAL-009 | SOURCE-QUALIFIED | Anomalous prescription rejected atomically before any session-set persistence; comparable history, precedence over stale initial policy, and absolute checks are tested. |
 | TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise identity, equipment and load, and cannot transfer after exercise substitution. Live command context remains unqualified. |
 
 ## Session lifecycle and integrity
