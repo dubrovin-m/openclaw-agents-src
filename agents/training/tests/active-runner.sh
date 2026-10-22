@@ -76,7 +76,7 @@ for scenario in success after-config after-workspace; do
     assert_version "$R" "$TARGET_PLUGIN_VERSION"
     assert_policy "$R" "$ROOT/config/training-tools.json"
     cmp -s "$R/state/workspace-training/AGENTS.md" "$ROOT/workspace/AGENTS.md"
-    test ! -e "$R/state/backups/training-active-upgrade/.active.lock"
+    test ! -e "$R/state/.training-active-upgrade-recovery/.active.lock"
   else
     set +e
     TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE="$scenario" node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" >"$TMP/$scenario.out" 2>"$TMP/$scenario.err"
@@ -86,7 +86,7 @@ for scenario in success after-config after-workspace; do
     grep -q TRAINING_ACTIVE_UPGRADE_FAILED_ROLLED_BACK "$TMP/$scenario.err"
     assert_version "$R" "$PREDECESSOR_PLUGIN_VERSION"
     assert_policy "$R" "$OLD_POLICY"
-    test ! -e "$R/state/backups/training-active-upgrade/.active.lock"
+    test ! -e "$R/state/.training-active-upgrade-recovery/.active.lock"
     git -C "$REPO_ROOT" show "$PREDECESSOR_SOURCE_REVISION:agents/training/workspace/AGENTS.md" | cmp -s - "$R/state/workspace-training/AGENTS.md"
   fi
   test "$AGENT_ID_SHA" = "$(sha256sum "$R/state/workspace-training/IDENTITY.md" | awk '{print $1}')"
@@ -96,7 +96,7 @@ done
 UNSAFE="$TMP/unsafe-recovery-path"
 init_root "$UNSAFE"
 BEFORE=$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')
-ln -s "$TMP" "$UNSAFE/state/backups"
+ln -s "$TMP" "$UNSAFE/state/.training-active-upgrade-recovery"
 set +e
 node "$ROOT/active-upgrade.mjs" --test-root "$UNSAFE" --apply --source-sha "$SHA" >"$TMP/unsafe.out" 2>"$TMP/unsafe.err"
 CODE=$?
