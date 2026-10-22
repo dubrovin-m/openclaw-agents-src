@@ -1231,6 +1231,47 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally { db.close(); }
   });
 
+  it("TRA-VAL-009: zero assistance progression remains valid despite obsolete initial policy", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE exercises SET load_mode='ASSISTANCE',load_progression_direction='LOWER_IS_HARDER' WHERE exercise_id='ex_a'")
+        .run();
+      db.prepare("UPDATE program_versions SET progression_policy_json=? WHERE program_version_id='ver_test'")
+        .run(JSON.stringify({
+          kind: "DOUBLE_SUCCESS_THEN_INCREMENT",
+          initial_load_kg: 40,
+          increment_kg: 5,
+          successful_exposures_required: 2,
+        }));
+      const loads = [10, 10, 5, 5, 0, 0, 0];
+      for (const [i, load] of loads.entries()) {
+        const date = `2026-10-${String(i + 1).padStart(2, "0")}`;
+        const started: any = startProgramSession(db, {
+          selected_program_slot_id: "slot_a", timezone_at_start: "Europe/Moscow", local_date: date,
+        });
+        const id = started.session.exercises[0].session_exercise_id;
+        const candidate = getProgressionCandidate(db, id);
+        if (i >= 2) expect(candidate.candidate_load_kg).toBe(load);
+        // Neither zero candidate nor zero completed history may fall back to the stale 40 kg initial load.
+        prescribeExercise(db, id, fourSets(load));
+        completeExercise(db, id, "AS_PRESCRIBED");
+        finishSession(db, started.session.training_session_id);
+      }
+      const started: any = startProgramSession(db, {
+        selected_program_slot_id: "slot_a", timezone_at_start: "Europe/Moscow", local_date: "2026-10-08",
+      });
+      const id = started.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db, id);
+      expect(candidate.candidate_load_kg).toBe(0);
+      expect(candidate.recent_exposures.slice(0, 3).map((x: any) => x.load_kg)).toEqual([0, 0, 0]);
+      expect(() => prescribeExercise(db, id, fourSets(100))).toThrow(/SUSPICIOUS load/);
+      prescribeExercise(db, id, fourSets(0));
+      completeExercise(db, id, "AS_PRESCRIBED");
+      expect((db.prepare("SELECT count(*) AS n FROM session_sets WHERE session_exercise_id=? AND actual_load_kg=0")
+        .get(id) as any).n).toBe(4);
+    } finally { db.close(); }
+  });
+
   it("TRA-VAL-004/009: historical 70 kg on the same equipment rejects 250 kg but accepts normal progression", () => {
     const db = fixture();
     try {
