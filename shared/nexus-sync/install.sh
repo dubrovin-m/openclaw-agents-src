@@ -3,12 +3,14 @@ set -euo pipefail
 umask 077
 ROOT=$(cd "$(dirname "$0")" && pwd)
 SERVICE_SOURCE="$ROOT/nexus-sync.service"
+PREDECESSOR_SOURCE="$ROOT/nexus-sync.service.three-mirror"
 TIMER_SOURCE="$ROOT/nexus-sync.timer"
 REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"
 BRANCH="main"
 PRIMARY_CHECKOUT="/home/dubrovin/.openclaw/workspace/nexus"
 TASK_CHECKOUT="/home/dubrovin/.openclaw/workspace-tasks/nexus"
 INVESTMENTS_CHECKOUT="/home/dubrovin/.openclaw/workspace-investments/nexus"
+ENGINEER_CHECKOUT="/home/dubrovin/.openclaw/workspace-engineer/nexus"
 UNIT_DIR="/home/dubrovin/.config/systemd/user"
 SERVICE_TARGET="$UNIT_DIR/nexus-sync.service"
 TIMER_TARGET="$UNIT_DIR/nexus-sync.timer"
@@ -24,14 +26,16 @@ require_cmd() {
 }
 
 usage() {
-  echo "Usage: OPENCLAW_NEXUS_REMOTE=<private-read-only-remote> $0 --preflight|--apply" >&2
+  echo "Usage: OPENCLAW_NEXUS_REMOTE=<private-read-only-remote> $0 --preflight|--apply|--preflight-from-three|--apply-from-three" >&2
   exit 2
 }
 
 [ "$#" -eq 1 ] || usage
 case "$1" in
-  --preflight) MODE=preflight ;;
-  --apply) MODE=apply ;;
+  --preflight) MODE=preflight; ALLOW_PREDECESSOR=0 ;;
+  --apply) MODE=apply; ALLOW_PREDECESSOR=0 ;;
+  --preflight-from-three) MODE=preflight; ALLOW_PREDECESSOR=1 ;;
+  --apply-from-three) MODE=apply; ALLOW_PREDECESSOR=1 ;;
   *) usage ;;
 esac
 
@@ -41,6 +45,7 @@ case "$REMOTE" in *$'\n'*|*$'\r'*) fail "OPENCLAW_NEXUS_REMOTE must be a single 
 [ "$HOME" = "/home/dubrovin" ] || fail "Unexpected HOME: $HOME"
 for cmd in git install systemctl cmp bash; do require_cmd "$cmd"; done
 [ -f "$SERVICE_SOURCE" ] || fail "Missing nexus-sync.service"
+[ -f "$PREDECESSOR_SOURCE" ] || fail "Missing three-mirror predecessor"
 [ -f "$TIMER_SOURCE" ] || fail "Missing nexus-sync.timer"
 bash "$ROOT/validate.sh" --source >/dev/null
 
@@ -48,8 +53,12 @@ GIT_TERMINAL_PROMPT=0 git ls-remote --exit-code "$REMOTE" "refs/heads/$BRANCH" >
   || fail "Registered Nexus repository is not reachable through the current read-only authentication path"
 
 check_existing_unit() {
-  local source=$1 target=$2
+  local source=$1 target=$2 allow_predecessor=${3:-0}
   if [ -e "$target" ] && ! cmp -s "$source" "$target"; then
+    # Only an explicitly selected transition accepts this exact historical service.
+    if [ "$allow_predecessor" = 1 ] && cmp -s "$PREDECESSOR_SOURCE" "$target"; then
+      return 0
+    fi
     fail "Installed unit differs from implementation source: $target"
   fi
 }
@@ -71,11 +80,12 @@ check_checkout() {
     || fail "Nexus checkout has local changes: $checkout"
 }
 
-check_existing_unit "$SERVICE_SOURCE" "$SERVICE_TARGET"
+check_existing_unit "$SERVICE_SOURCE" "$SERVICE_TARGET" "$ALLOW_PREDECESSOR"
 check_existing_unit "$TIMER_SOURCE" "$TIMER_TARGET"
 check_checkout "$PRIMARY_CHECKOUT"
 check_checkout "$TASK_CHECKOUT"
 check_checkout "$INVESTMENTS_CHECKOUT"
+check_checkout "$ENGINEER_CHECKOUT"
 
 if [ "$MODE" = "preflight" ]; then
   printf 'NEXUS_SYNC_PREFLIGHT_PASS\n'
@@ -100,6 +110,7 @@ prepare_checkout() {
 prepare_checkout "$PRIMARY_CHECKOUT"
 prepare_checkout "$TASK_CHECKOUT"
 prepare_checkout "$INVESTMENTS_CHECKOUT"
+prepare_checkout "$ENGINEER_CHECKOUT"
 
 if [ ! -e "$UNIT_DIR" ]; then
   install -d -m 700 "$UNIT_DIR"

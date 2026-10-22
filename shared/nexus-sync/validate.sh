@@ -3,12 +3,14 @@ set -euo pipefail
 
 ROOT=$(cd "$(dirname "$0")" && pwd)
 SERVICE_SOURCE="$ROOT/nexus-sync.service"
+PREDECESSOR_SOURCE="$ROOT/nexus-sync.service.three-mirror"
 TIMER_SOURCE="$ROOT/nexus-sync.timer"
 REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"
 BRANCH="main"
 PRIMARY_CHECKOUT="/home/dubrovin/.openclaw/workspace/nexus"
 TASK_CHECKOUT="/home/dubrovin/.openclaw/workspace-tasks/nexus"
 INVESTMENTS_CHECKOUT="/home/dubrovin/.openclaw/workspace-investments/nexus"
+ENGINEER_CHECKOUT="/home/dubrovin/.openclaw/workspace-engineer/nexus"
 UNIT_DIR="/home/dubrovin/.config/systemd/user"
 DISABLED_PUSH_URL="disabled://nexus-read-only"
 MISMATCHES=0
@@ -36,6 +38,7 @@ case "$1" in
 esac
 
 [ -f "$SERVICE_SOURCE" ] || fail "Missing nexus-sync.service"
+[ -f "$PREDECESSOR_SOURCE" ] || fail "Missing three-mirror predecessor"
 [ -f "$TIMER_SOURCE" ] || fail "Missing nexus-sync.timer"
 bash -n "$ROOT/install.sh"
 grep -F 'REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"' "$ROOT/install.sh" >/dev/null \
@@ -47,7 +50,22 @@ grep -Fx 'Type=oneshot' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
-[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 3 ] || fail "nexus-sync.service must own exactly three sync commands"
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-engineer/nexus pull --ff-only' "$SERVICE_SOURCE" >/dev/null
+[ "$(grep -c '^ExecStart=' "$SERVICE_SOURCE")" -eq 4 ] || fail "nexus-sync.service must own exactly four sync commands"
+# The only permitted predecessor is the frozen original three-mirror service.
+[ "$(grep -c '^ExecStart=' "$PREDECESSOR_SOURCE")" -eq 3 ] || fail "Invalid three-mirror predecessor"
+grep -Fx 'Type=oneshot' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
+# Installer must check all four existing checkout boundaries and prepare all four.
+for checkout in PRIMARY TASK INVESTMENTS ENGINEER; do
+  grep -Fx "check_checkout \"\$\{checkout\}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
+    || fail "Installer must preflight $checkout"
+  grep -Fx "prepare_checkout \"\$\{checkout\}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
+    || fail "Installer must prepare $checkout"
+done
+
 grep -Fx 'OnCalendar=*:0/5' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Persistent=true' "$TIMER_SOURCE" >/dev/null
 grep -Fx 'Unit=nexus-sync.service' "$TIMER_SOURCE" >/dev/null
@@ -103,6 +121,7 @@ validate_checkout() {
 validate_checkout "$PRIMARY_CHECKOUT"
 validate_checkout "$TASK_CHECKOUT"
 validate_checkout "$INVESTMENTS_CHECKOUT"
+validate_checkout "$ENGINEER_CHECKOUT"
 
 timer_enabled=$(systemctl --user is-enabled nexus-sync.timer 2>/dev/null || true)
 [ "$timer_enabled" = "enabled" ] || mismatch "nexus-sync.timer is not enabled"
