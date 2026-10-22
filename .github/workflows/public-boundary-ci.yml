@@ -20,5 +20,8 @@ jobs:
           fetch-depth: 1
           persist-credentials: false
 
+      - name: Test public boundary validator
+        run: python3 -m unittest discover -s shared/public-boundary -p 'test_*.py' -v
+
       - name: Validate public source boundary
         run: python3 shared/public-boundary/validate.py
