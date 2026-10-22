@@ -26,8 +26,8 @@ sed -i "s|^TASK_CHECKOUT=.*|TASK_CHECKOUT=\"$TASK\"|" "$PACKAGE/validate.sh"
 sed -i "s|^INVESTMENTS_CHECKOUT=.*|INVESTMENTS_CHECKOUT=\"$INVESTMENTS\"|" "$PACKAGE/validate.sh"
 sed -i "s|^ENGINEER_CHECKOUT=.*|ENGINEER_CHECKOUT=\"$ENGINEER\"|" "$PACKAGE/validate.sh"
 for key in PRIMARY TASK INVESTMENTS ENGINEER; do
-  eval "checkout=\$key"
-  sed -i "s|^\${key}_CHECKOUT=.*|\${key}_CHECKOUT=\"$checkout\"|" "$PACKAGE/install.sh"
+  checkout="${!key}"
+  sed -i "s|^${key}_CHECKOUT=.*|${key}_CHECKOUT=\"$checkout\"|" "$PACKAGE/install.sh"
 done
 sed -i "s|^UNIT_DIR=.*|UNIT_DIR=\"$UNIT_DIR\"|" "$PACKAGE/install.sh"
 sed -i "s|^UNIT_DIR=.*|UNIT_DIR=\"$UNIT_DIR\"|" "$PACKAGE/validate.sh"

@@ -39,6 +39,9 @@ esac
 
 [ -f "$SERVICE_SOURCE" ] || fail "Missing nexus-sync.service"
 [ -f "$PREDECESSOR_SOURCE" ] || fail "Missing three-mirror predecessor"
+command -v git >/dev/null 2>&1 || fail "git unavailable"
+[ "$(git hash-object "$PREDECESSOR_SOURCE")" = "ddf228baf97012a8c4fbf57f0dd3faf222735aa4" ] \
+  || fail "Three-mirror predecessor differs from frozen source"
 [ -f "$TIMER_SOURCE" ] || fail "Missing nexus-sync.timer"
 bash -n "$ROOT/install.sh"
 grep -F 'REMOTE="${OPENCLAW_NEXUS_REMOTE:-}"' "$ROOT/install.sh" >/dev/null \
@@ -60,9 +63,9 @@ grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-tasks/nex
 grep -Fx 'ExecStart=/usr/bin/git -C /home/dubrovin/.openclaw/workspace-investments/nexus pull --ff-only' "$PREDECESSOR_SOURCE" >/dev/null
 # Installer must check all four existing checkout boundaries and prepare all four.
 for checkout in PRIMARY TASK INVESTMENTS ENGINEER; do
-  grep -Fx "check_checkout \"\$\{checkout\}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
+  grep -Fx "check_checkout \"\${checkout}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
     || fail "Installer must preflight $checkout"
-  grep -Fx "prepare_checkout \"\$\{checkout\}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
+  grep -Fx "prepare_checkout \"\${checkout}_CHECKOUT\"" "$ROOT/install.sh" >/dev/null \
     || fail "Installer must prepare $checkout"
 done
 
