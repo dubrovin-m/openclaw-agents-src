@@ -1001,7 +1001,9 @@ type ExerciseLoadEvidence = {
 };
 
 /** Uses the deterministic progression and comparable history, not supplied candidate fields. */
-function validateLoadIndependent(db: DatabaseSync, sessionExerciseId: string, load: number | null) {
+function validateLoadIndependent(
+  db: DatabaseSync, sessionExerciseId: string, load: number | null, prescribedLoad?: number | null
+) {
   const evidence = one<ExerciseLoadEvidence>(db,
     `SELECT e.load_mode,se.equipment_instance_id
        FROM session_exercises se JOIN exercises e ON e.exercise_id=se.exercise_id
@@ -1021,6 +1023,11 @@ function validateLoadIndependent(db: DatabaseSync, sessionExerciseId: string, lo
   const median = prior.length ? prior[Math.floor(prior.length / 2)]! : null;
   const references = [median, progression.candidate_load_kg, progression.policy.initial_load_kg]
     .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+  // A saved prescription is secondary evidence, never a substitute for
+  // independent progression/history when those are available.
+  if (!references.length && prescribedLoad != null && prescribedLoad > 0 && Number.isFinite(prescribedLoad)) {
+    references.push(prescribedLoad);
+  }
   const maximumByMode: Record<string, number> = {
     TOTAL_EXTERNAL: 400,
     PER_HAND: 120,
@@ -1057,9 +1064,9 @@ export function confirmExceptionalLoad(db: DatabaseSync, sessionExerciseId: stri
          JOIN exercises e ON e.exercise_id=se.exercise_id
         WHERE se.session_exercise_id=?`, sessionExerciseId
     );
-    if (!exercise || exercise.session_status !== "ACTIVE" ||
-        !["PENDING","ACTIVE","DEFERRED"].includes(exercise.status)) {
-      throw new Error("An ACTIVE Training session and uncompleted exercise are required");
+    if (!exercise || !["ACTIVE","PAUSED","COMPLETED","ABANDONED"].includes(exercise.session_status) ||
+        !["PENDING","ACTIVE","DEFERRED","COMPLETED"].includes(exercise.status)) {
+      throw new Error("An existing non-voided session exercise is required");
     }
     if (!Number.isFinite(load) || load < 0 || load > 1000 ||
         exercise.load_mode === "BODYWEIGHT" || exercise.load_mode === "NONE") {
@@ -1188,7 +1195,10 @@ function validateActual(db: DatabaseSync, sessionExerciseId: string, target: Row
     throw new Error("Actual set requires reps, duration, or distance");
   }
 
-  validateLoadIndependent(db, sessionExerciseId, actual.load_kg);
+  validateLoadIndependent(
+    db, sessionExerciseId, actual.load_kg,
+    target.target_load_kg == null ? null : Number(target.target_load_kg)
+  );
   const targetReps = target.target_reps == null ? null : Number(target.target_reps);
   if (targetReps && actual.reps !== null && actual.reps >= Math.max(targetReps * 4, targetReps + 30)) {
     throw new Error(`SUSPICIOUS reps ${actual.reps}; target is ${targetReps}`);
