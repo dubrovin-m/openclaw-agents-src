@@ -34,6 +34,20 @@ FORBIDDEN = [
         "production control issue number",
     ),
     (
+        # Match generic key headers without embedding actual private-key material.
+        re.compile(
+            r"-{5}BEGIN\s+(?:(?:OPENSSH|RSA|EC|DSA|ENCRYPTED|PGP)\s+)?"
+            r"PRIVATE\s+KEY(?:\s+BLOCK)?-{5}",
+            re.IGNORECASE,
+        ),
+        "private key header",
+    ),
+    (
+        # Generic control-issue assignments must not include live numeric values.
+        re.compile(r"\b(?:CONTROL_ISSUE|PRODUCTION_CONTROL_ISSUE)\s*[:=]\s*['\\"]?\d+\b", re.IGNORECASE),
+        "concrete control issue binding",
+    ),
+    (
         re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
         "provider credential-like material",
     ),
