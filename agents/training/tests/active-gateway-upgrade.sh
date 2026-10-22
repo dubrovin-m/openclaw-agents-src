@@ -80,7 +80,11 @@ assert_version "$TARGET_PLUGIN_VERSION"
 oc plugins reload training --wait --json >"$TEST_ROOT/reload-target.json"
 node - "$TEST_ROOT/reload-target.json" <<'NODE'
 const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-if(v?.restartRequired===true || !JSON.stringify(v).includes("training"))process.exit(2);
+const applied=v?.runtime;
+if(v?.restartRequired!==false || !Array.isArray(v?.pluginIds) || !v.pluginIds.includes("training")
+  || !applied || typeof applied.operationId!=="string" || !applied.operationId
+  || !Number.isSafeInteger(applied.generation) || applied.generation<1
+  || !Array.isArray(applied.pluginIds) || !applied.pluginIds.includes("training"))process.exit(2);
 NODE
 [ "$(sha256sum "$DB" | awk '{print $1}')" = "$DB_BEFORE" ] || { echo "Training Store changed on live upgrade" >&2; exit 2; }
 oc plugins install --force --no-enable --accept-capabilities "$PREDECESSOR_ARTIFACT" >/dev/null
@@ -89,7 +93,11 @@ assert_version "$PREDECESSOR_PLUGIN_VERSION"
 oc plugins reload training --wait --json >"$TEST_ROOT/reload-predecessor.json"
 node - "$TEST_ROOT/reload-predecessor.json" <<'NODE'
 const fs=require("fs"),v=JSON.parse(fs.readFileSync(process.argv[2],"utf8"));
-if(v?.restartRequired===true || !JSON.stringify(v).includes("training"))process.exit(2);
+const applied=v?.runtime;
+if(v?.restartRequired!==false || !Array.isArray(v?.pluginIds) || !v.pluginIds.includes("training")
+  || !applied || typeof applied.operationId!=="string" || !applied.operationId
+  || !Number.isSafeInteger(applied.generation) || applied.generation<1
+  || !Array.isArray(applied.pluginIds) || !applied.pluginIds.includes("training"))process.exit(2);
 NODE
 [ "$(sha256sum "$DB" | awk '{print $1}')" = "$DB_BEFORE" ] || { echo "Training Store changed on live rollback" >&2; exit 2; }
 echo TRAINING_ACTIVE_GATEWAY_UPGRADE_ROLLBACK_PASS
