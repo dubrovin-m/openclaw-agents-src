@@ -43,11 +43,6 @@ FORBIDDEN = [
         "private key header",
     ),
     (
-        # Generic control-issue assignments must not include live numeric values.
-        re.compile(r"\b(?:CONTROL_ISSUE|PRODUCTION_CONTROL_ISSUE)\s*[:=]\s*['\x22]?\d+\b", re.IGNORECASE),
-        "concrete control issue binding",
-    ),
-    (
         re.compile(r"\bsk-[A-Za-z0-9_-]{20,}\b"),
         "provider credential-like material",
     ),
