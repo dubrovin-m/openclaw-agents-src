@@ -37,7 +37,12 @@ if (mode === '--apply' && !approvedSha) die('Exact --source-sha is mandatory for
 const home = testRoot ? path.join(path.resolve(testRoot),'home') : os.userInfo().homedir;
 if (!testRoot) {
   if (path.resolve(os.homedir())!==path.resolve(home)) die('Production HOME does not match the effective user');
-  if (os.userInfo().username!=='dubrovin') die('Production runner requires the registered OpenClaw user');
+  // The exact authorized owner identity is private runtime/control-plane state,
+  // not an account-name literal in public implementation source.
+  if (typeof process.getuid==='function' &&
+      (process.getuid()===0 || process.getuid()!==os.userInfo().uid)) {
+    die('Production runner requires the unprivileged effective runtime user');
+  }
 }
 if (testRoot) {
   const real = fs.realpathSync(testRoot);
