@@ -129,6 +129,16 @@ function gatewayReady() {
   if (testRoot) return;
   oc('gateway','status','--deep','--require-rpc');
 }
+// Replacement of an active plugin on disk does not prove that the long-running
+// Gateway has adopted that generation. A supported in-process reload is required.
+function gatewayReload() {
+  if (testRoot) return; // separately covered by disposable live-Gateway E2E
+  const response = JSON.parse(oc('plugins','reload','training','--wait','--json'));
+  if (response?.restartRequired === true || !JSON.stringify(response).includes('training')) {
+    die('Training Gateway reload did not prove live activation');
+  }
+  gatewayReady();
+}
 const old = inspect('predecessor',historicalTools);
 gatewayReady();
 if (mode==='--preflight') {
@@ -203,7 +213,7 @@ try {
   if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE === 'after-workspace') die('Synthetic after-workspace failure');
   const after=inspect('target',tools);
   preserveBoundaries(old,after);
-  gatewayReady();
+  gatewayReload();
   writeResult('SUCCESS','COMPLETE','Training 0.1.7 active with owner-only tools and preserved Store');
   done=true;
   // Config backup contains possible secrets; do not retain after proven success.
@@ -220,7 +230,7 @@ try {
       atomicCopy(path.join(recoveryDir,'AGENTS.before'),agentsFile);
       const reverted=inspect('predecessor',historicalTools);
       preserveBoundaries(old,reverted);
-      gatewayReady();
+      gatewayReload();
     } catch(e) { recoveryError=e; }
   }
   if (backupCreated) writeResult(recoveryError?'RECOVERY_REQUIRED':'ROLLED_BACK', recoveryError?'RECOVERY':'APPLY_FAILURE', recoveryError?'Manual reconciliation required':'Original Training release restored');
