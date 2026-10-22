@@ -106,4 +106,23 @@ grep -q "Unsafe private recovery directory" "$TMP/unsafe.err"
 assert_version "$UNSAFE" "$PREDECESSOR_PLUGIN_VERSION"
 assert_policy "$UNSAFE" "$OLD_POLICY"
 test "$BEFORE" = "$(sha256sum "$UNSAFE/state/data/training/training.sqlite3" | awk '{print $1}')"
+# The disposable test-root guard must refuse symlinked home/state children
+# even when the outer root itself is a safe directory.
+for child in home state; do
+  CHILD_ROOT="$TMP/unsafe-$child-child"
+  init_root "$CHILD_ROOT"
+  BEFORE_CONFIG_SHA=$(sha256sum "$CHILD_ROOT/state/openclaw.json" | awk '{print $1}')
+  BEFORE_STORE_SHA=$(sha256sum "$CHILD_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')
+  mv "$CHILD_ROOT/$child" "$CHILD_ROOT/$child-actual"
+  ln -s "$CHILD_ROOT/$child-actual" "$CHILD_ROOT/$child"
+  set +e
+  node "$ROOT/active-upgrade.mjs" --test-root "$CHILD_ROOT" --apply --source-sha "$SHA" >"$TMP/child-$child.out" 2>"$TMP/child-$child.err"
+  rc=$?
+  set -e
+  test "$rc" -ne 0
+  grep -q "Unsafe test root child: $child" "$TMP/child-$child.err"
+  test "$BEFORE_CONFIG_SHA" = "$(sha256sum "$CHILD_ROOT/state/openclaw.json" | awk '{print $1}')"
+  test "$BEFORE_STORE_SHA" = "$(sha256sum "$CHILD_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')"
+  assert_version "$CHILD_ROOT" "$PREDECESSOR_PLUGIN_VERSION"
+done
 echo TRAINING_ACTIVE_RUNNER_TEST_PASS
