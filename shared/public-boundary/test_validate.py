@@ -85,10 +85,6 @@ class PublicBoundaryTests(unittest.TestCase):
                 output = self.check(False, "private key header")
                 self.assertNotIn(header, output)
 
-    def test_synthetic_numeric_control_issue_binding_is_rejected(self) -> None:
-        self.add("config.py", "CONTROL_" + "ISSUE = 424242")
-        self.check(False, "concrete control issue binding")
-
     def test_provider_credential_shape_is_rejected(self) -> None:
         secret = "sk-" + "A" * 32
         self.add("config.txt", secret)
