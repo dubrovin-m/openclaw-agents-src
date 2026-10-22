@@ -25,7 +25,7 @@ var require_runtime = __commonJS({
     var CONTACTS_LIB = SOURCE_CONTACTS_LIB ?? INSTALLED_CONTACTS_LIB;
     var contacts = require(path.join(CONTACTS_LIB, "core.cjs"));
     var contactStore = require(path.join(CONTACTS_LIB, "task-store.cjs"));
-    var IMPLEMENTATION_VERSION = "0.4.16";
+    var IMPLEMENTATION_VERSION = "0.4.17";
     var SCHEMA_VERSION = 9;
     var TZ = "Europe/Moscow";
     var SELF_NAME = contacts.SELF_NAME;
@@ -538,13 +538,16 @@ var require_domain = __commonJS({
     }
     var fmtTask = (r) => ({ id: `T-${r.id}`, title: r.title, assignee_id: `P-${r.assignee_canonical_id ?? r.assignee_id}`, assignee: r.assignee, assignee_is_self: Boolean(r.assignee_is_self), status: r.status, due_date: r.due_date, due_time: r.due_time, project_id: r.project_id === null ? null : `PRJ-${r.project_id}`, project_title: r.project_title ?? null, project_status: r.project_status ?? null, created_at: r.created_at, completed_at: r.completed_at });
     function mutate(db, type, p, fn) {
-      const key = required(p, "operation_key", 500), h = hash(p), prior = db.prepare("SELECT * FROM operation_results WHERE operation_key=?").get(key);
-      if (prior) {
-        if (prior.operation_type !== type || prior.request_hash !== h) throw new AppError("IDEMPOTENCY_KEY_REUSE", "operation_key was already used for a different request");
-        return { ...JSON.parse(prior.result_json), idempotent_replay: true };
-      }
+      const key = required(p, "operation_key", 500), h = hash(p);
       db.exec("BEGIN IMMEDIATE;");
       try {
+        const prior = db.prepare("SELECT * FROM operation_results WHERE operation_key=?").get(key);
+        if (prior) {
+          if (prior.operation_type !== type || prior.request_hash !== h) throw new AppError("IDEMPOTENCY_KEY_REUSE", "operation_key was already used for a different request");
+          const replay = { ...JSON.parse(prior.result_json), idempotent_replay: true };
+          db.exec("COMMIT;");
+          return replay;
+        }
         const result = fn();
         db.prepare("INSERT INTO operation_results VALUES(?,?,?,?,?)").run(key, type, h, JSON.stringify(result), now());
         db.exec("COMMIT;");

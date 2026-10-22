@@ -14,7 +14,7 @@ const CONTACTS_LIB = SOURCE_CONTACTS_LIB ?? INSTALLED_CONTACTS_LIB;
 const contacts = require(path.join(CONTACTS_LIB, 'core.cjs'));
 const contactStore = require(path.join(CONTACTS_LIB, 'task-store.cjs'));
 
-const IMPLEMENTATION_VERSION = '0.4.16';
+const IMPLEMENTATION_VERSION = '0.4.17';
 const SCHEMA_VERSION = 9;
 const TZ = 'Europe/Moscow';
 const SELF_NAME = contacts.SELF_NAME;

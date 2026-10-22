@@ -128,4 +128,5 @@ a=$(plain health); contains "$a" '"schema_version":9'
 node - "$DB" <<'JS'
 const {DatabaseSync}=require('node:sqlite');const db=new DatabaseSync(process.argv[2],{readOnly:true});if(db.prepare('pragma integrity_check').get().integrity_check!=='ok'||db.prepare('pragma foreign_key_check').all().length)process.exit(1);db.close();
 JS
+node --test "$TASK_ROOT/tests/concurrent-idempotency.test.mjs"
 printf 'BATCH1_CORE_DETERMINISTIC_PASS\n'
