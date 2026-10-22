@@ -108,6 +108,13 @@ jobs:
           test "$("$previous_root/node_modules/.bin/openclaw" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)" = "$predecessor"
           PREDECESSOR_OPENCLAW_BIN="$previous_root/node_modules/.bin/openclaw" OPENCLAW_BIN="$root/node_modules/.bin/openclaw" bash agents/training/tests/deploy.sh
 
+      - name: Qualify active Training plugin replacement and rollback offline
+        run: |
+          set -euo pipefail
+          OPENCLAW_BIN="$RUNNER_TEMP/openclaw-training-deploy-host/node_modules/.bin/openclaw" \
+          PREDECESSOR_OPENCLAW_BIN="$RUNNER_TEMP/openclaw-training-predecessor-host/node_modules/.bin/openclaw" \
+          bash agents/training/tests/active-upgrade.sh
+
       - name: Qualify normalized Training migration
         working-directory: agents/training/plugin
         run: |
