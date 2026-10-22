@@ -198,7 +198,9 @@ try {
   assertPlugin(release.plugin.version,release.plugin.runtime_entry_sha256);
   exec(host,['config','patch','--stdin'],toolsPatch(old,tools)+'\n');
   oc('config','validate');
+  if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE === 'after-config') die('Synthetic after-config failure');
   atomicCopy(targetAgentsFile,agentsFile);
+  if (testRoot && process.env.TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE === 'after-workspace') die('Synthetic after-workspace failure');
   const after=inspect('target',tools);
   preserveBoundaries(old,after);
   gatewayReady();
