@@ -40,6 +40,14 @@ if (testRoot) {
   if (real === '/' || real === actualHome || real === path.join(actualHome,'.openclaw') ||
       real.startsWith(path.join(actualHome,'.openclaw')+path.sep) ||
       real.startsWith(path.join(actualHome,'.local')+path.sep)) die('Unsafe test root');
+  // A safe-looking test root is not a sandbox if its nested paths escape
+  // through symlinks. Refuse before executing any host CLI operation.
+  for (const name of ['home','state']) {
+    const child=path.join(path.resolve(testRoot),name);
+    const stat=fs.lstatSync(child);
+    if (!stat.isDirectory() || stat.isSymbolicLink() ||
+        fs.realpathSync(child)!==path.join(real,name)) die('Unsafe test root child: '+name);
+  }
 }
 const state = testRoot ? path.join(path.resolve(testRoot),'state') : path.join(home,'.openclaw');
 const configFile = path.join(state,'openclaw.json');
