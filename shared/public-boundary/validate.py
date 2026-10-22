@@ -24,7 +24,7 @@ FORBIDDEN = [
             r"\b(?:private[_-](?:repo(?:sitory)?|remote|owner(?:[_-]id)?)|"
             r"production[_-](?:control[_-])?(?:issue|repo|owner|chat|telegram)"
             r"(?:[_-](?:id|url|number|remote))?)"
-            r"\s*[:=]\s*['\"]?[^\s'\"#]+",
+            r"\s*['\"]?\s*[:=]\s*['\"]?[^\s'\"#]+",
             re.IGNORECASE,
         ),
         "concrete private or production binding",
@@ -69,7 +69,7 @@ def scan_file(path: pathlib.Path, relative: str) -> None:
         # Release archives are published too. Do not silently exempt them.
         try:
             with tarfile.open(path, mode="r:gz") as archive:
-                for member in archive:
+                for member_number, member in enumerate(archive, 1):
                     if not member.isfile():
                         continue
                     if member.size > MAX_ARCHIVE_MEMBER_BYTES:
@@ -84,7 +84,7 @@ def scan_file(path: pathlib.Path, relative: str) -> None:
                     except UnicodeDecodeError:
                         fail(f"non-text archive member: {relative}")
                         continue
-                    scan_text(text, f"{relative}!{member.name}")
+                    scan_text(text, f"{relative}!member-{member_number}")
         except (OSError, tarfile.TarError, EOFError):
             fail(f"unreadable release archive: {relative}")
         return
