@@ -1019,16 +1019,16 @@ function validateLoadIndependent(
   const progression = getProgressionCandidate(db, sessionExerciseId);
   const prior = progression.recent_exposures
     .map((row) => row.load_kg)
-    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0)
+    .filter((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0)
     .slice(0, 5).sort((a, b) => a - b);
   const median = prior.length ? prior[Math.floor(prior.length / 2)]! : null;
   // Prefer the most recent independent comparable work. A stale initial load
   // must not override a valid current progression established through history.
   const reference = [median, progression.candidate_load_kg, progression.policy.initial_load_kg]
-    .find((value): value is number => typeof value === "number" && Number.isFinite(value) && value > 0);
+    .find((value): value is number => typeof value === "number" && Number.isFinite(value) && value >= 0);
   // Persisted prescription is a last resort, never an independent baseline.
   const baseline = reference ??
-    (prescribedLoad != null && Number.isFinite(prescribedLoad) && prescribedLoad > 0 ? prescribedLoad : null);
+    (prescribedLoad != null && Number.isFinite(prescribedLoad) && prescribedLoad >= 0 ? prescribedLoad : null);
   const maximumByMode: Record<string, number> = {
     TOTAL_EXTERNAL: 400,
     PER_HAND: 120,
