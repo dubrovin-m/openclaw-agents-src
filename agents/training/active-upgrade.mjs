@@ -12,6 +12,9 @@ import { execFileSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { DatabaseSync } from 'node:sqlite';
 
+// Config snapshots may contain provider-managed secrets; never create world-readable temporaries.
+process.umask(0o077);
+
 const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
@@ -60,6 +63,7 @@ const exec = (bin, args, input) => execFileSync(bin,args,{
 const oc = (...args) => exec(host,args);
 const command = (...args) => exec('git',args);
 const sourceSha = command('-C',root,'rev-parse','HEAD').trim();
+if (!testRoot && command('-C',root,'status','--porcelain','--untracked-files=all').trim()) die('Frozen source checkout is dirty');
 if (!/^[a-f0-9]{40}$/.test(sourceSha) || (approvedSha && sourceSha !== approvedSha)) die('Source revision does not match approved identity');
 const hostVersion = oc('--version').match(/[0-9]+\.[0-9]+\.[0-9]+/)?.[0];
 if (!hostVersion) die('OpenClaw host version unavailable');
@@ -147,7 +151,15 @@ if (mode==='--preflight') {
 }
 // The private recovery set is local to the runtime. It is NOT an independent backup.
 const recoveryBase = path.join(state,'backups','training-active-upgrade');
-fs.mkdirSync(recoveryBase,{recursive:true,mode:0o700});
+function ensurePrivateDirectory(dir) {
+  if (!fs.existsSync(dir)) fs.mkdirSync(dir,{mode:0o700});
+  const stat=fs.lstatSync(dir);
+  if (!stat.isDirectory() || stat.isSymbolicLink() || (stat.mode & 0o077)!==0 ||
+      (typeof process.getuid==='function' && stat.uid!==process.getuid())) die('Unsafe private recovery directory');
+}
+ensurePrivateDirectory(state);
+ensurePrivateDirectory(path.dirname(recoveryBase));
+ensurePrivateDirectory(recoveryBase);
 const lock = path.join(recoveryBase,'.active.lock');
 fs.mkdirSync(lock,{mode:0o700}); // surviving crash refuses later mutation
 const recoveryDir = path.join(recoveryBase,sourceSha.slice(0,12)+'-'+process.pid);
@@ -233,7 +245,8 @@ try {
       gatewayReload();
     } catch(e) { recoveryError=e; }
   }
-  if (backupCreated) writeResult(recoveryError?'RECOVERY_REQUIRED':'ROLLED_BACK', recoveryError?'RECOVERY':'APPLY_FAILURE', recoveryError?'Manual reconciliation required':'Original Training release restored');
+  const result = recoveryError?'RECOVERY_REQUIRED':mutated?'ROLLED_BACK':'BLOCKED_PRE_MUTATION';
+  if (backupCreated) writeResult(result, recoveryError?'RECOVERY':mutated?'APPLY_FAILURE':'PREFLIGHT', recoveryError?'Manual reconciliation required':mutated?'Original Training release restored':'No production mutation started');
   if (!recoveryError) {
     fs.rmSync(lock,{recursive:true,force:true});
     if (backupCreated) {
@@ -241,6 +254,6 @@ try {
       fs.rmSync(path.join(recoveryDir,'AGENTS.before'),{force:true});
     }
   }
-  process.stderr.write('TRAINING_ACTIVE_UPGRADE_'+(recoveryError?'RECOVERY_REQUIRED':'FAILED_ROLLED_BACK')+'\n');
+  process.stderr.write('TRAINING_ACTIVE_UPGRADE_'+(recoveryError?'RECOVERY_REQUIRED':mutated?'FAILED_ROLLED_BACK':'BLOCKED_PRE_MUTATION')+'\n');
   process.exitCode=2;
 }
