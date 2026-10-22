@@ -125,4 +125,18 @@ for child in home state; do
   test "$BEFORE_STORE_SHA" = "$(sha256sum "$CHILD_ROOT/state/data/training/training.sqlite3" | awk '{print $1}')"
   assert_version "$CHILD_ROOT" "$PREDECESSOR_PLUGIN_VERSION"
 done
+# An unproven accepted plugin operation must block automatic rollback/retry.
+UNKNOWN="$TMP/unknown-external-outcome"
+init_root "$UNKNOWN"
+STORE_BEFORE=$(sha256sum "$UNKNOWN/state/data/training/training.sqlite3" | awk '{print $1}')
+set +e
+TRAINING_ACTIVE_UPGRADE_TEST_UNKNOWN_STAGE=after-install node "$ROOT/active-upgrade.mjs" --test-root "$UNKNOWN" --apply --source-sha "$SHA" >"$TMP/unknown.out" 2>"$TMP/unknown.err"
+UNKNOWN_CODE=$?
+set -e
+test "$UNKNOWN_CODE" -ne 0
+grep -q TRAINING_ACTIVE_UPGRADE_RECOVERY_REQUIRED "$TMP/unknown.err"
+test -d "$UNKNOWN/state/.training-active-upgrade-recovery/.active.lock"
+assert_version "$UNKNOWN" "$TARGET_PLUGIN_VERSION"
+assert_policy "$UNKNOWN" "$OLD_POLICY"
+test "$STORE_BEFORE" = "$(sha256sum "$UNKNOWN/state/data/training/training.sqlite3" | awk '{print $1}')"
 echo TRAINING_ACTIVE_RUNNER_TEST_PASS
