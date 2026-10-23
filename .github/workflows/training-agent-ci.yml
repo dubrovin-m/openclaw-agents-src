@@ -87,6 +87,10 @@ jobs:
           npm run plugin:build
           npm run plugin:validate
 
+      - name: Qualify owner-native Training commands through pinned OpenClaw host
+        working-directory: agents/training/plugin
+        run: node ../tests/native-command-host.mjs
+
       - name: Qualify frozen Training release
         run: |
           set -euo pipefail
