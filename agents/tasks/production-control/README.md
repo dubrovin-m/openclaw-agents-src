@@ -26,6 +26,8 @@ A deployment or rollout target must be an exact current `main` revision in the c
 
 The implementation checkout used for execution is prepared from that implementation repository only. The private control repository is not implementation authority.
 
+The current-`main` SHA check applies when admitting a new request. Once accepted, final reconciliation verifies the immutable approved SHA, terminal evidence, and live target diagnostics; subsequent movement of `main` is not grounds to reject a successful accepted operation.
+
 ## Lifecycle ownership
 
 The controller validates and dispatches an exact authorized operation, then accepts only a bounded terminal evidence envelope tied to the request, operation, and implementation revision. It does not duplicate operation-internal lifecycle proof.
