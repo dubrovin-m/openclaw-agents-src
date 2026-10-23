@@ -388,7 +388,7 @@ function activeOperation(state) {
   return active[0] ?? null;
 }
 
-async function reconcileOperation(state) {
+export async function reconcileOperation(state, { prepareCheckout = prepareSourceCheckout, diagnoseOperation = runDiagnostics } = {}) {
   const active = activeOperation(state);
   if (!active) return false;
   const [key, record] = active;
@@ -402,7 +402,7 @@ async function reconcileOperation(state) {
     state.deployment_blocked = true;
     state.block_reason = `request ${requestId} outcome unknown`;
     advanceWatermarkForRecord(state, requestId, record);
-    state.last_diagnostic = await runDiagnostics(requestId, record.sha);
+    state.last_diagnostic = await diagnoseOperation(requestId, record.sha);
     writeState(state);
     return false;
   }
@@ -422,8 +422,8 @@ async function reconcileOperation(state) {
       record.evidence_error = 'staged validation operation mutated production';
     } else {
       try {
-        prepareSourceCheckout(record.sha, sourceDir, { requireCurrentMain: false });
-        postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
+        prepareCheckout(record.sha, sourceDir, { requireCurrentMain: false });
+        postDiagnostic = await diagnoseOperation(requestId, record.sha, record.sha);
         if (!postDiagnostic.ok) {
           outcome = 'BLOCKED_REQUIRES_JUDGMENT';
           block = true;
@@ -442,7 +442,7 @@ async function reconcileOperation(state) {
       }
     }
   } else {
-    postDiagnostic = await runDiagnostics(requestId, record.sha);
+    postDiagnostic = await diagnoseOperation(requestId, record.sha);
   }
 
   record.state = outcome;
