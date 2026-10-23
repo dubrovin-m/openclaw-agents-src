@@ -12,11 +12,11 @@
     "name": "openclaw-plugin-training",
     "version": "0.1.10",
     "artifact": "artifacts/openclaw-plugin-training-0.1.10.tgz",
-    "sha256": "ebf699f25bcff78825f99fb5ca568c0c1bf4ec7de03a75d57d354f1f94257805",
+    "sha256": "0ba66e05b08538f4d43697db35374f626a916e1fd5c46d0a111c6265ca307cd9",
     "runtime_entry_sha256": "a1c5e4de238f5371a7f2a3d2fcf98fd4c780b939c6314866ed70b9048f58b8b8"
   },
   "source": {
-    "source_revision": "acff50142d7844fb47c22e37b29ab3f9376f6f7f",
+    "source_revision": "5b20bda4aadbab96be502442823361677b31dc3d",
     "workspace_sha256": {
       "AGENTS.md": "bf6445d6b955a529066ac8ea63bc92fcab14744a7d16cd39e1cb66467ea94b47",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
