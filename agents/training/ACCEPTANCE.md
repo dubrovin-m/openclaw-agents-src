@@ -56,6 +56,8 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-STR-008 | SOURCE+ACTIVATION | Skip deterministically marks remaining planned sets SKIPPED; interpreting `пропустить` remains behavioral. |
 | TRA-STR-009 | SOURCE+ACTIVATION | Session-only substitution preserves canonical original exercise and does not mutate the Program Version; natural-language request remains behavioral. |
 | TRA-STR-010 | SOURCE-QUALIFIED | No warm-up-set operational model exists; workspace explicitly forbids requesting, inferring, or recording warm-up sets. |
+| TRA-STR-011 | SOURCE+ACTIVATION | Synthetic four-set actuals persist 6/6/6/4 reps and 2/2/0/0 RIR; workspace directs the model to inherit omitted prescribed fields without asking redundant questions. Natural-language interpretation remains behavioral. |
+| TRA-STR-012 | BEHAVIORAL-ACTIVATION | Workspace prohibits treating non-effort-limited interruptions, including pain or equipment faults, as RIR 0; live interpretation remains behavioral. |
 
 ## Exercise semantics and validation
 
@@ -71,6 +73,8 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-VAL-008 | SOURCE-QUALIFIED | Correction operation validates independent load plausibility and retains before/after/reason audit evidence; suspicious changes require the native owner exception path. |
 | TRA-VAL-009 | SOURCE-QUALIFIED | Anomalous prescription rejected before persistence; only semantically comparable modern history takes precedence over stale initial policy. Migrated plate-only barbell loads cannot establish progression or independent plausibility baselines; zero assistance remains valid evidence. Absolute bounds and rollback are tested. |
 | TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise identity, equipment and load, and cannot transfer after exercise substitution. Live command context remains unqualified. |
+| TRA-VAL-011 | SOURCE+ACTIVATION | Synthetic unknown-bar plate loads persist as null total load with plate notes; progression does not invent a comparable numeric load. Interpreting the user's plate-only report remains behavioral. |
+| TRA-VAL-012 | SOURCE+ACTIVATION | Deterministic barbell prescription check rejects candidates that differ from calculated progression (including null), and false HOLD_LAST_COMPARABLE_LOAD provenance. Unknown actual total loads cannot establish comparable numeric history; justified session-level target adjustment remains allowed. |
 
 ## Session lifecycle and integrity
 
