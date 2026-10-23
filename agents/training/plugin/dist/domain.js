@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { newId, nowIso, withTransaction } from "./store.js";
 function one(db, sql, ...params) {
     return db.prepare(sql).get(...params);
@@ -492,9 +493,23 @@ export function getProgressionCandidate(db, sessionExerciseId) {
     const prior = all(db, `SELECT se.session_exercise_id,ts.started_at,ts.local_date,se.equipment_instance_id
        FROM session_exercises se
        JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+       JOIN exercises e ON e.exercise_id=se.exercise_id
       WHERE se.exercise_id=?
         AND se.session_exercise_id<>?
         AND se.status='COMPLETED'
+        -- Legacy imported barbell records may count plates only, whereas the
+        -- active TOTAL_EXTERNAL contract includes the bar. Provenance is
+        -- recorded per migrated exercise: retain the history, not its loads as
+        -- comparable prescription or anomaly-baseline evidence.
+        AND NOT (
+          e.load_mode='TOTAL_EXTERNAL'
+          AND lower(trim(coalesce(e.equipment_type,'')))='barbell'
+          AND EXISTS (
+            SELECT 1 FROM migration_records mr
+             WHERE mr.target_type='session_exercise'
+               AND mr.target_id=se.session_exercise_id
+          )
+        )
         AND ts.status<>'VOIDED'
         AND ts.local_date<=?
         AND (
@@ -578,6 +593,87 @@ function samePrescription(existing, requested) {
             && row.target_distance_m === (set.target_distance_m ?? null);
     });
 }
+/** Uses the deterministic progression and comparable history, not supplied candidate fields. */
+function validateLoadIndependent(db, sessionExerciseId, load, prescribedLoad) {
+    const evidence = one(db, `SELECT se.exercise_id,e.load_mode,se.equipment_instance_id
+       FROM session_exercises se JOIN exercises e ON e.exercise_id=se.exercise_id
+      WHERE se.session_exercise_id=?`, sessionExerciseId);
+    if (!evidence)
+        throw new Error("Exercise load semantics are unavailable");
+    if (load === null)
+        return;
+    if (!Number.isFinite(load) || load < 0 || load > 1000)
+        throw new Error("INVALID load");
+    if (evidence.load_mode === "NONE" || evidence.load_mode === "BODYWEIGHT") {
+        throw new Error("INVALID external load for bodyweight or no-load exercise");
+    }
+    const progression = getProgressionCandidate(db, sessionExerciseId);
+    const prior = progression.recent_exposures
+        .map((row) => row.load_kg)
+        .filter((value) => typeof value === "number" && Number.isFinite(value) && value >= 0)
+        .slice(0, 5).sort((a, b) => a - b);
+    const median = prior.length ? prior[Math.floor(prior.length / 2)] : null;
+    // Prefer the most recent independent comparable work. A stale initial load
+    // must not override a valid current progression established through history.
+    const reference = [median, progression.candidate_load_kg, progression.policy.initial_load_kg]
+        .find((value) => typeof value === "number" && Number.isFinite(value) && value >= 0);
+    // Persisted prescription is a last resort, never an independent baseline.
+    const baseline = reference ??
+        (prescribedLoad != null && Number.isFinite(prescribedLoad) && prescribedLoad >= 0 ? prescribedLoad : null);
+    const maximumByMode = {
+        TOTAL_EXTERNAL: 400,
+        PER_HAND: 120,
+        PER_SIDE: 200,
+        ADDED_BODYWEIGHT: 250,
+        ASSISTANCE: 250,
+        MACHINE_DISPLAYED: 500,
+    };
+    const excessive = load > (maximumByMode[evidence.load_mode] ?? 400) ||
+        (baseline !== null && (load >= Math.max(baseline * 2.5, baseline + 40) ||
+            (baseline >= 20 && load <= baseline / 5 && baseline - load >= 30)));
+    if (!excessive)
+        return;
+    const approvals = all(db, `SELECT payload_json AS details_json FROM training_events
+      WHERE event_type='LOAD_EXCEPTION_APPROVED'
+        AND aggregate_type='session_exercise' AND aggregate_id=?`, sessionExerciseId);
+    const approved = approvals.some(({ details_json }) => {
+        const approval = JSON.parse(details_json);
+        return approval.load_kg === load &&
+            approval.exercise_id === evidence.exercise_id &&
+            approval.equipment_instance_id === evidence.equipment_instance_id;
+    });
+    if (!approved)
+        throw new Error(`SUSPICIOUS load ${load}; independent progression/history check requires owner confirmation`);
+}
+/** Only the owner-authenticated native command invokes this bounded exception path. */
+export function confirmExceptionalLoad(db, sessionExerciseId, load) {
+    return withTransaction(db, () => {
+        const exercise = one(db, `SELECT se.status,ts.status AS session_status,se.exercise_id,e.load_mode,se.equipment_instance_id
+         FROM session_exercises se
+         JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+         JOIN exercises e ON e.exercise_id=se.exercise_id
+        WHERE se.session_exercise_id=?`, sessionExerciseId);
+        if (!exercise || !["ACTIVE", "PAUSED", "COMPLETED", "ABANDONED"].includes(exercise.session_status) ||
+            !["PENDING", "ACTIVE", "DEFERRED", "COMPLETED"].includes(exercise.status)) {
+            throw new Error("An existing non-voided session exercise is required");
+        }
+        if (!Number.isFinite(load) || load < 0 || load > 1000 ||
+            exercise.load_mode === "BODYWEIGHT" || exercise.load_mode === "NONE") {
+            throw new Error("INVALID exceptional load");
+        }
+        const details = JSON.stringify({
+            exercise_id: exercise.exercise_id,
+            load_kg: load,
+            equipment_instance_id: exercise.equipment_instance_id,
+        });
+        const prior = all(db, `SELECT payload_json AS details_json FROM training_events
+        WHERE event_type='LOAD_EXCEPTION_APPROVED' AND aggregate_type='session_exercise' AND aggregate_id=?`, sessionExerciseId);
+        if (prior.some((row) => row.details_json === details))
+            return { replayed: true, session_exercise_id: sessionExerciseId, load_kg: load };
+        db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(newId("evt"), "LOAD_EXCEPTION_APPROVED", "session_exercise", sessionExerciseId, details, nowIso());
+        return { replayed: false, session_exercise_id: sessionExerciseId, load_kg: load };
+    });
+}
 export function prescribeExercise(db, sessionExerciseId, sets) {
     return withTransaction(db, () => {
         const exercise = one(db, "SELECT session_exercise_id,training_session_id,status FROM session_exercises WHERE session_exercise_id=?", sessionExerciseId);
@@ -595,6 +691,10 @@ export function prescribeExercise(db, sessionExerciseId, sets) {
         }
         if (!sets.length)
             throw new Error("At least one working set is required");
+        for (const set of sets) {
+            validateLoadIndependent(db, sessionExerciseId, set.candidate_load_kg);
+            validateLoadIndependent(db, sessionExerciseId, set.target_load_kg);
+        }
         const now = nowIso();
         const active = one(db, "SELECT session_exercise_id FROM session_exercises WHERE training_session_id=? AND status='ACTIVE'", exercise.training_session_id);
         if (active && active.session_exercise_id !== sessionExerciseId) {
@@ -622,7 +722,7 @@ export function getSessionExercise(db, id) {
         sets: all(db, "SELECT * FROM session_sets WHERE session_exercise_id=? ORDER BY set_number", id),
     };
 }
-function validateActual(target, actual) {
+function validateActual(db, sessionExerciseId, target, actual) {
     if (actual.reps !== null && (!Number.isInteger(actual.reps) || actual.reps < 0 || actual.reps > 200)) {
         throw new Error("INVALID reps");
     }
@@ -641,10 +741,7 @@ function validateActual(target, actual) {
     if (actual.reps === null && actual.duration_sec == null && actual.distance_m == null) {
         throw new Error("Actual set requires reps, duration, or distance");
     }
-    const targetLoad = target.target_load_kg == null ? null : Number(target.target_load_kg);
-    if (targetLoad && actual.load_kg && actual.load_kg >= Math.max(targetLoad * 3, targetLoad + 150)) {
-        throw new Error(`SUSPICIOUS load ${actual.load_kg}; target is ${targetLoad}`);
-    }
+    validateLoadIndependent(db, sessionExerciseId, actual.load_kg, target.target_load_kg == null ? null : Number(target.target_load_kg));
     const targetReps = target.target_reps == null ? null : Number(target.target_reps);
     if (targetReps && actual.reps !== null && actual.reps >= Math.max(targetReps * 4, targetReps + 30)) {
         throw new Error(`SUSPICIOUS reps ${actual.reps}; target is ${targetReps}`);
@@ -682,7 +779,7 @@ export function completeExercise(db, sessionExerciseId, mode, actuals = []) {
             if (Number(target.set_number) !== actual.set_number) {
                 throw new Error("Actual set numbers must match prescription order");
             }
-            validateActual(target, actual);
+            validateActual(db, sessionExerciseId, target, actual);
             update.run(actual.reps, actual.load_kg, actual.rir, actual.duration_sec ?? null, actual.distance_m ?? null, actual.notes ?? null, target.session_set_id);
         });
         const now = nowIso();
@@ -954,7 +1051,7 @@ export function correctSetResult(db, sessionSetId, patch, reason) {
             duration_sec: field === "actual_duration_sec" ? (value == null ? null : Number(value)) : (set.actual_duration_sec == null ? null : Number(set.actual_duration_sec)),
             distance_m: field === "actual_distance_m" ? (value == null ? null : Number(value)) : (set.actual_distance_m == null ? null : Number(set.actual_distance_m)),
         };
-        validateActual(set, candidate);
+        validateActual(db, String(set.session_exercise_id), set, candidate);
         const previous = set[field];
         if (previous === value) {
             return { replayed: true, set: one(db, "SELECT * FROM session_sets WHERE session_set_id=?", sessionSetId) };
@@ -965,6 +1062,15 @@ export function correctSetResult(db, sessionSetId, patch, reason) {
         db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(newId("evt"), "SET_RESULT_CORRECTED", "session_set", sessionSetId, JSON.stringify({ field, before: previous, after: value, reason: reason ?? null }), now);
         return { replayed: false, set: one(db, "SELECT * FROM session_sets WHERE session_set_id=?", sessionSetId) };
     });
+}
+/** Fingerprint the immutable proposal and its base version, not model-supplied approval text. */
+export function programChangeFingerprint(proposal) {
+    return createHash("sha256").update(JSON.stringify([
+        proposal.proposal_id,
+        proposal.base_program_version_id,
+        proposal.change_type,
+        proposal.proposal_json,
+    ])).digest("hex").slice(0, 16);
 }
 export function proposeProgramChange(db, params) {
     return withTransaction(db, () => {
@@ -977,7 +1083,8 @@ export function proposeProgramChange(db, params) {
       proposal_id,base_program_version_id,created_by,change_type,proposal_json,rationale,
       status,decision_actor,decided_at,applied_program_version_id,created_at
     ) VALUES(?,?,?,?,?,?,'PENDING',NULL,NULL,NULL,?)`).run(proposalId, active.program_version_id, params.created_by ?? "TRAINING_AGENT", params.change_type, JSON.stringify(params.proposal), params.rationale, now);
-        return one(db, "SELECT * FROM program_change_proposals WHERE proposal_id=?", proposalId);
+        const created = one(db, "SELECT * FROM program_change_proposals WHERE proposal_id=?", proposalId);
+        return { ...created, approval_fingerprint: programChangeFingerprint(created) };
     });
 }
 function requiredString(value, field) {
@@ -1173,8 +1280,8 @@ export function applyApprovedProgramChange(db, proposalId, decisionActor = "USER
                 active_program: one(db, "SELECT * FROM program_versions WHERE status='ACTIVE'"),
             };
         }
-        if (proposal.status !== "PENDING" && proposal.status !== "APPROVED") {
-            throw new Error("Program change proposal is not applicable");
+        if (proposal.status !== "APPROVED" || proposal.decision_actor !== decisionActor) {
+            throw new Error("Program change lacks independently verified owner approval");
         }
         const active = one(db, "SELECT program_version_id FROM program_versions WHERE status='ACTIVE'");
         if (!active || active.program_version_id !== proposal.base_program_version_id) {
@@ -1208,6 +1315,30 @@ export function applyApprovedProgramChange(db, proposalId, decisionActor = "USER
             active_program: one(db, "SELECT * FROM program_versions WHERE program_version_id=?", maps.newVersionId),
             recommendation: getRecommendation(db),
         };
+    });
+}
+/** Called only from the host's owner-authenticated native command handler.
+ * Both the approval and version activation commit in the same transaction.
+ */
+export function approveAndApplyProgramChange(db, proposalId, fingerprint) {
+    return withTransaction(db, () => {
+        const proposal = one(db, "SELECT * FROM program_change_proposals WHERE proposal_id=?", proposalId);
+        if (!proposal)
+            throw new Error("Program change proposal not found");
+        if (!/^[0-9a-f]{16}$/.test(fingerprint) || programChangeFingerprint(proposal) !== fingerprint) {
+            throw new Error("Program approval fingerprint does not match the exact proposal");
+        }
+        if (proposal.status === "APPLIED" && proposal.decision_actor === "USER") {
+            return { replayed: true, proposal, active_program: one(db, "SELECT * FROM program_versions WHERE program_version_id=?", proposal.applied_program_version_id) };
+        }
+        if (proposal.status !== "PENDING")
+            throw new Error("Program proposal is not pending");
+        if (getOpenSession(db))
+            throw new Error("Program Version cannot change while a session is open");
+        db.prepare(`UPDATE program_change_proposals
+      SET status='APPROVED',decision_actor='USER',decided_at=? WHERE proposal_id=?`)
+            .run(nowIso(), proposalId);
+        return applyApprovedProgramChange(db, proposalId, "USER");
     });
 }
 export function recordTrainingFeedback(db, params) {

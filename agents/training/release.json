@@ -10,13 +10,13 @@
   "plugin": {
     "id": "training",
     "name": "openclaw-plugin-training",
-    "version": "0.1.7",
-    "artifact": "artifacts/openclaw-plugin-training-0.1.7.tgz",
-    "sha256": "60294328e1ad5db542ec56989f8910d54cbb7a5616dee78b86d54e180c96cf4c",
+    "version": "0.1.8",
+    "artifact": "artifacts/openclaw-plugin-training-0.1.8.tgz",
+    "sha256": "1f9fede5d1261ff95d4cbf014d89054df38cdeb7a18456c4415f38cc7d236590",
     "runtime_entry_sha256": "fcfc2a5c583d9d070e72673c638847865875b99898bc10a264636cd08d9983c0"
   },
   "source": {
-    "source_revision": "af3bb627ef1fa8a870dba40b86afd0611986cca4",
+    "source_revision": "218384523a87b9031c4f5a51e1b9dc72b0cc3dbb",
     "workspace_sha256": {
       "AGENTS.md": "ea53c6bf5c8d5ea6a9699d08d2ec6d9f87ccf8432d27ab0cbf707edf04a87fd7",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
@@ -26,7 +26,7 @@
     },
     "tools_sha256": "6c41aa9c0495cf222c7472fc78b2168208e0971ced64c79c20ce28bc74c2baf1",
     "agent_fragment_sha256": "413d33f137a3cccc58851d39881c58ce54d50989ccf2f7dd0fc7ee555c9600f9",
-    "plugin_manifest_sha256": "cac01b8fe1874e598f9945c0e9a961c191a4ff7aa2801563ac3474573d21d681"
+    "plugin_manifest_sha256": "390e3cf176815c97673b72426253f6f8f6295437ffe774a0bf42186c9e763bde"
   },
   "stage_contract": {
     "plugin_enabled": false,
