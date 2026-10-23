@@ -10,15 +10,15 @@
   "plugin": {
     "id": "training",
     "name": "openclaw-plugin-training",
-    "version": "0.1.9",
-    "artifact": "artifacts/openclaw-plugin-training-0.1.9.tgz",
-    "sha256": "b6a464f05a368a7bfe3a1d0c37ddd962375263264b2272e84c79ba29a129f283",
+    "version": "0.1.10",
+    "artifact": "artifacts/openclaw-plugin-training-0.1.10.tgz",
+    "sha256": "ebf699f25bcff78825f99fb5ca568c0c1bf4ec7de03a75d57d354f1f94257805",
     "runtime_entry_sha256": "a1c5e4de238f5371a7f2a3d2fcf98fd4c780b939c6314866ed70b9048f58b8b8"
   },
   "source": {
-    "source_revision": "218384523a87b9031c4f5a51e1b9dc72b0cc3dbb",
+    "source_revision": "acff50142d7844fb47c22e37b29ab3f9376f6f7f",
     "workspace_sha256": {
-      "AGENTS.md": "ea53c6bf5c8d5ea6a9699d08d2ec6d9f87ccf8432d27ab0cbf707edf04a87fd7",
+      "AGENTS.md": "bf6445d6b955a529066ac8ea63bc92fcab14744a7d16cd39e1cb66467ea94b47",
       "HEARTBEAT.md": "4096861cbeb49407280557b05c057d4fdf3d8c1b1c59fb2fce163beb5c9bdb79",
       "IDENTITY.md": "5ae138cd5f900dccf7cc93d3a741b0f284d8d4f6be1fa7280e22e1cd1d02d513",
       "SOUL.md": "34121b15d258c5952ec8e8ab8579cc74d693d19d6a9a29e806326d34faa08266",
@@ -26,7 +26,7 @@
     },
     "tools_sha256": "6c41aa9c0495cf222c7472fc78b2168208e0971ced64c79c20ce28bc74c2baf1",
     "agent_fragment_sha256": "413d33f137a3cccc58851d39881c58ce54d50989ccf2f7dd0fc7ee555c9600f9",
-    "plugin_manifest_sha256": "fd9537edaaceb7fce7a3f9fd46cc247d8cfe3bf40586329ff0c5ae769aa8947b"
+    "plugin_manifest_sha256": "a7c6172135c2384f94a321c4ef45618a58fbc274112cdbd80e5ddd546e03d51e"
   },
   "stage_contract": {
     "plugin_enabled": false,
