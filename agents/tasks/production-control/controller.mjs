@@ -393,7 +393,14 @@ function activeOperation(state) {
   return active[0] ?? null;
 }
 
-export async function reconcileOperation(state, { prepareCheckout = prepareSourceCheckout, diagnoseOperation = runDiagnostics } = {}) {
+export function confirmedTargetStatePatch(record, postDiagnostic, timestamp = now()) {
+  if (postDiagnostic?.ok !== true || !SHA_RE.test(record?.sha ?? '')) return null;
+  const patch = { production_baseline_sha: record.sha };
+  if (record.validation_only) Object.assign(patch, { mode: 'ACTIVE', activated_at: timestamp });
+  return patch;
+}
+
+async function reconcileOperation(state) {
   const active = activeOperation(state);
   if (!active) return false;
   const [key, record] = active;
@@ -407,7 +414,7 @@ export async function reconcileOperation(state, { prepareCheckout = prepareSourc
     state.deployment_blocked = true;
     state.block_reason = `request ${requestId} outcome unknown`;
     advanceWatermarkForRecord(state, requestId, record);
-    state.last_diagnostic = await diagnoseOperation(requestId, record.sha);
+    state.last_diagnostic = await runDiagnostics(requestId, record.sha);
     writeState(state);
     return false;
   }
@@ -427,18 +434,15 @@ export async function reconcileOperation(state, { prepareCheckout = prepareSourc
       record.evidence_error = 'staged validation operation mutated production';
     } else {
       try {
-        prepareCheckout(record.sha, sourceDir, { requireCurrentMain: false });
-        postDiagnostic = await diagnoseOperation(requestId, record.sha, record.sha);
-        if (!postDiagnostic.ok) {
+        prepareSourceCheckout(record.sha, sourceDir, { requireCurrentMain: false });
+        postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
+        const targetPatch = confirmedTargetStatePatch(record, postDiagnostic);
+        if (!targetPatch) {
           outcome = 'BLOCKED_REQUIRES_JUDGMENT';
           block = true;
           record.evidence_error = 'post-operation target diagnostics failed';
         } else {
-          state.production_baseline_sha = record.sha;
-          if (record.validation_only) {
-            state.mode = 'ACTIVE';
-            state.activated_at = now();
-          }
+          Object.assign(state, targetPatch);
         }
       } catch (error) {
         outcome = 'BLOCKED_REQUIRES_JUDGMENT';
@@ -447,7 +451,7 @@ export async function reconcileOperation(state, { prepareCheckout = prepareSourc
       }
     }
   } else {
-    postDiagnostic = await diagnoseOperation(requestId, record.sha);
+    postDiagnostic = await runDiagnostics(requestId, record.sha);
   }
 
   record.state = outcome;
