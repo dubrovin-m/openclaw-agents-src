@@ -34,7 +34,7 @@ Production activation remains a separate governed step after private Fitness mig
 
 The stage-only `deploy.sh` is intentionally **not** an active-agent updater; it must continue refusing an already activated Training runtime.
 
-For an explicitly owner-approved exceptional upgrade from the **exact frozen active 0.1.3 predecessor** to 0.1.9, `active-upgrade.mjs` provides a bounded deterministic implementation-owned entrypoint. It does **not** create a new controller, authorize its own execution, merge a PR, or claim the Task production controller's authority.
+For an explicitly owner-approved exceptional upgrade from the **exact frozen active 0.1.3 predecessor** to 0.1.10, `active-upgrade.mjs` provides a bounded deterministic implementation-owned entrypoint. It does **not** create a new controller, authorize its own execution, merge a PR, or claim the Task production controller's authority.
 
 - `node agents/training/active-upgrade.mjs --preflight` is read-only and refuses nonmatching host, source/release, predecessor plugin, predecessor Training tool policy and AGENTS instructions, Training schema/integrity, owner-only Telegram routing, or an active/paused Training Session.
 - `node agents/training/active-upgrade.mjs --apply --source-sha <exact-approved-main-sha>` requires **separate production mutation approval** and a frozen, CI-qualified implementation checkout. The SHA argument verifies identity, not authorization. A ChatGPT/agent request is not authorization simply because it can invoke the script.
@@ -51,3 +51,9 @@ The source has disposable regression coverage for policy-only and running-Gatewa
 ## Imported barbell load comparability
 
 Migrated Fitness barbell working-set loads have uncertain inclusion of the bar itself, while the active `TOTAL_EXTERNAL` contract counts the full external mass. Training preserves these historical facts, but excludes the migrated `TOTAL_EXTERNAL`/`barbell` session-exercise records (identified through `migration_records`) from **both** comparable progression exposures and the independent anomaly-check baseline. Modern recorded barbell work remains comparable; other load semantics are unchanged. With no comparable barbell exposure, prescription falls back to approved initial policy or remains without a candidate, never to a fabricated conversion. Schema v2 and migrated history are unchanged.
+
+## Partial reports and current barbell loads
+
+For a complete working-set report, the Training Agent inherits unspecified per-set repetitions, RIR, and valid load from the stored prescription. An unqualified shortfall in repetitions defaults to RIR 0, but a reported pain, equipment, technique, or other non-effort-limited interruption is not treated as muscular failure. The deterministic service still validates all persisted actuals; conversational interpretation remains behavioral.
+
+For active `TOTAL_EXTERNAL` barbell work, a load is numeric only when it includes the bar. With plates-only input and unknown bar mass, recorded actual total load stays null and plates are preserved in set notes. The service refuses a model-supplied numeric progression candidate when independent progression has no comparable load history or configured initial load, and rejects falsely claimed last-comparable-load provenance. A session-level starting load must be a justified adjustment, not fabricated historical progression.

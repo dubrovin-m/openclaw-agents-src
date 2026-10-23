@@ -691,9 +691,28 @@ export function prescribeExercise(db, sessionExerciseId, sets) {
         }
         if (!sets.length)
             throw new Error("At least one working set is required");
+        const loadSemantics = one(db, `SELECT e.load_mode,e.equipment_type FROM session_exercises se
+       JOIN exercises e ON e.exercise_id=se.exercise_id WHERE se.session_exercise_id=?`, sessionExerciseId);
+        const isTotalBarbell = loadSemantics?.load_mode === "TOTAL_EXTERNAL" &&
+            loadSemantics.equipment_type?.trim().toLowerCase() === "barbell";
+        const progression = isTotalBarbell ? getProgressionCandidate(db, sessionExerciseId) : null;
         for (const set of sets) {
             validateLoadIndependent(db, sessionExerciseId, set.candidate_load_kg);
             validateLoadIndependent(db, sessionExerciseId, set.target_load_kg);
+            // Keep the deterministic no-history result distinct from a model-chosen
+            // session starting load. Historical plates-only data is not comparable.
+            if (progression?.basis === "NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD") {
+                if (set.candidate_load_kg !== null) {
+                    throw new Error("INVALID barbell progression candidate: no comparable history or initial load");
+                }
+                if (set.target_load_kg !== null && !set.prescription_reason?.trim()) {
+                    throw new Error("INVALID barbell starting load: session-level justification required");
+                }
+            }
+            if (isTotalBarbell && set.prescription_reason === "HOLD_LAST_COMPARABLE_LOAD" &&
+                progression?.basis !== "HOLD_LAST_COMPARABLE_LOAD") {
+                throw new Error("INVALID barbell progression provenance: no last comparable load");
+            }
         }
         const now = nowIso();
         const active = one(db, "SELECT session_exercise_id FROM session_exercises WHERE training_session_id=? AND status='ACTIVE'", exercise.training_session_id);

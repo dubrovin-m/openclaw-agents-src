@@ -118,15 +118,16 @@ function fixture() {
   return db;
 }
 
-function fourSets(load = 40) {
+function fourSets(load: number | null = 40, candidate: number | null = null) {
   return [1, 2, 3, 4].map((set_number) => ({
     set_number,
     candidate_reps: 6,
-    candidate_load_kg: load,
+    candidate_load_kg: candidate,
     candidate_rir: 2,
     target_reps: 6,
     target_load_kg: load,
     target_rir: 2,
+    prescription_reason: "SESSION_STARTING_LOAD",
   }));
 }
 
@@ -250,7 +251,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
         {
           set_number: 2,
           candidate_reps: null,
-          candidate_load_kg: 32,
+          candidate_load_kg: null,
           candidate_rir: null,
           candidate_duration_sec: null,
           candidate_distance_m: 40,
@@ -259,6 +260,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
           target_rir: null,
           target_duration_sec: null,
           target_distance_m: 40,
+          prescription_reason: "SESSION_STARTING_LOAD",
         },
       ]);
       completeExercise(db, id, "AS_PRESCRIBED");
@@ -310,11 +312,12 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       prescribeExercise(db, id, [{
         set_number: 1,
         candidate_reps: 6,
-        candidate_load_kg: 70,
+        candidate_load_kg: null,
         candidate_rir: 2,
         target_reps: 6,
         target_load_kg: 70,
         target_rir: 2,
+        prescription_reason: "SESSION_STARTING_LOAD",
       }]);
       expect(() => completeExercise(db, id, "ACTUALS", [{
         set_number: 1,
@@ -1189,6 +1192,63 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     } finally {
       db.close();
     }
+  });
+
+  it("TRA-STR-011: complete per-set actuals preserve prescribed fields and report RIR deviations", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {timezone_at_start:"Europe/Moscow",local_date:"2026-10-06"});
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db, id, fourSets(60));
+      completeExercise(db, id, "ACTUALS", [
+        {set_number:1,reps:6,load_kg:60,rir:2},
+        {set_number:2,reps:6,load_kg:60,rir:2},
+        {set_number:3,reps:6,load_kg:60,rir:0},
+        {set_number:4,reps:4,load_kg:60,rir:0},
+      ]);
+      const stored = db.prepare("SELECT actual_reps,actual_rir FROM session_sets WHERE session_exercise_id=? ORDER BY set_number")
+        .all(id) as Array<{actual_reps:number;actual_rir:number}>;
+      expect(stored.map(s => [s.actual_reps,s.actual_rir])).toEqual([[6,2],[6,2],[6,0],[4,0]]);
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-011: unknown bar mass retains plates in notes but no comparable total-load exposure", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {timezone_at_start:"Europe/Moscow",local_date:"2026-10-06"});
+      const id = started.session.exercises[0].session_exercise_id;
+      prescribeExercise(db,id,fourSets(null));
+      completeExercise(db,id,"ACTUALS",[1,2,3,4].map((set_number) => ({
+        set_number,reps:6,load_kg:null,rir:2,notes:"20 kg plates, unknown bar mass",
+      })));
+      finishSession(db,started.session.training_session_id);
+      const stored = db.prepare("SELECT actual_load_kg,notes FROM session_sets WHERE session_exercise_id=?")
+        .all(id) as Array<{actual_load_kg:number|null;notes:string}>;
+      expect(stored).toHaveLength(4);
+      expect(stored.every(s => s.actual_load_kg === null && s.notes.includes("20 kg plates"))).toBe(true);
+      const next: any = startProgramSession(db,{selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:"2026-10-07"});
+      const candidate = getProgressionCandidate(db,next.session.exercises[0].session_exercise_id);
+      expect(candidate.candidate_load_kg).toBeNull();
+      expect(candidate.recent_exposures[0]?.load_kg).toBeNull();
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-012: no-history barbell candidate cannot be fabricated from plate-only history", () => {
+    const db = fixture();
+    try {
+      const started: any = startProgramSession(db, {timezone_at_start:"Europe/Moscow",local_date:"2026-10-06"});
+      const id = started.session.exercises[0].session_exercise_id;
+      expect(getProgressionCandidate(db,id)).toMatchObject({candidate_load_kg:null,basis:"NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD"});
+      expect(() => prescribeExercise(db,id,fourSets(20,20))).toThrow(/INVALID barbell progression candidate/);
+      expect(() => prescribeExercise(db,id,fourSets(20).map(s => ({...s,prescription_reason:"HOLD_LAST_COMPARABLE_LOAD"}))))
+        .toThrow(/INVALID barbell progression provenance/);
+      expect(() => prescribeExercise(db,id,fourSets(20).map(s => ({...s,prescription_reason:null}))))
+        .toThrow(/session-level justification required/);
+      expect((db.prepare("SELECT count(*) AS n FROM session_sets WHERE session_exercise_id=?").get(id) as any).n).toBe(0);
+      prescribeExercise(db,id,fourSets(60));
+      expect((db.prepare("SELECT candidate_load_kg,target_load_kg,prescription_reason FROM session_sets WHERE session_exercise_id=? LIMIT 1")
+        .get(id) as any)).toMatchObject({candidate_load_kg:null,target_load_kg:60,prescription_reason:"SESSION_STARTING_LOAD"});
+    } finally { db.close(); }
   });
 
   it("TRA-VAL-009: anomalous prescription is rejected before any set, event, or exercise-status mutation", () => {
