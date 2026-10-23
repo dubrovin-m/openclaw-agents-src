@@ -236,6 +236,11 @@ const recoveryDir = path.join(recoveryBase,sourceSha);
 if (mode==='--apply') {
   fs.mkdirSync(lock,{mode:0o700}); // persists through external native acceptance
 } else {
+  // Reading a missing pending state must never create a new lock. In
+  // particular, a repeated finalize must not lock an already accepted agent.
+  if (!fs.existsSync(lock) || !fs.existsSync(recoveryDir)) {
+    die('No pending Training cutover recovery set');
+  }
   ensurePrivateDirectory(lock);
   ensurePrivateDirectory(recoveryDir);
 }

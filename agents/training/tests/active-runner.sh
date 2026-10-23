@@ -125,6 +125,14 @@ NODE
     test ! -e "$R/state/.training-active-upgrade-recovery/.active.lock"
     test ! -e "$R/state/.training-active-upgrade-recovery/$SHA/config.before"
     test ! -e "$R/state/.training-active-upgrade-recovery/$SHA/AGENTS.before"
+    # Repeated finalize must refuse without creating a lock.
+    set +e
+    node "$ROOT/active-upgrade.mjs" --test-root "$R" --finalize --source-sha "$SHA" >"$TMP/re-finalize.out" 2>"$TMP/re-finalize.err"
+    rc=$?
+    set -e
+    test "$rc" -ne 0
+    grep -q 'No pending Training cutover recovery set' "$TMP/re-finalize.err"
+    test ! -e "$R/state/.training-active-upgrade-recovery/.active.lock"
   else
     set +e
     TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE="$scenario" node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" >"$TMP/$scenario.out" 2>"$TMP/$scenario.err"
