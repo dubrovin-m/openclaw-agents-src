@@ -529,7 +529,9 @@ export function getProgressionCandidate(db, sessionExerciseId) {
             set_count: sets.length,
         };
     });
-    const latestComparable = exposures.find((exposure) => exposure.load_kg !== undefined);
+    // A completed exposure with unknown or non-uniform actual load does not
+    // establish a numerical basis for the next load prescription.
+    const latestComparable = exposures.find((exposure) => typeof exposure.load_kg === "number");
     let candidateLoad = policy.initial_load_kg ?? null;
     let basis = "INITIAL_LOAD";
     if (current.load_mode === "BODYWEIGHT" || current.load_mode === "NONE") {
@@ -699,15 +701,14 @@ export function prescribeExercise(db, sessionExerciseId, sets) {
         for (const set of sets) {
             validateLoadIndependent(db, sessionExerciseId, set.candidate_load_kg);
             validateLoadIndependent(db, sessionExerciseId, set.target_load_kg);
-            // Keep the deterministic no-history result distinct from a model-chosen
-            // session starting load. Historical plates-only data is not comparable.
-            if (progression?.basis === "NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD") {
-                if (set.candidate_load_kg !== null) {
-                    throw new Error("INVALID barbell progression candidate: no comparable history or initial load");
-                }
-                if (set.target_load_kg !== null && !set.prescription_reason?.trim()) {
-                    throw new Error("INVALID barbell starting load: session-level justification required");
-                }
+            // Provenance belongs to deterministic progression. A model may adjust
+            // the target (with a reason), never the historical candidate itself.
+            if (progression && set.candidate_load_kg !== progression.candidate_load_kg) {
+                throw new Error("INVALID barbell progression candidate: differs from deterministic calculation");
+            }
+            if (progression?.basis === "NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD" &&
+                set.target_load_kg !== null && !set.prescription_reason?.trim()) {
+                throw new Error("INVALID barbell starting load: session-level justification required");
             }
             if (isTotalBarbell && set.prescription_reason === "HOLD_LAST_COMPARABLE_LOAD" &&
                 progression?.basis !== "HOLD_LAST_COMPARABLE_LOAD") {

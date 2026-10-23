@@ -74,7 +74,7 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-VAL-009 | SOURCE-QUALIFIED | Anomalous prescription rejected before persistence; only semantically comparable modern history takes precedence over stale initial policy. Migrated plate-only barbell loads cannot establish progression or independent plausibility baselines; zero assistance remains valid evidence. Absolute bounds and rollback are tested. |
 | TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise identity, equipment and load, and cannot transfer after exercise substitution. Live command context remains unqualified. |
 | TRA-VAL-011 | SOURCE+ACTIVATION | Synthetic unknown-bar plate loads persist as null total load with plate notes; progression does not invent a comparable numeric load. Interpreting the user's plate-only report remains behavioral. |
-| TRA-VAL-012 | SOURCE+ACTIVATION | Deterministic barbell prescription check rejects fabricated numeric candidates and false HOLD_LAST_COMPARABLE_LOAD provenance when progression returns null; justified session-level target adjustment remains allowed. |
+| TRA-VAL-012 | SOURCE+ACTIVATION | Deterministic barbell prescription check rejects candidates that differ from calculated progression (including null), and false HOLD_LAST_COMPARABLE_LOAD provenance. Unknown actual total loads cannot establish comparable numeric history; justified session-level target adjustment remains allowed. |
 
 ## Session lifecycle and integrity
 

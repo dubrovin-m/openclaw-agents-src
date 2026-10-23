@@ -448,7 +448,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
         local_date: "2026-10-07",
       });
       const repeatedExercise = repeated.session.exercises[0].session_exercise_id;
-      prescribeExercise(db, repeatedExercise, fourSets(70));
+      prescribeExercise(db, repeatedExercise, fourSets(70, getProgressionCandidate(db, repeatedExercise).candidate_load_kg));
       completeExercise(db, repeatedExercise, "AS_PRESCRIBED");
       finishSession(db, repeated.session.training_session_id);
 
@@ -482,7 +482,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       });
       let id = first.session.exercises[0].session_exercise_id;
       expect(getProgressionCandidate(db, id).candidate_load_kg).toBe(70);
-      prescribeExercise(db, id, fourSets(70));
+      prescribeExercise(db, id, fourSets(70, getProgressionCandidate(db, id).candidate_load_kg));
       completeExercise(db, id, "AS_PRESCRIBED");
       finishSession(db, first.session.training_session_id);
 
@@ -492,7 +492,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
         local_date: "2026-10-07",
       });
       id = second.session.exercises[0].session_exercise_id;
-      prescribeExercise(db, id, fourSets(70));
+      prescribeExercise(db, id, fourSets(70, getProgressionCandidate(db, id).candidate_load_kg));
       completeExercise(db, id, "AS_PRESCRIBED");
       finishSession(db, second.session.training_session_id);
 
@@ -531,7 +531,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
           local_date: date,
         });
         const id = session.session.exercises[0].session_exercise_id;
-        prescribeExercise(db, id, fourSets(70));
+        prescribeExercise(db, id, fourSets(70, getProgressionCandidate(db, id).candidate_load_kg));
         completeExercise(db, id, "AS_PRESCRIBED");
         finishSession(db, session.session.training_session_id);
       }
@@ -573,7 +573,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
           selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:date,
         });
         const exerciseId = started.session.exercises[0].session_exercise_id;
-        prescribeExercise(db,exerciseId,fourSets(load));
+        prescribeExercise(db,exerciseId,fourSets(load, getProgressionCandidate(db, exerciseId).candidate_load_kg));
         completeExercise(db,exerciseId,"AS_PRESCRIBED");
         finishSession(db,started.session.training_session_id);
         db.prepare("INSERT INTO migration_records VALUES(?,?,?,?,?)")
@@ -593,7 +593,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(candidate.candidate_load_kg).toBe(70);
       expect(candidate.basis).toBe("INITIAL_LOAD");
       expect(() => prescribeExercise(db,exerciseId,fourSets(250))).toThrow(/SUSPICIOUS load/);
-      prescribeExercise(db,exerciseId,fourSets(70));
+      prescribeExercise(db,exerciseId,fourSets(70, getProgressionCandidate(db, exerciseId).candidate_load_kg));
       completeExercise(db,exerciseId,"AS_PRESCRIBED");
       finishSession(db,current.session.training_session_id);
 
@@ -1230,6 +1230,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       const candidate = getProgressionCandidate(db,next.session.exercises[0].session_exercise_id);
       expect(candidate.candidate_load_kg).toBeNull();
       expect(candidate.recent_exposures[0]?.load_kg).toBeNull();
+      expect(candidate.basis).toBe("NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD");
     } finally { db.close(); }
   });
 
@@ -1248,6 +1249,24 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       prescribeExercise(db,id,fourSets(60));
       expect((db.prepare("SELECT candidate_load_kg,target_load_kg,prescription_reason FROM session_sets WHERE session_exercise_id=? LIMIT 1")
         .get(id) as any)).toMatchObject({candidate_load_kg:null,target_load_kg:60,prescription_reason:"SESSION_STARTING_LOAD"});
+    } finally { db.close(); }
+  });
+
+  it("TRA-VAL-012: numeric deterministic barbell candidate cannot be rewritten by model", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE template_exercises SET progression_policy_json=? WHERE template_exercise_id='te_a'")
+        .run(JSON.stringify({initial_load_kg:70}));
+      const started: any = startProgramSession(db, {timezone_at_start:"Europe/Moscow",local_date:"2026-10-06"});
+      const id = started.session.exercises[0].session_exercise_id;
+      expect(getProgressionCandidate(db,id)).toMatchObject({candidate_load_kg:70,basis:"INITIAL_LOAD"});
+      expect(() => prescribeExercise(db,id,fourSets(70,20))).toThrow(/differs from deterministic calculation/);
+      expect(() => prescribeExercise(db,id,fourSets(70))).toThrow(/differs from deterministic calculation/);
+      expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?").get(id) as any).n).toBe(0);
+      prescribeExercise(db,id,fourSets(75,70));
+      const value = db.prepare("SELECT candidate_load_kg,target_load_kg FROM session_sets WHERE session_exercise_id=? LIMIT 1")
+        .get(id) as {candidate_load_kg:number;target_load_kg:number};
+      expect(value).toEqual({candidate_load_kg:70,target_load_kg:75});
     } finally { db.close(); }
   });
 
@@ -1344,7 +1363,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       const firstId = first.session.exercises[0].session_exercise_id;
       // The first 70 kg exposure is exceptional relative to the 20 kg initial policy.
       confirmExceptionalLoad(db, firstId, 70);
-      prescribeExercise(db, firstId, fourSets(70));
+      prescribeExercise(db, firstId, fourSets(70, getProgressionCandidate(db, firstId).candidate_load_kg));
       completeExercise(db, firstId, "AS_PRESCRIBED");
       finishSession(db, first.session.training_session_id);
 
@@ -1358,7 +1377,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       expect(candidate.policy.initial_load_kg).toBe(20);
       // The approved first exposure established durable comparable history.
       // A normal replay of that weight must not need a second exception.
-      prescribeExercise(db, id, fourSets(70));
+      prescribeExercise(db, id, fourSets(70, getProgressionCandidate(db, id).candidate_load_kg));
       completeExercise(db, id, "AS_PRESCRIBED");
       expect((db.prepare("SELECT count(*) n FROM training_events WHERE event_type='LOAD_EXCEPTION_APPROVED'")
         .get() as any).n).toBe(1);
@@ -1419,7 +1438,7 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
       });
       const id = repeat.session.exercises[0].session_exercise_id;
       expect(() => prescribeExercise(db, id, fourSets(250))).toThrow(/SUSPICIOUS load/);
-      prescribeExercise(db, id, fourSets(72.5));
+      prescribeExercise(db, id, fourSets(72.5, getProgressionCandidate(db, id).candidate_load_kg));
       expect((db.prepare("SELECT count(*) n FROM session_sets WHERE session_exercise_id=?")
         .get(id) as any).n).toBe(4);
     } finally { db.close(); }
