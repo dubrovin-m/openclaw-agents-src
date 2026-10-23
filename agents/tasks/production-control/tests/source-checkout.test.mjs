@@ -64,5 +64,17 @@ test('production source preparation unshallows existing checkout and retains pre
     targetSha: 'not-a-sha', checkoutDir: checkout, repoUrl: `file://${origin}`,
     token: 'synthetic-token', requireCurrentMain: false,
   }), /target SHA invalid/u);
+
+  // A cached commit on an unrelated branch does not inherit approved-main provenance.
+  git(['checkout', '-b', 'unrelated', predecessor], { cwd: author });
+  git(['commit', '--allow-empty', '-m', 'unrelated commit'], { cwd: author });
+  const unrelated = git(['rev-parse', 'HEAD'], { cwd: author });
+  git(['push', 'origin', 'unrelated'], { cwd: author });
+  git(['checkout', 'main'], { cwd: author });
+  git(['fetch', 'origin', 'refs/heads/unrelated'], { cwd: checkout });
+  assert.throws(() => prepareGitSourceCheckout({
+    targetSha: unrelated, checkoutDir: checkout, repoUrl: `file://${origin}`,
+    token: 'synthetic-token', requireCurrentMain: false,
+  }), /not an ancestor/u);
   assert.equal(git(['rev-parse', 'HEAD'], { cwd: checkout }), target);
 });
