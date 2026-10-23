@@ -555,6 +555,80 @@ describe("TRA-SEL / TRA-STR deterministic core", () => {
     }
   });
 
+  it("TRA-MIG-001/TRA-VAL-009: quarantines migrated plate-only barbell loads without altering history", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE template_exercises SET progression_policy_json=? WHERE template_exercise_id='te_a'")
+        .run(JSON.stringify({kind:"DOUBLE_SUCCESS_THEN_INCREMENT",initial_load_kg:70,increment_kg:2.5,successful_exposures_required:2}));
+      const now = nowIso();
+      db.prepare("INSERT INTO migration_batches VALUES(?,?,?,?,?,?)")
+        .run("mig_legacy","legacy-fitness","plate-only-export","a".repeat(64),now,"{}");
+
+      for (const [index, load] of [40,45].entries()) {
+        const date = `2026-10-0${index+4}`;
+        const started: any = startProgramSession(db, {
+          selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:date,
+        });
+        const exerciseId = started.session.exercises[0].session_exercise_id;
+        prescribeExercise(db,exerciseId,fourSets(load));
+        completeExercise(db,exerciseId,"AS_PRESCRIBED");
+        finishSession(db,started.session.training_session_id);
+        db.prepare("INSERT INTO migration_records VALUES(?,?,?,?,?)")
+          .run("mig_legacy","session_exercise",`legacy-${index}`,"session_exercise",exerciseId);
+      }
+
+      const preserved = (db.prepare(`SELECT count(*) AS n FROM session_sets ss
+        JOIN migration_records mr ON mr.target_id=ss.session_exercise_id
+        WHERE mr.target_type='session_exercise' AND ss.actual_load_kg IN (40,45)`).get() as any).n;
+      expect(preserved).toBe(8);
+      const current: any = startProgramSession(db,{
+        selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:"2026-10-06",
+      });
+      const exerciseId = current.session.exercises[0].session_exercise_id;
+      const candidate = getProgressionCandidate(db,exerciseId);
+      expect(candidate.recent_exposures).toHaveLength(0);
+      expect(candidate.candidate_load_kg).toBe(70);
+      expect(candidate.basis).toBe("INITIAL_LOAD");
+      expect(() => prescribeExercise(db,exerciseId,fourSets(250))).toThrow(/SUSPICIOUS load/);
+      prescribeExercise(db,exerciseId,fourSets(70));
+      completeExercise(db,exerciseId,"AS_PRESCRIBED");
+      finishSession(db,current.session.training_session_id);
+
+      const next: any = startProgramSession(db,{
+        selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:"2026-10-07",
+      });
+      const nextCandidate = getProgressionCandidate(db,next.session.exercises[0].session_exercise_id);
+      expect(nextCandidate.recent_exposures).toHaveLength(1);
+      expect(nextCandidate.recent_exposures[0]?.load_kg).toBe(70);
+      expect(nextCandidate.basis).toBe("HOLD_LAST_COMPARABLE_LOAD");
+      expect((db.prepare("SELECT count(*) n FROM migration_records WHERE target_type='session_exercise'").get() as any).n).toBe(2);
+    } finally { db.close(); }
+  });
+
+  it("TRA-MIG-001: migration provenance alone does not quarantine non-barbell loads", () => {
+    const db = fixture();
+    try {
+      db.prepare("UPDATE exercises SET equipment_type='kettlebell' WHERE exercise_id='ex_a'").run();
+      const previous: any = startProgramSession(db,{
+        selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:"2026-10-04",
+      });
+      const priorId = previous.session.exercises[0].session_exercise_id;
+      prescribeExercise(db,priorId,fourSets(40));
+      completeExercise(db,priorId,"AS_PRESCRIBED");
+      finishSession(db,previous.session.training_session_id);
+      db.prepare("INSERT INTO migration_batches VALUES(?,?,?,?,?,?)")
+        .run("mig_kettle","legacy-fitness","other-export","b".repeat(64),nowIso(),"{}");
+      db.prepare("INSERT INTO migration_records VALUES(?,?,?,?,?)")
+        .run("mig_kettle","session_exercise","legacy-kettle","session_exercise",priorId);
+      const current: any = startProgramSession(db,{
+        selected_program_slot_id:"slot_a",timezone_at_start:"Europe/Moscow",local_date:"2026-10-05",
+      });
+      const candidate = getProgressionCandidate(db,current.session.exercises[0].session_exercise_id);
+      expect(candidate.candidate_load_kg).toBe(40);
+      expect(candidate.recent_exposures).toHaveLength(1);
+    } finally { db.close(); }
+  });
+
   it("TRA-CON-002/005: modality override stays in the Conditioning slot and Fitbit is not required", () => {
     const db = fixture();
     try {

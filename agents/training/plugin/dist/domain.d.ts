@@ -216,6 +216,12 @@ export type PrescribedSet = {
     target_distance_m?: number | null;
     prescription_reason?: string | null;
 };
+/** Only the owner-authenticated native command invokes this bounded exception path. */
+export declare function confirmExceptionalLoad(db: DatabaseSync, sessionExerciseId: string, load: number): {
+    replayed: boolean;
+    session_exercise_id: string;
+    load_kg: number;
+};
 export declare function prescribeExercise(db: DatabaseSync, sessionExerciseId: string, sets: PrescribedSet[]): {
     replayed: boolean;
     exercise: {
@@ -337,13 +343,52 @@ export declare function correctSetResult(db: DatabaseSync, sessionSetId: string,
     set: Row | undefined;
 };
 export type ProgramChangeType = "REPLACE_EXERCISE" | "UPDATE_EXERCISE_TARGETS" | "UPDATE_CONDITIONING_POLICY";
+/** Fingerprint the immutable proposal and its base version, not model-supplied approval text. */
+export declare function programChangeFingerprint(proposal: Row): string;
 export declare function proposeProgramChange(db: DatabaseSync, params: {
     change_type: ProgramChangeType;
     proposal: Record<string, unknown>;
     rationale: string;
     created_by?: "TRAINING_AGENT" | "USER";
-}): Row | undefined;
+}): {
+    approval_fingerprint: string;
+};
 export declare function applyApprovedProgramChange(db: DatabaseSync, proposalId: string, decisionActor?: "USER" | "HEALTH_MAIN"): {
+    replayed: boolean;
+    proposal: Row;
+    active_program: Row | undefined;
+    recommendation?: undefined;
+} | {
+    replayed: boolean;
+    proposal: Row | undefined;
+    active_program: Row | undefined;
+    recommendation: {
+        active_program: null;
+        recommendation: null;
+    } | {
+        active_program: {
+            cycle_number: number;
+            program_version_id: string;
+            program_id: string;
+            version_number: number;
+        };
+        recommendation: {
+            exercises: Row[];
+            conditioning: {
+                modalities: Row[];
+            } | null;
+            program_slot_id: string;
+            sequence: number;
+            workout_template_id: string;
+            name: string;
+            workout_kind: string;
+        };
+    };
+};
+/** Called only from the host's owner-authenticated native command handler.
+ * Both the approval and version activation commit in the same transaction.
+ */
+export declare function approveAndApplyProgramChange(db: DatabaseSync, proposalId: string, fingerprint: string): {
     replayed: boolean;
     proposal: Row;
     active_program: Row | undefined;

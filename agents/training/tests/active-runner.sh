@@ -104,11 +104,27 @@ for scenario in success after-config after-workspace; do
   cp "$R/state/openclaw.json" "$TMP/$scenario.before.json"
   node "$ROOT/active-upgrade.mjs" --test-root "$R" --preflight | grep -q TRAINING_ACTIVE_UPGRADE_PREFLIGHT_PASS
   if [ "$scenario" = success ]; then
-    node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_PASS
+    node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
     assert_version "$R" "$TARGET_PLUGIN_VERSION"
     assert_policy "$R" "$ROOT/config/training-tools.json"
     cmp -s "$R/state/workspace-training/AGENTS.md" "$ROOT/workspace/AGENTS.md"
+    test -d "$R/state/.training-active-upgrade-recovery/.active.lock"
+    test -f "$R/state/.training-active-upgrade-recovery/$SHA/config.before"
+    test -f "$R/state/.training-active-upgrade-recovery/$SHA/AGENTS.before"
+    node - "$R/state/.training-active-upgrade-recovery/$SHA/result.json" <<'NODE'
+const r=require(process.argv[2]);
+if(r.status!=='APPLIED_PENDING_ACCEPTANCE'||!r.config_snapshot_sha256||!r.agents_snapshot_sha256)process.exit(2)
+NODE
+    # A second apply or preflight must not silently accept a pending cutover.
+    set +e
+    node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" >"$TMP/reapply.out" 2>"$TMP/reapply.err"
+    rc=$?
+    set -e
+    test "$rc" -ne 0
+    node "$ROOT/active-upgrade.mjs" --test-root "$R" --finalize --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_FINALIZED
     test ! -e "$R/state/.training-active-upgrade-recovery/.active.lock"
+    test ! -e "$R/state/.training-active-upgrade-recovery/$SHA/config.before"
+    test ! -e "$R/state/.training-active-upgrade-recovery/$SHA/AGENTS.before"
   else
     set +e
     TRAINING_ACTIVE_UPGRADE_TEST_FAIL_STAGE="$scenario" node "$ROOT/active-upgrade.mjs" --test-root "$R" --apply --source-sha "$SHA" >"$TMP/$scenario.out" 2>"$TMP/$scenario.err"
@@ -125,6 +141,60 @@ for scenario in success after-config after-workspace; do
   test "$STORE_SHA" = "$(sha256sum "$R/state/data/training/training.sqlite3" | awk '{print $1}')"
   assert_unchanged_unrelated "$TMP/$scenario.before.json" "$R/state/openclaw.json"
 done
+# Native Telegram failure after a successful apply must restore the exact old
+# plugin/policy/workspace, with no Training Store rewind.
+echo "QUALIFY_SCENARIO_START post-cutover-rollback"
+POST="$TMP/post-cutover-rollback"
+init_root "$POST"
+POST_DB_SHA=$(sha256sum "$POST/state/data/training/training.sqlite3" | awk '{print $1}')
+cp "$POST/state/openclaw.json" "$TMP/post.before.json"
+node "$ROOT/active-upgrade.mjs" --test-root "$POST" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
+node "$ROOT/active-upgrade.mjs" --test-root "$POST" --rollback --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_POST_CUTOVER_ROLLED_BACK
+assert_version "$POST" "$PREDECESSOR_PLUGIN_VERSION"
+assert_policy "$POST" "$OLD_POLICY"
+git -C "$REPO_ROOT" show "$PREDECESSOR_SOURCE_REVISION:agents/training/workspace/AGENTS.md" | cmp -s - "$POST/state/workspace-training/AGENTS.md"
+test ! -e "$POST/state/.training-active-upgrade-recovery/.active.lock"
+test "$POST_DB_SHA" = "$(sha256sum "$POST/state/data/training/training.sqlite3" | awk '{print $1}')"
+assert_unchanged_unrelated "$TMP/post.before.json" "$POST/state/openclaw.json"
+
+# Fail closed if the recovery evidence is tampered or Store changes while
+# awaiting native acceptance; no guessed rollback may touch the current target.
+echo "QUALIFY_SCENARIO_START post-cutover-tamper"
+TAMPER="$TMP/post-cutover-tamper"
+init_root "$TAMPER"
+node "$ROOT/active-upgrade.mjs" --test-root "$TAMPER" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
+printf 'tampered
+' >> "$TAMPER/state/.training-active-upgrade-recovery/$SHA/AGENTS.before"
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$TAMPER" --rollback --source-sha "$SHA" >"$TMP/tamper.out" 2>"$TMP/tamper.err"
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -q 'Pending Training recovery evidence mismatch' "$TMP/tamper.err"
+assert_version "$TAMPER" "$TARGET_PLUGIN_VERSION"
+test -d "$TAMPER/state/.training-active-upgrade-recovery/.active.lock"
+
+# Intervening Training Store activity invalidates the pre-acceptance rollback
+# envelope; no automatic interpretation or DB rewind of new records is allowed.
+echo "QUALIFY_SCENARIO_START post-cutover-store-change"
+STORE_CHANGE="$TMP/post-cutover-store-change"
+init_root "$STORE_CHANGE"
+node "$ROOT/active-upgrade.mjs" --test-root "$STORE_CHANGE" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
+node - "$STORE_CHANGE/state/data/training/training.sqlite3" <<'NODE'
+const {DatabaseSync}=require('node:sqlite');
+const db=new DatabaseSync(process.argv[2]);
+db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run('cutover_event','SESSION_TEST','training_session','synthetic','{}',new Date().toISOString());
+db.close();
+NODE
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$STORE_CHANGE" --rollback --source-sha "$SHA" >"$TMP/storechange.out" 2>"$TMP/storechange.err"
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -q 'Pending Training recovery evidence mismatch' "$TMP/storechange.err"
+assert_version "$STORE_CHANGE" "$TARGET_PLUGIN_VERSION"
+test -d "$STORE_CHANGE/state/.training-active-upgrade-recovery/.active.lock"
+
 # Tampered local recovery path must refuse before any plugin/config/Store write.
 echo "QUALIFY_SCENARIO_START unsafe-recovery"
 UNSAFE="$TMP/unsafe-recovery-path"

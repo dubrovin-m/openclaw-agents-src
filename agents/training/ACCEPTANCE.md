@@ -69,7 +69,7 @@ No row marked **GAP** is acceptable for source freeze.
 | TRA-VAL-006 | SOURCE+ACTIVATION | 700-vs-70 anomaly fails atomically as SUSPICIOUS; workspace requires minimal user confirmation rather than silent correction. |
 | TRA-VAL-007 | SOURCE+ACTIVATION | Corrected retry persists once after suspicious attempt left no mutation; interpreting the confirmation remains behavioral. |
 | TRA-VAL-008 | SOURCE-QUALIFIED | Correction operation validates independent load plausibility and retains before/after/reason audit evidence; suspicious changes require the native owner exception path. |
-| TRA-VAL-009 | SOURCE-QUALIFIED | Anomalous prescription rejected before persistence; comparable history takes precedence over stale initial policy, and zero assistance loads remain valid independent evidence. Absolute bounds and rollback are tested. |
+| TRA-VAL-009 | SOURCE-QUALIFIED | Anomalous prescription rejected before persistence; only semantically comparable modern history takes precedence over stale initial policy. Migrated plate-only barbell loads cannot establish progression or independent plausibility baselines; zero assistance remains valid evidence. Absolute bounds and rollback are tested. |
 | TRA-VAL-010 | SOURCE-TESTED; ACTIVATION-PENDING | AS_PRESCRIBED anomaly fails independently of an unsafe persisted target; owner-native exception is scoped to exact exercise identity, equipment and load, and cannot transfer after exercise substitution. Live command context remains unqualified. |
 
 ## Session lifecycle and integrity
@@ -123,7 +123,7 @@ No row marked **GAP** is acceptable for source freeze.
 
 | ID | Status | Evidence / remaining gate |
 | --- | --- | --- |
-| TRA-MIG-001 | SOURCE+PRODUCTION | Synthetic normalized strength migration preserves reps/load/RIR/duration/distance, including incomplete load-only historical completed sets, and date-only precision; private Fitness export remains production work. |
+| TRA-MIG-001 | SOURCE+PRODUCTION | Synthetic normalized strength migration preserves reps/load/RIR/duration/distance, including incomplete load-only historical completed sets, and date-only precision; imported barbell loads remain persisted but are quarantined from modern comparable baselines by migration-record provenance. Private Fitness export remains production work. |
 | TRA-MIG-002 | SOURCE+PRODUCTION | Synthetic Conditioning migration preserves method, modality, duration, distance, RPE, notes, and aggregate average HR; average HR is stored as aggregate-only telemetry provenance without inventing raw samples. Private Fitness export remains production work. |
 | TRA-MIG-003 | SOURCE+PRODUCTION | Importer is replay-safe and SQLite integrity/FK checks pass; representative real records must reconcile against the private Fitness source before activation. |
 | TRA-REC-001 | SOURCE+PRODUCTION | Synthetic provider-independent encrypted backup/restore path passes, including corruption and FK fail-closed behavior; actual protected-provider restore remains a production gate. |

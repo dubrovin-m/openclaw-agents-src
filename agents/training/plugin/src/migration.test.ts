@@ -260,8 +260,12 @@ describe("Training normalized migration", () => {
       });
       const currentExercise = started.session.exercises[0];
       const candidate = getProgressionCandidate(db, currentExercise.session_exercise_id);
-      expect(candidate.candidate_load_kg).toBe(67.5);
-      expect(candidate.basis).toBe("HOLD_LAST_COMPARABLE_LOAD");
+      // Imported plate-only barbell values remain factual history but are not
+      // comparable to the active TOTAL_EXTERNAL (bar-included) contract.
+      expect(candidate.candidate_load_kg).toBeNull();
+      expect(candidate.basis).toBe("NO_COMPARABLE_HISTORY_OR_INITIAL_LOAD");
+      expect(candidate.recent_exposures).toHaveLength(0);
+      expect((db.prepare("SELECT count(*) AS n FROM session_sets WHERE actual_load_kg=67.5").get() as any).n).toBe(1);
     } finally {
       db.close();
     }

@@ -876,9 +876,23 @@ export function getProgressionCandidate(db: DatabaseSync, sessionExerciseId: str
     `SELECT se.session_exercise_id,ts.started_at,ts.local_date,se.equipment_instance_id
        FROM session_exercises se
        JOIN training_sessions ts ON ts.training_session_id=se.training_session_id
+       JOIN exercises e ON e.exercise_id=se.exercise_id
       WHERE se.exercise_id=?
         AND se.session_exercise_id<>?
         AND se.status='COMPLETED'
+        -- Legacy imported barbell records may count plates only, whereas the
+        -- active TOTAL_EXTERNAL contract includes the bar. Provenance is
+        -- recorded per migrated exercise: retain the history, not its loads as
+        -- comparable prescription or anomaly-baseline evidence.
+        AND NOT (
+          e.load_mode='TOTAL_EXTERNAL'
+          AND lower(trim(coalesce(e.equipment_type,'')))='barbell'
+          AND EXISTS (
+            SELECT 1 FROM migration_records mr
+             WHERE mr.target_type='session_exercise'
+               AND mr.target_id=se.session_exercise_id
+          )
+        )
         AND ts.status<>'VOIDED'
         AND ts.local_date<=?
         AND (

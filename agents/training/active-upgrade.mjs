@@ -26,13 +26,13 @@ const argv = process.argv.slice(2);
 let testRoot = null;
 if (argv[0] === '--test-root') testRoot = argv.splice(0,2)[1];
 const mode = argv.shift();
-if (!['--preflight','--apply'].includes(mode)) die('Usage: active-upgrade.mjs [--test-root /safe/absolute/path] --preflight|--apply [--source-sha SHA]');
+if (!['--preflight','--apply','--finalize','--rollback'].includes(mode)) die('Usage: active-upgrade.mjs [--test-root /safe/absolute/path] --preflight|--apply|--finalize|--rollback [--source-sha SHA]');
 let approvedSha = null;
 if (argv.length) {
   if (argv[0] !== '--source-sha' || argv.length !== 2 || !/^[a-f0-9]{40}$/.test(argv[1])) die('Invalid exact --source-sha');
   approvedSha = argv[1];
 }
-if (mode === '--apply' && !approvedSha) die('Exact --source-sha is mandatory for apply (authorization is external)');
+if (mode !== '--preflight' && !approvedSha) die('Exact --source-sha is mandatory for mutations (authorization is external)');
 // The CLI and the files we inspect must address one and the same runtime.
 const home = testRoot ? path.join(path.resolve(testRoot),'home') : os.userInfo().homedir;
 if (!testRoot) {
@@ -211,7 +211,10 @@ function gatewayReload() {
   }
   gatewayReady();
 }
-const old = inspect('predecessor',historicalTools);
+// A post-cutover command must bind to the exact target, not silently accept
+// a predecessor or a partial/unknown intermediate state.
+const old = inspect(mode==='--preflight' || mode==='--apply' ? 'predecessor' : 'target',
+  mode==='--preflight' || mode==='--apply' ? historicalTools : tools);
 gatewayReady();
 if (mode==='--preflight') {
   process.stdout.write('TRAINING_ACTIVE_UPGRADE_PREFLIGHT_PASS source='+sourceSha+' target='+release.plugin.version+'\n');
@@ -229,9 +232,14 @@ ensurePrivateDirectory(state);
 ensurePrivateDirectory(path.dirname(recoveryBase));
 ensurePrivateDirectory(recoveryBase);
 const lock = path.join(recoveryBase,'.active.lock');
-fs.mkdirSync(lock,{mode:0o700}); // surviving crash refuses later mutation
-const recoveryDir = path.join(recoveryBase,sourceSha.slice(0,12)+'-'+process.pid);
-let mutated = false;
+const recoveryDir = path.join(recoveryBase,sourceSha);
+if (mode==='--apply') {
+  fs.mkdirSync(lock,{mode:0o700}); // persists through external native acceptance
+} else {
+  ensurePrivateDirectory(lock);
+  ensurePrivateDirectory(recoveryDir);
+}
+let mutated = mode!=='--apply';
 let done = false;
 let backupCreated = false;
 let externalMutationUncertain = false;
@@ -249,6 +257,9 @@ function writeResult(status,stage,message) {
     format:'training-active-upgrade-result-v1',status,stage,message,
     source_revision:sourceSha,predecessor:predecessor.plugin.version,
     target:release.plugin.version,mutation_started:mutated,
+    store_sha256:oldDbHash,identity_sha256:oldIdentityHash,
+    config_snapshot_sha256:backupCreated ? hashFile(path.join(recoveryDir,'config.before')) : null,
+    agents_snapshot_sha256:backupCreated ? hashFile(path.join(recoveryDir,'AGENTS.before')) : null,
   },null,2)+'\n',{mode:0o600});
 }
 function toolsPatch(base,policy) {
@@ -296,6 +307,78 @@ function atomicCopy(source,dest) {
   fs.copyFileSync(source,tmp);fs.chmodSync(tmp,0o600);
   fs.renameSync(tmp,dest);
 }
+if (mode==='--finalize' || mode==='--rollback') {
+  // Recovery identity is derived solely from the exact source SHA, never from
+  // caller-supplied paths or mutable process ids.
+  for (const name of ['result.json','config.before','AGENTS.before']) {
+    const file=path.join(recoveryDir,name);
+    checkRegular(file);
+    const stat=fs.statSync(file);
+    if ((stat.mode & 0o077)!==0 ||
+        (typeof process.getuid==='function' && stat.uid!==process.getuid())) {
+      die('Unsafe private recovery file: '+name);
+    }
+  }
+  const receipt=readJson(resultFile);
+  if (receipt.format!=='training-active-upgrade-result-v1' ||
+      receipt.status!=='APPLIED_PENDING_ACCEPTANCE' ||
+      receipt.source_revision!==sourceSha ||
+      receipt.predecessor!==predecessor.plugin.version ||
+      receipt.target!==release.plugin.version ||
+      receipt.mutation_started!==true ||
+      receipt.store_sha256!==oldDbHash ||
+      receipt.identity_sha256!==oldIdentityHash ||
+      receipt.config_snapshot_sha256!==hashFile(path.join(recoveryDir,'config.before')) ||
+      receipt.agents_snapshot_sha256!==hashFile(path.join(recoveryDir,'AGENTS.before')) ||
+      hashFile(path.join(recoveryDir,'AGENTS.before'))!==predecessor.workspace_sha256['AGENTS.md']) {
+    die('Pending Training recovery evidence mismatch; independent reconciliation required');
+  }
+  const before=readJson(path.join(recoveryDir,'config.before'));
+  if (!same(trainingRecord(before).tools,historicalTools) ||
+      !same(ownerRoute(before),ownerRoute(old))) die('Original Training recovery boundary mismatch');
+  // Current release, Store and owner route were independently rechecked above.
+  if (mode==='--finalize') {
+    // Call only after separately witnessed native-owner Telegram acceptance.
+    // A CLI invocation is not itself acceptance evidence or authorization.
+    writeResult('FINALIZING','FINALIZE','External native acceptance confirmed by operator');
+    fs.rmSync(path.join(recoveryDir,'config.before'));
+    fs.rmSync(path.join(recoveryDir,'AGENTS.before'));
+    backupCreated=false;
+    writeResult('SUCCESS','COMPLETE','Training target accepted; private recovery snapshots removed');
+    fs.rmdirSync(lock);
+    process.stdout.write('TRAINING_ACTIVE_UPGRADE_FINALIZED source='+sourceSha+' target='+release.plugin.version+'\n');
+    process.exit(0);
+  }
+  // Native acceptance failed. Never restore or rewind the Training Store.
+  // Reject any intervening Store/identity mutation rather than guessing whether
+  // the predecessor would safely interpret post-cutover writes.
+  try {
+    externalMutationUncertain=true;
+    oc('plugins','install','--force','--no-enable','--accept-capabilities',path.join(here,predecessor.plugin.artifact));
+    externalMutationUncertain=false;
+    externalMutationUncertain=true;
+    exec(host,['config','patch','--stdin'],toolsPatch(before,historicalTools)+'\n');
+    externalMutationUncertain=false;
+    atomicCopy(path.join(recoveryDir,'AGENTS.before'),agentsFile);
+    const reverted=inspect('predecessor',historicalTools);
+    preserveBoundaries(old,reverted);
+    externalMutationUncertain=true;
+    gatewayReload();
+    externalMutationUncertain=false;
+    writeResult('ROLLED_BACK','NATIVE_ACCEPTANCE_FAILURE','Proven exact predecessor restored; Store preserved');
+    fs.rmSync(path.join(recoveryDir,'config.before'));
+    fs.rmSync(path.join(recoveryDir,'AGENTS.before'));
+    fs.rmdirSync(lock);
+    process.stdout.write('TRAINING_ACTIVE_UPGRADE_POST_CUTOVER_ROLLED_BACK source='+sourceSha+'\n');
+    process.exit(0);
+  } catch (error) {
+    // Partial/unknown outcome is a hard stop, not permission for another retry.
+    writeResult('RECOVERY_REQUIRED','POST_CUTOVER_ROLLBACK',
+      'Rollback unproven; independent reconciliation required');
+    process.stderr.write('TRAINING_ACTIVE_UPGRADE_RECOVERY_REQUIRED\n');
+    process.exit(2);
+  }
+}
 try {
   // Lock acquired: re-read and fail closed before any production mutation.
   inspect('predecessor',historicalTools);
@@ -320,13 +403,11 @@ try {
   const after=inspect('target',tools);
   preserveBoundaries(old,after);
   invokeAcceptedMutation(() => gatewayReload());
-  writeResult('SUCCESS','COMPLETE','Training 0.1.7 active with owner-only tools and preserved Store');
+  // Plugin/runtime checks are not native-owner Telegram acceptance.
+  // Keep the private recovery set and lock until explicit finalize or rollback.
+  writeResult('APPLIED_PENDING_ACCEPTANCE','NATIVE_ACCEPTANCE','Target applied; native-owner acceptance and finalize required');
   done=true;
-  // Config backup contains possible secrets; do not retain after proven success.
-  fs.rmSync(path.join(recoveryDir,'config.before'));
-  fs.rmSync(path.join(recoveryDir,'AGENTS.before'));
-  fs.rmdirSync(lock);
-  process.stdout.write('TRAINING_ACTIVE_UPGRADE_PASS source='+sourceSha+' target='+release.plugin.version+'\n');
+  process.stdout.write('TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE source='+sourceSha+' target='+release.plugin.version+'\n');
 } catch(error) {
   // A CLI failure after an externally admitted mutation may be an unknown
   // outcome; never race it by starting an automatic compensating mutation.
