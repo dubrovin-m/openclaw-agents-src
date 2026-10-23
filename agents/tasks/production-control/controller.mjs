@@ -265,6 +265,11 @@ export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, toke
   // An accepted operation is reconciled against its frozen SHA even if main advanced.
   // Still require the exact commit object to exist in the fetched implementation history.
   gitExec(['cat-file', '-e', `${targetSha}^{commit}`], token, { cwd: checkoutDir });
+  if (!requireCurrentMain) {
+    // Reject unrelated cached commits and non-fast-forward replacement of accepted main.
+    try { gitExec(['merge-base', '--is-ancestor', targetSha, 'FETCH_HEAD'], token, { cwd: checkoutDir }); }
+    catch { throw new Error('accepted SHA is not an ancestor of fetched implementation main'); }
+  }
   gitExec(['checkout', '--detach', '--force', targetSha], token, { cwd: checkoutDir });
   gitExec(['clean', '-fdx'], token, { cwd: checkoutDir });
   const head = gitExec(['rev-parse', 'HEAD'], token, { cwd: checkoutDir });
