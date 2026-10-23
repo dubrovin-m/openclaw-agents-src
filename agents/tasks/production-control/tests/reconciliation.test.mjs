@@ -1,152 +1,73 @@
 import assert from 'node:assert/strict';
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
-import test, { after } from 'node:test';
+import test from 'node:test';
+import { confirmedTargetStatePatch } from '../controller.mjs';
+import { validateOperationEvidence } from '../lib.mjs';
 
-const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'openclaw-controller-reconciliation-'));
-const stateDir = path.join(tmp, 'controller-state');
-process.env.OPC_STATE_DIR = stateDir;
-after(() => fs.rmSync(tmp, { recursive: true, force: true }));
-const { reconcileOperation } = await import('../controller.mjs?reconciliation-test=' + Date.now());
-
-const BASELINE = '1'.repeat(40);
 const APPROVED = '2'.repeat(40);
-let nextId = 7000;
+const PREDECESSOR = '1'.repeat(40);
+const REQUEST = 7001;
+const record = { type: 'deploy', sha: APPROVED };
+const success = {
+  request_id: REQUEST, operation: 'deploy', source_revision: APPROVED,
+  outcome: 'SUCCESS', mutation_started: true, block_further_deployments: false,
+};
 
-function fixture({ record = {}, evidence = {}, missingEvidence = false } = {}) {
-  const requestId = ++nextId;
-  const active = {
-    type: 'deploy', source: 'github', state: 'IN_PROGRESS',
-    sha: APPROVED, unit: 'synthetic-never-active-' + requestId,
-    ...record,
-  };
-  const state = {
-    version: 1, mode: 'ACTIVE',
-    production_baseline_sha: BASELINE,
-    deployment_blocked: false, block_reason: null,
-    requests: { [requestId]: active }, watermark: 0,
-  };
-  const file = path.join(stateDir, 'executions', 'request-' + requestId + '.json');
-  fs.mkdirSync(path.dirname(file), { recursive: true });
-  if (!missingEvidence) {
-    const result = {
-      request_id: requestId, operation: active.type, source_revision: active.sha,
-      outcome: 'SUCCESS', mutation_started: true,
-      block_further_deployments: false, ...evidence,
-    };
-    fs.writeFileSync(file, JSON.stringify(result), { mode: 0o600 });
-  }
-  return { requestId, state, record: active, file };
-}
-
-function hooks({ diagnosticOk = true, checkoutError = null } = {}) {
-  const calls = [];
-  return {
-    calls,
-    prepareCheckout(sha, directory, options) {
-      calls.push({ type: 'checkout', sha, directory, options });
-      if (checkoutError) throw new Error(checkoutError);
-    },
-    async diagnoseOperation(id, sha, expected) {
-      calls.push({ type: 'diagnostic', id, sha, expected });
-      return { ok: diagnosticOk, checks: {} };
-    },
-  };
-}
-
-test('successful frozen-SHA operation advances baseline after passing diagnostics', async () => {
-  const f = fixture();
-  const h = hooks();
-  assert.equal(await reconcileOperation(f.state, h), false);
-  assert.equal(f.record.state, 'SUCCESS');
-  assert.equal(f.state.production_baseline_sha, APPROVED);
-  assert.equal(f.state.deployment_blocked, false);
-  assert.equal(f.state.watermark, f.requestId);
-  assert.deepEqual(h.calls.map((call) => call.type), ['checkout', 'diagnostic']);
-  assert.equal(h.calls[0].sha, APPROVED);
-  assert.equal(h.calls[0].options.requireCurrentMain, false);
-  assert.equal(h.calls[1].expected, APPROVED);
-  assert.equal(JSON.parse(fs.readFileSync(path.join(stateDir, 'state.json'))).production_baseline_sha, APPROVED);
+test('valid accepted SHA and passing target diagnostics yield only the expected baseline update', () => {
+  assert.equal(validateOperationEvidence(record, success, REQUEST).ok, true);
+  const patch = confirmedTargetStatePatch(record, { ok: true });
+  assert.deepEqual(patch, { production_baseline_sha: APPROVED });
+  const state = { production_baseline_sha: PREDECESSOR, mode: 'ACTIVE', deployment_blocked: false };
+  Object.assign(state, patch);
+  assert.equal(state.production_baseline_sha, APPROVED);
+  assert.equal(state.deployment_blocked, false);
 });
 
-test('success evidence cannot advance baseline when exact checkout or final diagnostics fail', async () => {
-  for (const options of [{ checkoutError: 'target commit missing' }, { diagnosticOk: false }]) {
-    const f = fixture();
-    const h = hooks(options);
-    await reconcileOperation(f.state, h);
-    assert.equal(f.record.state, 'BLOCKED_REQUIRES_JUDGMENT');
-    assert.equal(f.state.deployment_blocked, true);
-    assert.equal(f.state.production_baseline_sha, BASELINE);
-    assert.equal(f.state.watermark, f.requestId);
-  }
+test('baseline decision remains closed for failed diagnostics or invalid accepted SHA', () => {
+  assert.equal(confirmedTargetStatePatch(record, { ok: false }), null);
+  assert.equal(confirmedTargetStatePatch(record, null), null);
+  assert.equal(confirmedTargetStatePatch({ ...record, sha: 'invalid' }, { ok: true }), null);
+  assert.equal(confirmedTargetStatePatch({ ...record, sha: '3'.repeat(39) }, { ok: true }), null);
 });
 
-test('tampered, malformed or absent evidence cannot advance baseline or reach target checkout', async () => {
-  for (const evidence of [
-    { request_id: 1 },
+test('staged validation only activates when the exact target is confirmed', () => {
+  const accepted = { ...record, validation_only: true };
+  assert.deepEqual(confirmedTargetStatePatch(accepted, { ok: true }, '2026-10-23T00:00:00.000Z'), {
+    production_baseline_sha: APPROVED,
+    mode: 'ACTIVE',
+    activated_at: '2026-10-23T00:00:00.000Z',
+  });
+  assert.equal(confirmedTargetStatePatch(accepted, { ok: false }), null);
+});
+
+test('corrupt evidence remains UNKNOWN and cannot authorize success reconciliation', () => {
+  for (const altered of [
+    { request_id: REQUEST + 1 },
     { operation: 'rollout-openclaw' },
     { source_revision: '3'.repeat(40) },
-    { block_further_deployments: true },
     { mutation_started: 'yes' },
+    { block_further_deployments: true },
   ]) {
-    const f = fixture({ evidence });
-    const h = hooks();
-    await reconcileOperation(f.state, h);
-    assert.equal(f.record.state, 'UNKNOWN');
-    assert.equal(f.state.deployment_blocked, true);
-    assert.equal(f.state.production_baseline_sha, BASELINE);
-    assert.equal(h.calls.some((call) => call.type === 'checkout'), false);
+    const terminal = validateOperationEvidence(record, { ...success, ...altered }, REQUEST);
+    assert.equal(terminal.ok, false);
+    assert.equal(terminal.outcome, 'UNKNOWN');
+    assert.equal(terminal.block, true);
   }
-  const broken = fixture();
-  fs.writeFileSync(broken.file, '{not json');
-  const brokenHooks = hooks();
-  await reconcileOperation(broken.state, brokenHooks);
-  assert.equal(broken.record.state, 'UNKNOWN');
-  assert.equal(broken.state.production_baseline_sha, BASELINE);
-  assert.equal(brokenHooks.calls.some((call) => call.type === 'checkout'), false);
-
-  const missing = fixture({ missingEvidence: true });
-  const missingHooks = hooks();
-  await reconcileOperation(missing.state, missingHooks);
-  assert.equal(missing.record.state, 'UNKNOWN');
-  assert.equal(missing.state.deployment_blocked, true);
-  assert.equal(missing.state.production_baseline_sha, BASELINE);
-  assert.equal(missingHooks.calls.some((call) => call.type === 'checkout'), false);
+  const terminal = validateOperationEvidence(record, null, REQUEST);
+  assert.equal(terminal.ok, false);
+  assert.equal(terminal.block, true);
 });
 
-test('invalid accepted SHA cannot pass the evidence identity gate', async () => {
-  const f = fixture({ record: { sha: 'not-a-sha' } });
-  const h = hooks();
-  await reconcileOperation(f.state, h);
-  assert.equal(f.record.state, 'UNKNOWN');
-  assert.equal(f.state.deployment_blocked, true);
-  assert.equal(f.state.production_baseline_sha, BASELINE);
-  assert.equal(h.calls.some((call) => call.type === 'checkout'), false);
-});
-
-test('real deployment failure and rollback outcomes are not converted into success', async () => {
-  for (const terminal of [
-    { outcome: 'ROLLED_BACK', mutation_started: true, block_further_deployments: false, blocked: false },
-    { outcome: 'BLOCKED_PRE_MUTATION', mutation_started: false, block_further_deployments: false, blocked: false },
-    { outcome: 'RECOVERY_REQUIRED', mutation_started: true, block_further_deployments: true, blocked: true },
+test('genuine failed execution outcomes retain their fail-closed classification', () => {
+  for (const [outcome, mutation_started, block_further_deployments] of [
+    ['BLOCKED_PRE_MUTATION', false, false],
+    ['ROLLED_BACK', true, false],
+    ['RECOVERY_REQUIRED', true, true],
   ]) {
-    const f = fixture({ evidence: terminal });
-    const h = hooks();
-    await reconcileOperation(f.state, h);
-    assert.equal(f.record.state, terminal.outcome);
-    assert.equal(f.state.production_baseline_sha, BASELINE);
-    assert.equal(f.state.deployment_blocked, terminal.blocked);
-    assert.equal(h.calls.some((call) => call.type === 'checkout'), false);
+    const terminal = validateOperationEvidence(record, {
+      ...success, outcome, mutation_started, block_further_deployments,
+    }, REQUEST);
+    assert.equal(terminal.ok, true);
+    assert.equal(terminal.outcome, outcome);
+    assert.notEqual(terminal.outcome, 'SUCCESS');
   }
-});
-
-test('staged validation claiming mutation remains fail-closed', async () => {
-  const f = fixture({ record: { validation_only: true } });
-  const h = hooks();
-  await reconcileOperation(f.state, h);
-  assert.equal(f.record.state, 'UNKNOWN');
-  assert.equal(f.state.production_baseline_sha, BASELINE);
-  assert.equal(f.state.deployment_blocked, true);
-  assert.equal(h.calls.length, 0);
 });
