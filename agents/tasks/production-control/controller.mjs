@@ -244,7 +244,7 @@ function gitExec(args, token, options = {}) {
   }
 }
 
-export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, token }) {
+export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, token, requireCurrentMain = true }) {
   if (!SHA_RE.test(String(targetSha ?? ''))) throw new Error('prepared checkout target SHA invalid');
   if (!checkoutDir || !repoUrl || !token) throw new Error('prepared checkout inputs incomplete');
   fs.mkdirSync(checkoutDir, { recursive: true, mode: 0o700 });
@@ -261,14 +261,17 @@ export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, toke
   fetchArgs.push('origin', 'refs/heads/main');
   gitExec(fetchArgs, token, { cwd: checkoutDir, timeout: 120000 });
   const fetched = gitExec(['rev-parse', 'FETCH_HEAD'], token, { cwd: checkoutDir });
-  if (fetched !== targetSha) throw new Error(`fetched main ${fetched} does not equal requested ${targetSha}`);
-  gitExec(['checkout', '--detach', '--force', 'FETCH_HEAD'], token, { cwd: checkoutDir });
+  if (requireCurrentMain && fetched !== targetSha) throw new Error(`fetched main ${fetched} does not equal requested ${targetSha}`);
+  // An accepted operation is reconciled against its frozen SHA even if main advanced.
+  // Still require the exact commit object to exist in the fetched implementation history.
+  gitExec(['cat-file', '-e', `${targetSha}^{commit}`], token, { cwd: checkoutDir });
+  gitExec(['checkout', '--detach', '--force', targetSha], token, { cwd: checkoutDir });
   gitExec(['clean', '-fdx'], token, { cwd: checkoutDir });
   const head = gitExec(['rev-parse', 'HEAD'], token, { cwd: checkoutDir });
   if (head !== targetSha) throw new Error('prepared checkout HEAD mismatch');
 }
 
-function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
+function prepareSourceCheckout(targetSha, checkoutDir = sourceDir, { requireCurrentMain = true } = {}) {
   const token = readToken();
   const binding = currentBinding();
   prepareGitSourceCheckout({
@@ -276,6 +279,7 @@ function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
     checkoutDir,
     repoUrl: `https://github.com/${binding.implementation_repository}.git`,
     token,
+    requireCurrentMain,
   });
 }
 
@@ -418,7 +422,7 @@ async function reconcileOperation(state) {
       record.evidence_error = 'staged validation operation mutated production';
     } else {
       try {
-        prepareSourceCheckout(record.sha, sourceDir);
+        prepareSourceCheckout(record.sha, sourceDir, { requireCurrentMain: false });
         postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
         if (!postDiagnostic.ok) {
           outcome = 'BLOCKED_REQUIRES_JUDGMENT';
