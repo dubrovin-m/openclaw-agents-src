@@ -605,6 +605,10 @@ entry.register = (api) => {
         channels: ["telegram"],
         acceptsArgs: true,
         requireAuth: true,
+        // External plugin commands receive owner assertions from OpenClaw 2026.9.8
+        // through the operator-scoped command contract, never bundled-plugin trust.
+        // The handler still requires the verified owner before each write.
+        requiredScopes: ["operator.read"],
         exposeSenderIsOwner: true,
         handler: async (ctx) => {
             const fields = ctx.args?.trim().split(/\s+/) ?? [];
@@ -636,6 +640,10 @@ entry.register = (api) => {
         channels: ["telegram"],
         acceptsArgs: true,
         requireAuth: true,
+        // External plugin commands receive owner assertions from OpenClaw 2026.9.8
+        // through the operator-scoped command contract, never bundled-plugin trust.
+        // The handler still requires the verified owner before each write.
+        requiredScopes: ["operator.read"],
         exposeSenderIsOwner: true,
         handler: async (ctx) => {
             const fields = ctx.args?.trim().split(/\s+/) ?? [];
