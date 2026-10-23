@@ -244,7 +244,7 @@ function gitExec(args, token, options = {}) {
   }
 }
 
-export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, token }) {
+export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, token, requireCurrentMain = true }) {
   if (!SHA_RE.test(String(targetSha ?? ''))) throw new Error('prepared checkout target SHA invalid');
   if (!checkoutDir || !repoUrl || !token) throw new Error('prepared checkout inputs incomplete');
   fs.mkdirSync(checkoutDir, { recursive: true, mode: 0o700 });
@@ -261,14 +261,22 @@ export function prepareGitSourceCheckout({ targetSha, checkoutDir, repoUrl, toke
   fetchArgs.push('origin', 'refs/heads/main');
   gitExec(fetchArgs, token, { cwd: checkoutDir, timeout: 120000 });
   const fetched = gitExec(['rev-parse', 'FETCH_HEAD'], token, { cwd: checkoutDir });
-  if (fetched !== targetSha) throw new Error(`fetched main ${fetched} does not equal requested ${targetSha}`);
-  gitExec(['checkout', '--detach', '--force', 'FETCH_HEAD'], token, { cwd: checkoutDir });
+  if (requireCurrentMain && fetched !== targetSha) throw new Error(`fetched main ${fetched} does not equal requested ${targetSha}`);
+  // An accepted operation is reconciled against its frozen SHA even if main advanced.
+  // Still require the exact commit object to exist in the fetched implementation history.
+  gitExec(['cat-file', '-e', `${targetSha}^{commit}`], token, { cwd: checkoutDir });
+  if (!requireCurrentMain) {
+    // Reject unrelated cached commits and non-fast-forward replacement of accepted main.
+    try { gitExec(['merge-base', '--is-ancestor', targetSha, 'FETCH_HEAD'], token, { cwd: checkoutDir }); }
+    catch { throw new Error('accepted SHA is not an ancestor of fetched implementation main'); }
+  }
+  gitExec(['checkout', '--detach', '--force', targetSha], token, { cwd: checkoutDir });
   gitExec(['clean', '-fdx'], token, { cwd: checkoutDir });
   const head = gitExec(['rev-parse', 'HEAD'], token, { cwd: checkoutDir });
   if (head !== targetSha) throw new Error('prepared checkout HEAD mismatch');
 }
 
-function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
+function prepareSourceCheckout(targetSha, checkoutDir = sourceDir, { requireCurrentMain = true } = {}) {
   const token = readToken();
   const binding = currentBinding();
   prepareGitSourceCheckout({
@@ -276,6 +284,7 @@ function prepareSourceCheckout(targetSha, checkoutDir = sourceDir) {
     checkoutDir,
     repoUrl: `https://github.com/${binding.implementation_repository}.git`,
     token,
+    requireCurrentMain,
   });
 }
 
@@ -384,6 +393,13 @@ function activeOperation(state) {
   return active[0] ?? null;
 }
 
+export function confirmedTargetStatePatch(record, postDiagnostic, timestamp = now()) {
+  if (postDiagnostic?.ok !== true || !SHA_RE.test(record?.sha ?? '')) return null;
+  const patch = { production_baseline_sha: record.sha };
+  if (record.validation_only) Object.assign(patch, { mode: 'ACTIVE', activated_at: timestamp });
+  return patch;
+}
+
 async function reconcileOperation(state) {
   const active = activeOperation(state);
   if (!active) return false;
@@ -418,18 +434,15 @@ async function reconcileOperation(state) {
       record.evidence_error = 'staged validation operation mutated production';
     } else {
       try {
-        prepareSourceCheckout(record.sha, sourceDir);
+        prepareSourceCheckout(record.sha, sourceDir, { requireCurrentMain: false });
         postDiagnostic = await runDiagnostics(requestId, record.sha, record.sha);
-        if (!postDiagnostic.ok) {
+        const targetPatch = confirmedTargetStatePatch(record, postDiagnostic);
+        if (!targetPatch) {
           outcome = 'BLOCKED_REQUIRES_JUDGMENT';
           block = true;
           record.evidence_error = 'post-operation target diagnostics failed';
         } else {
-          state.production_baseline_sha = record.sha;
-          if (record.validation_only) {
-            state.mode = 'ACTIVE';
-            state.activated_at = now();
-          }
+          Object.assign(state, targetPatch);
         }
       } catch (error) {
         outcome = 'BLOCKED_REQUIRES_JUDGMENT';

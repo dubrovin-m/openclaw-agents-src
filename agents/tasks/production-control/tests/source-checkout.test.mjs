@@ -39,4 +39,42 @@ test('production source preparation unshallows existing checkout and retains pre
   assert.equal(git(['rev-parse', 'HEAD'], { cwd: checkout }), target);
   assert.equal(git(['rev-parse', '--is-shallow-repository'], { cwd: checkout }), 'false');
   assert.equal(git(['show', `${predecessor}:predecessor.txt`], { cwd: checkout }), 'predecessor');
+
+  // A later main push must not invalidate an already accepted immutable revision.
+  git(['commit', '--allow-empty', '-m', 'main advanced'], { cwd: author });
+  const advancedMain = git(['rev-parse', 'HEAD'], { cwd: author });
+  git(['push', 'origin', 'main'], { cwd: author });
+  assert.notEqual(advancedMain, target);
+  assert.throws(() => prepareGitSourceCheckout({
+    targetSha: target, checkoutDir: checkout, repoUrl: `file://${origin}`, token: 'synthetic-token',
+  }), /does not equal requested/u);
+  assert.equal(git(['rev-parse', 'HEAD'], { cwd: checkout }), target);
+
+  prepareGitSourceCheckout({
+    targetSha: target, checkoutDir: checkout, repoUrl: `file://${origin}`,
+    token: 'synthetic-token', requireCurrentMain: false,
+  });
+  assert.equal(git(['rev-parse', 'HEAD'], { cwd: checkout }), target);
+  assert.equal(git(['status', '--porcelain'], { cwd: checkout }), '');
+  assert.throws(() => prepareGitSourceCheckout({
+    targetSha: 'f'.repeat(40), checkoutDir: checkout, repoUrl: `file://${origin}`,
+    token: 'synthetic-token', requireCurrentMain: false,
+  }));
+  assert.throws(() => prepareGitSourceCheckout({
+    targetSha: 'not-a-sha', checkoutDir: checkout, repoUrl: `file://${origin}`,
+    token: 'synthetic-token', requireCurrentMain: false,
+  }), /target SHA invalid/u);
+
+  // A cached commit on an unrelated branch does not inherit approved-main provenance.
+  git(['checkout', '-b', 'unrelated', predecessor], { cwd: author });
+  git(['commit', '--allow-empty', '-m', 'unrelated commit'], { cwd: author });
+  const unrelated = git(['rev-parse', 'HEAD'], { cwd: author });
+  git(['push', 'origin', 'unrelated'], { cwd: author });
+  git(['checkout', 'main'], { cwd: author });
+  git(['fetch', 'origin', 'refs/heads/unrelated'], { cwd: checkout });
+  assert.throws(() => prepareGitSourceCheckout({
+    targetSha: unrelated, checkoutDir: checkout, repoUrl: `file://${origin}`,
+    token: 'synthetic-token', requireCurrentMain: false,
+  }), /not an ancestor/u);
+  assert.equal(git(['rev-parse', 'HEAD'], { cwd: checkout }), target);
 });
