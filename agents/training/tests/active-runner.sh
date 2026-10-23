@@ -10,7 +10,15 @@ OPENCLAW_BIN=$(realpath -e "$OPENCLAW_BIN")
 TARGET_HOST_VERSION=$("$OPENCLAW_BIN" --version | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
 eval "$(node "$ROOT/deploy-support.mjs" release-env "$REPO_ROOT" "$ROOT/release.json" "$TARGET_HOST_VERSION")"
 TMP=$(mktemp -d /tmp/training-active-runner.XXXXXX)
-trap 'rm -rf "$TMP"' EXIT
+WAL_WRITER_PID=""
+cleanup() {
+  if [ -n "$WAL_WRITER_PID" ]; then
+    kill "$WAL_WRITER_PID" 2>/dev/null || true
+    wait "$WAL_WRITER_PID" 2>/dev/null || true
+  fi
+  rm -rf "$TMP"
+}
+trap cleanup EXIT
 OLD_POLICY="$TMP/old-tools.json"
 git -C "$REPO_ROOT" show "$PREDECESSOR_SOURCE_REVISION:agents/training/config/training-tools.json" > "$OLD_POLICY"
 init_root() {
@@ -165,6 +173,15 @@ test ! -e "$POST/state/.training-active-upgrade-recovery/.active.lock"
 test "$POST_DB_SHA" = "$(sha256sum "$POST/state/data/training/training.sqlite3" | awk '{print $1}')"
 assert_unchanged_unrelated "$TMP/post.before.json" "$POST/state/openclaw.json"
 
+# A recovered result must not permanently block a *separately authorized*
+# retry at the same source SHA. The terminal receipt remains archived.
+echo "QUALIFY_SCENARIO_START retry-after-proven-rollback"
+node "$ROOT/active-upgrade.mjs" --test-root "$POST" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
+find "$POST/state/.training-active-upgrade-recovery" -maxdepth 2 -type f -name result.json | grep -q '\.completed-'
+test -f "$POST/state/.training-active-upgrade-recovery/$SHA/config.before"
+node "$ROOT/active-upgrade.mjs" --test-root "$POST" --finalize --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_FINALIZED
+test ! -e "$POST/state/.training-active-upgrade-recovery/.active.lock"
+
 # Fail closed if the recovery evidence is tampered or Store changes while
 # awaiting native acceptance; no guessed rollback may touch the current target.
 echo "QUALIFY_SCENARIO_START post-cutover-tamper"
@@ -180,6 +197,15 @@ set -e
 test "$rc" -ne 0
 grep -q 'Pending Training recovery evidence mismatch' "$TMP/tamper.err"
 assert_version "$TAMPER" "$TARGET_PLUGIN_VERSION"
+test -d "$TAMPER/state/.training-active-upgrade-recovery/.active.lock"
+
+# Unknown/tampered pending evidence cannot become a new attempt.
+echo "QUALIFY_SCENARIO_START refuse-nonterminal-retry"
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$TAMPER" --apply --source-sha "$SHA" >"$TMP/pendingretry.out" 2>"$TMP/pendingretry.err"
+rc=$?
+set -e
+test "$rc" -ne 0
 test -d "$TAMPER/state/.training-active-upgrade-recovery/.active.lock"
 
 # Intervening Training Store activity invalidates the pre-acceptance rollback
@@ -202,6 +228,53 @@ test "$rc" -ne 0
 grep -q 'Pending Training recovery evidence mismatch' "$TMP/storechange.err"
 assert_version "$STORE_CHANGE" "$TARGET_PLUGIN_VERSION"
 test -d "$STORE_CHANGE/state/.training-active-upgrade-recovery/.active.lock"
+
+# P1: a committed write may exist only in a live writer's WAL; main-file
+# sha256 is unchanged until checkpoint. The rollback MUST still fail closed.
+echo "QUALIFY_SCENARIO_START post-cutover-live-wal-write"
+WAL="$TMP/post-cutover-live-wal"
+init_root "$WAL"
+node "$ROOT/active-upgrade.mjs" --test-root "$WAL" --apply --source-sha "$SHA" | grep -q TRAINING_ACTIVE_UPGRADE_APPLIED_PENDING_ACCEPTANCE
+WAL_DB="$WAL/state/data/training/training.sqlite3"
+WAL_MAIN_BEFORE=$(sha256sum "$WAL_DB" | awk '{print $1}')
+WAL_READY="$TMP/wal-ready"
+node - "$WAL_DB" "$WAL_READY" <<'NODE' >"$TMP/wal-writer.log" 2>&1 &
+const {DatabaseSync}=require('node:sqlite'), fs=require('node:fs');
+const db=new DatabaseSync(process.argv[2]);
+db.exec('PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0');
+db.prepare("INSERT INTO training_events VALUES(?,?,?,?,?,?)").run(
+  'live-wal-event','SESSION_TEST','training_session','synthetic','{}',new Date().toISOString());
+fs.writeFileSync(process.argv[3],'ready');
+const handle=()=>{ db.close();process.exit(0); };
+process.on('SIGTERM',handle);
+setInterval(()=>{},1000);
+NODE
+WAL_WRITER_PID=$!
+for i in $(seq 1 100); do
+  test -f "$WAL_READY" && break
+  kill -0 "$WAL_WRITER_PID" 2>/dev/null || { cat "$TMP/wal-writer.log" >&2; exit 2; }
+  sleep 0.1
+done
+test -f "$WAL_READY"
+test -f "$WAL_DB-wal"
+test "$WAL_MAIN_BEFORE" = "$(sha256sum "$WAL_DB" | awk '{print $1}')"
+set +e
+node "$ROOT/active-upgrade.mjs" --test-root "$WAL" --rollback --source-sha "$SHA" >"$TMP/wal.out" 2>"$TMP/wal.err"
+rc=$?
+set -e
+test "$rc" -ne 0
+grep -q 'Pending Training recovery evidence mismatch' "$TMP/wal.err"
+assert_version "$WAL" "$TARGET_PLUGIN_VERSION"
+test -d "$WAL/state/.training-active-upgrade-recovery/.active.lock"
+kill "$WAL_WRITER_PID"
+wait "$WAL_WRITER_PID"
+WAL_WRITER_PID=""
+node - "$WAL_DB" <<'NODE'
+const {DatabaseSync}=require('node:sqlite');
+const db=new DatabaseSync(process.argv[2],{readOnly:true});
+if(db.prepare("SELECT count(*) n FROM training_events WHERE event_id='live-wal-event'").get().n!==1)process.exit(2);
+db.close();
+NODE
 
 # Tampered local recovery path must refuse before any plugin/config/Store write.
 echo "QUALIFY_SCENARIO_START unsafe-recovery"

@@ -19,6 +19,14 @@ const here = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(here, '../..');
 const sha = (v) => crypto.createHash('sha256').update(v).digest('hex');
 const hashFile = (p) => sha(fs.readFileSync(p));
+// SQLite may retain committed rows exclusively in WAL while a writer is open.
+// Serialize through SQLite's read transaction instead of hashing only the
+// database main file; this includes the logical committed WAL snapshot.
+const hashStore = (p) => {
+  const db = new DatabaseSync(p,{readOnly:true});
+  try { return sha(db.serialize()); }
+  finally { db.close(); }
+};
 const readJson = (p) => JSON.parse(fs.readFileSync(p, 'utf8'));
 const same = (a,b) => JSON.stringify(a) === JSON.stringify(b);
 const die = (msg) => { throw new Error(msg); };
@@ -254,7 +262,7 @@ function invokeAcceptedMutation(fn) {
   externalMutationUncertain = false;
   return result;
 }
-const oldDbHash = hashFile(dbFile);
+const oldDbHash = hashStore(dbFile);
 const oldIdentityHash = hashFile(path.join(workspace,'IDENTITY.md'));
 const resultFile = path.join(recoveryDir,'result.json');
 function writeResult(status,stage,message) {
@@ -305,7 +313,7 @@ function preserveBoundaries(before,after) {
   clearTools(a);clearTools(b);
   if (!same(a,b)) die('Another agent attribute changed during Training upgrade');
   if (hashFile(path.join(workspace,'IDENTITY.md'))!==oldIdentityHash) die('Training runtime identity was changed');
-  if (hashFile(dbFile)!==oldDbHash) die('Training Store changed during upgrade');
+  if (hashStore(dbFile)!==oldDbHash) die('Training Store changed during upgrade');
 }
 function atomicCopy(source,dest) {
   const tmp=dest+'.training-active-upgrade-'+process.pid;
@@ -388,6 +396,34 @@ try {
   // Lock acquired: re-read and fail closed before any production mutation.
   inspect('predecessor',historicalTools);
   gatewayReady();
+  // A proven rollback leaves a terminal receipt under this source SHA.
+  // Preserve it outside the pending slot before a separately authorized retry.
+  // A nonterminal, changed or unexpected directory is not safe to reuse.
+  if (fs.existsSync(recoveryDir)) {
+    ensurePrivateDirectory(recoveryDir);
+    const files = fs.readdirSync(recoveryDir);
+    if (files.length!==1 || files[0]!=='result.json') {
+      die('Previous Training recovery state is not terminal and clean');
+    }
+    const terminalFile=path.join(recoveryDir,'result.json');
+    checkRegular(terminalFile);
+    const stat=fs.statSync(terminalFile);
+    if ((stat.mode & 0o077)!==0 ||
+        (typeof process.getuid==='function' && stat.uid!==process.getuid())) {
+      die('Unsafe prior Training recovery receipt');
+    }
+    const receipt=readJson(terminalFile);
+    if (receipt.format!=='training-active-upgrade-result-v1' ||
+        !['ROLLED_BACK','BLOCKED_PRE_MUTATION'].includes(receipt.status) ||
+        receipt.source_revision!==sourceSha ||
+        receipt.predecessor!==predecessor.plugin.version ||
+        receipt.target!==release.plugin.version ||
+        receipt.store_sha256!==oldDbHash ||
+        receipt.identity_sha256!==oldIdentityHash) {
+      die('Previous Training recovery receipt is not a proven predecessor');
+    }
+    fs.renameSync(recoveryDir,recoveryDir+'.completed-'+crypto.randomUUID());
+  }
   fs.mkdirSync(recoveryDir,{mode:0o700});
   atomicCopy(configFile,path.join(recoveryDir,'config.before'));
   atomicCopy(agentsFile,path.join(recoveryDir,'AGENTS.before'));
